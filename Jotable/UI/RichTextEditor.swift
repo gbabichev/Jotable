@@ -32,7 +32,6 @@ enum RichTextColor: Equatable, Identifiable {
     case orange
     case yellow
     case purple
-    case pink
     case blue
 
     var id: String {
@@ -43,7 +42,6 @@ enum RichTextColor: Equatable, Identifiable {
         case .orange: return "orange"
         case .yellow: return "yellow"
         case .purple: return "purple"
-        case .pink: return "pink"
         case .blue: return "blue"
         }
     }
@@ -56,7 +54,6 @@ enum RichTextColor: Equatable, Identifiable {
         case .orange: return "🟠"
         case .yellow: return "🟡"
         case .purple: return "🟣"
-        case .pink: return "🩷"
         case .blue: return "🔵"
         }
     }
@@ -76,8 +73,6 @@ enum RichTextColor: Equatable, Identifiable {
             return NSColor.systemYellow
         case .purple:
             return NSColor.systemPurple
-        case .pink:
-            return NSColor.systemPink
         case .blue:
             return NSColor.systemBlue
         }
@@ -97,8 +92,6 @@ enum RichTextColor: Equatable, Identifiable {
             return UIColor.systemYellow
         case .purple:
             return UIColor.systemPurple
-        case .pink:
-            return UIColor.systemPink
         case .blue:
             return UIColor.systemBlue
         }
@@ -113,7 +106,6 @@ enum RichTextColor: Equatable, Identifiable {
         case "orange": return .orange
         case "yellow": return .yellow
         case "purple": return .purple
-        case "pink": return .pink
         case "blue": return .blue
         default: return .automatic
         }
@@ -1519,12 +1511,6 @@ struct FontToolbar: View {
                     activeColor = .purple
                 } label: {
                     Text("\(RichTextColor.purple.emoji) Purple")
-                }
-
-                Button {
-                    activeColor = .pink
-                } label: {
-                    Text("\(RichTextColor.pink.emoji) Pink")
                 }
 
                 Button {

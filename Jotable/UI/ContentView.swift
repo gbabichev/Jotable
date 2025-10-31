@@ -95,9 +95,9 @@ struct ContentView: View {
             List(selection: $selectedItem) {
                 notesListContent
             }
+            .frame(minWidth: 250)
             .navigationTitle(selectedCategory?.name ?? "All Notes")
             .navigationSubtitle("\(filteredItems.count) \(filteredItems.count == 1 ? "note" : "notes")")
-            .navigationSplitViewColumnWidth(min: 280, ideal: 320)
             .searchable(
                 text: $searchText,
                 prompt: "Search notes"

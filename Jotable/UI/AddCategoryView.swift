@@ -18,7 +18,7 @@ struct AddCategoryView: View {
     // Optional category for editing
     let categoryToEdit: Category?
     
-    private let availableColors = ["blue", "green", "orange", "red", "purple", "pink", "yellow", "gray"]
+    private let availableColors = ["blue", "green", "orange", "red", "purple", "yellow", "gray"]
     
     // Computed properties for UI text
     private var navigationTitle: String {
