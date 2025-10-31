@@ -72,16 +72,16 @@ struct ContentView: View {
                     Button(action: { showingAddCategory = true }) {
                         Image(systemName: "folder.badge.plus")
                     }
-                    #if DEBUG
-                    Button(action: {
-                        print("Debug Print")
-                    }) {
-                        Label("Debug", systemImage: "ladybug")
-                    }
-                    Button(role: .destructive, action: deleteEverything) {
-                        Image(systemName: "trash.fill")
-                    }
-                    #endif
+//                    #if DEBUG
+//                    Button(action: {
+//                        print("Debug Print")
+//                    }) {
+//                        Label("Debug", systemImage: "ladybug")
+//                    }
+//                    Button(role: .destructive, action: deleteEverything) {
+//                        Image(systemName: "trash.fill")
+//                    }
+//                    #endif
                 }
             }
             .sheet(isPresented: $showingAddCategory) {

@@ -298,10 +298,18 @@ struct RichTextEditor: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView,
                   textView === self.textView else { return }
-            textView.typingAttributes[NSAttributedString.Key.font] = NSFont.systemFont(ofSize: activeFontSize.rawValue)
+            let font = NSFont.systemFont(ofSize: activeFontSize.rawValue, weight: isBold ? .bold : .regular)
+            textView.typingAttributes[NSAttributedString.Key.font] = font
             textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.nsColor
             textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
             textView.typingAttributes[ColorMapping.fontSizeKey] = activeFontSize.rawValue
+
+            let underlineValue = isUnderlined ? NSUnderlineStyle.single.rawValue : 0
+            textView.typingAttributes[NSAttributedString.Key.underlineStyle] = underlineValue
+
+            let strikethroughValue = isStrikethrough ? NSUnderlineStyle.single.rawValue : 0
+            textView.typingAttributes[NSAttributedString.Key.strikethroughStyle] = strikethroughValue
+
             // Force update the parent binding to ensure color changes are captured
             if !isProgrammaticUpdate {
                 let currentText = textView.attributedString()
@@ -1008,10 +1016,17 @@ struct RichTextEditor: UIViewRepresentable {
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
-            textView.typingAttributes[NSAttributedString.Key.font] = UIFont.systemFont(ofSize: activeFontSize.rawValue)
+            let font = UIFont.systemFont(ofSize: activeFontSize.rawValue, weight: isBold ? .bold : .regular)
+            textView.typingAttributes[NSAttributedString.Key.font] = font
             textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.uiColor
             textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
             textView.typingAttributes[ColorMapping.fontSizeKey] = activeFontSize.rawValue
+
+            let underlineValue = isUnderlined ? NSUnderlineStyle.single.rawValue : 0
+            textView.typingAttributes[NSAttributedString.Key.underlineStyle] = underlineValue
+
+            let strikethroughValue = isStrikethrough ? NSUnderlineStyle.single.rawValue : 0
+            textView.typingAttributes[NSAttributedString.Key.strikethroughStyle] = strikethroughValue
         }
 
         func apply(color: RichTextColor, to textView: UITextView) {
