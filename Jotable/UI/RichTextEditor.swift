@@ -298,8 +298,10 @@ struct RichTextEditor: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView,
                   textView === self.textView else { return }
+            textView.typingAttributes[NSAttributedString.Key.font] = NSFont.systemFont(ofSize: activeFontSize.rawValue)
             textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.nsColor
             textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
+            textView.typingAttributes[ColorMapping.fontSizeKey] = activeFontSize.rawValue
             // Force update the parent binding to ensure color changes are captured
             if !isProgrammaticUpdate {
                 let currentText = textView.attributedString()
@@ -480,23 +482,33 @@ struct RichTextEditor: NSViewRepresentable {
             isProgrammaticUpdate = true
 
             if contentAfter.isEmpty {
-                // Blank line after checkbox - remove the checkbox, just add newline
-                storage.replaceCharacters(in: lineRange, with: "\n")
-            } else {
-                // Content after checkbox - add newline and new checkbox
-                let newCheckbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
-                let newCheckboxString = NSAttributedString(attachment: newCheckbox)
-                let newLine = NSMutableAttributedString(string: "\n")
-                newLine.append(newCheckboxString)
-
-                // Add space after checkbox with proper font attributes
-                let spaceAttrs: [NSAttributedString.Key: Any] = [
+                // Blank line after checkbox - remove the checkbox, just add newline with proper attributes
+                let fontAttrs: [NSAttributedString.Key: Any] = [
                     NSAttributedString.Key.font: NSFont.systemFont(ofSize: activeFontSize.rawValue),
                     NSAttributedString.Key.foregroundColor: activeColor.nsColor,
                     ColorMapping.colorIDKey: activeColor.id,
                     ColorMapping.fontSizeKey: activeFontSize.rawValue
                 ]
-                newLine.append(NSAttributedString(string: " ", attributes: spaceAttrs))
+                let newlineWithAttrs = NSAttributedString(string: "\n", attributes: fontAttrs)
+                storage.replaceCharacters(in: lineRange, with: newlineWithAttrs)
+            } else {
+                // Content after checkbox - add newline and new checkbox
+                let newCheckbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
+                let newCheckboxString = NSAttributedString(attachment: newCheckbox)
+
+                // Add font attributes for proper rendering
+                let fontAttrs: [NSAttributedString.Key: Any] = [
+                    NSAttributedString.Key.font: NSFont.systemFont(ofSize: activeFontSize.rawValue),
+                    NSAttributedString.Key.foregroundColor: activeColor.nsColor,
+                    ColorMapping.colorIDKey: activeColor.id,
+                    ColorMapping.fontSizeKey: activeFontSize.rawValue
+                ]
+
+                let newLine = NSMutableAttributedString(string: "\n", attributes: fontAttrs)
+                newLine.append(newCheckboxString)
+
+                // Add space after checkbox with proper font attributes
+                newLine.append(NSAttributedString(string: " ", attributes: fontAttrs))
                 storage.replaceCharacters(in: cursorRange, with: newLine)
             }
 
@@ -996,8 +1008,10 @@ struct RichTextEditor: UIViewRepresentable {
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
+            textView.typingAttributes[NSAttributedString.Key.font] = UIFont.systemFont(ofSize: activeFontSize.rawValue)
             textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.uiColor
             textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
+            textView.typingAttributes[ColorMapping.fontSizeKey] = activeFontSize.rawValue
         }
 
         func apply(color: RichTextColor, to textView: UITextView) {
@@ -1162,29 +1176,45 @@ struct RichTextEditor: UIViewRepresentable {
             isProgrammaticUpdate = true
 
             if contentAfter.isEmpty {
-                // Blank line after checkbox - remove the checkbox, just add newline
-                textView.textStorage.replaceCharacters(in: lineRange, with: "\n")
-            } else {
-                // Content after checkbox - add newline and new checkbox
-                let newCheckbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
-                let newCheckboxString = NSAttributedString(attachment: newCheckbox)
-                let newLine = NSMutableAttributedString(string: "\n")
-                newLine.append(newCheckboxString)
-
-                // Add space after checkbox with proper font attributes
-                let spaceAttrs: [NSAttributedString.Key: Any] = [
+                // Blank line after checkbox - remove the checkbox, just add newline with proper attributes
+                let fontAttrs: [NSAttributedString.Key: Any] = [
                     NSAttributedString.Key.font: UIFont.systemFont(ofSize: activeFontSize.rawValue),
                     NSAttributedString.Key.foregroundColor: activeColor.uiColor,
                     ColorMapping.colorIDKey: activeColor.id,
                     ColorMapping.fontSizeKey: activeFontSize.rawValue
                 ]
-                newLine.append(NSAttributedString(string: " ", attributes: spaceAttrs))
+                let newlineWithAttrs = NSAttributedString(string: "\n", attributes: fontAttrs)
+                textView.textStorage.replaceCharacters(in: lineRange, with: newlineWithAttrs)
+            } else {
+                // Content after checkbox - add newline and new checkbox
+                let newCheckbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
+                let newCheckboxString = NSAttributedString(attachment: newCheckbox)
+
+                // Add font attributes for proper rendering
+                let fontAttrs: [NSAttributedString.Key: Any] = [
+                    NSAttributedString.Key.font: UIFont.systemFont(ofSize: activeFontSize.rawValue),
+                    NSAttributedString.Key.foregroundColor: activeColor.uiColor,
+                    ColorMapping.colorIDKey: activeColor.id,
+                    ColorMapping.fontSizeKey: activeFontSize.rawValue
+                ]
+
+                let newLine = NSMutableAttributedString(string: "\n", attributes: fontAttrs)
+                newLine.append(newCheckboxString)
+
+                // Add space after checkbox with proper font attributes
+                newLine.append(NSAttributedString(string: " ", attributes: fontAttrs))
                 textView.textStorage.replaceCharacters(in: cursorRange, with: newLine)
             }
 
             // Position cursor after the inserted content
             let newCursorPosition = cursorRange.location + (contentAfter.isEmpty ? 1 : 3)  // +3 for "\n" + checkbox + space
             textView.selectedRange = NSRange(location: newCursorPosition, length: 0)
+
+            // Ensure typing attributes are set for the next line
+            textView.typingAttributes[NSAttributedString.Key.font] = UIFont.systemFont(ofSize: activeFontSize.rawValue)
+            textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.uiColor
+            textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
+            textView.typingAttributes[ColorMapping.fontSizeKey] = activeFontSize.rawValue
 
             parent.text = textView.attributedText ?? NSAttributedString()
             isProgrammaticUpdate = false
