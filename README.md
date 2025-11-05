@@ -57,13 +57,11 @@ Just a clean, focused space for your thoughts.
 
 ### ⚙️ Installation
 
-App Store Coming Soon!
-<!-- <a href="https://apps.apple.com/us/app/screen-snip/id6752541530?mt=12
-Screen Snip">Mac App Store</a> -->
+<a href="https://apps.apple.com/us/app/jotable-simple-notes/id6754772226">App Store for macOS, iOS, and iPadOS</a>
 
 ## 📝 Changelog
 
-### 1.0 
+### 1.0.0
 - Initial Release. 
 
 ## 📄 License
