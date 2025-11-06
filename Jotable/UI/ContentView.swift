@@ -21,7 +21,6 @@ struct ContentView: View {
     
     @State private var selectedItem: Item?
     @State private var sidebarSelection: SidebarSelection? = .allNotes
-    @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var showingAddCategory = false
     @State private var categoryToEdit: Category?
     @State private var searchText = ""
@@ -58,14 +57,14 @@ struct ContentView: View {
     }
     
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        NavigationSplitView {
             // Sidebar with categories
             List(selection: $sidebarSelection) {
                 sidebarContent
             }
             .listStyle(SidebarListStyle())
             .navigationTitle("Jotable")
-            .navigationSplitViewColumnWidth(min: 200, ideal: 250)
+            .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 300)
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction)
                 {
@@ -95,13 +94,13 @@ struct ContentView: View {
             List(selection: $selectedItem) {
                 notesListContent
             }
-            .frame(minWidth: 250)
-            .navigationTitle(selectedCategory?.name ?? "All Notes")
-            .navigationSubtitle("\(filteredItems.count) \(filteredItems.count == 1 ? "note" : "notes")")
             .searchable(
                 text: $searchText,
                 prompt: "Search notes"
             )
+            .navigationTitle(selectedCategory?.name ?? "All Notes")
+            .navigationSubtitle("\(filteredItems.count) \(filteredItems.count == 1 ? "note" : "notes")")
+            .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 400)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: addItem) {

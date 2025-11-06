@@ -35,6 +35,9 @@ struct JotableApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+            #if os(macOS)
+                .frame(minWidth: 800, minHeight: 400)
+            #endif
                 .onAppear {
                     // Debug: Print items on app launch
                     let context = Self.sharedModelContainer.mainContext
