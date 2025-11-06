@@ -135,6 +135,7 @@ struct RichTextEditor: NSViewRepresentable {
     @Binding var insertBulletTrigger: UUID?
     @Binding var insertNumberingTrigger: UUID?
     @Binding var insertDateTrigger: UUID?
+    @Binding var insertTimeTrigger: UUID?
     @Binding var insertURLTrigger: (UUID, String, String)?
 
     func makeCoordinator() -> Coordinator {
@@ -245,6 +246,12 @@ struct RichTextEditor: NSViewRepresentable {
             context.coordinator.insertDate()
         }
 
+        // Handle time insertion trigger
+        if insertTimeTrigger != context.coordinator.lastTimeTrigger {
+            context.coordinator.lastTimeTrigger = insertTimeTrigger
+            context.coordinator.insertTime()
+        }
+
         // Handle URL insertion trigger
         if insertURLTrigger?.0 != context.coordinator.lastURLTrigger?.0 {
             context.coordinator.lastURLTrigger = insertURLTrigger
@@ -269,6 +276,7 @@ struct RichTextEditor: NSViewRepresentable {
         var lastBulletTrigger: UUID?
         var lastNumberingTrigger: UUID?
         var lastDateTrigger: UUID?
+        var lastTimeTrigger: UUID?
         var lastURLTrigger: (UUID, String, String)?
         weak var textView: NSTextView?
 
@@ -790,6 +798,41 @@ struct RichTextEditor: NSViewRepresentable {
             }
         }
 
+        func insertTime() {
+            guard let textView = textView,
+                  let storage = textView.textStorage else {
+                return
+            }
+
+            isProgrammaticUpdate = true
+
+            let insertionRange = textView.selectedRange
+
+            // Format the time as "HH:mm" in 24-hour format
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm"
+            let timeText = formatter.string(from: Date())
+
+            // Create attributed string with proper font attributes
+            let fontAttrs: [NSAttributedString.Key: Any] = [
+                NSAttributedString.Key.font: NSFont.systemFont(ofSize: activeFontSize.rawValue),
+                NSAttributedString.Key.foregroundColor: activeColor.nsColor,
+                ColorMapping.colorIDKey: activeColor.id,
+                ColorMapping.fontSizeKey: activeFontSize.rawValue
+            ]
+            let timeString = NSAttributedString(string: timeText, attributes: fontAttrs)
+            storage.insert(timeString, at: insertionRange.location)
+
+            let newCursorPosition = insertionRange.location + timeText.count
+            textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+
+            let newText = NSAttributedString(attributedString: storage)
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.text = newText
+                self?.isProgrammaticUpdate = false
+            }
+        }
+
         func insertURL(urlString: String, displayText: String) {
             guard let textView = textView,
                   let storage = textView.textStorage else {
@@ -869,6 +912,7 @@ struct RichTextEditor: UIViewRepresentable {
     @Binding var insertBulletTrigger: UUID?
     @Binding var insertNumberingTrigger: UUID?
     @Binding var insertDateTrigger: UUID?
+    @Binding var insertTimeTrigger: UUID?
     @Binding var insertURLTrigger: (UUID, String, String)?
     @Environment(\.colorScheme) var colorScheme
 
@@ -964,6 +1008,12 @@ struct RichTextEditor: UIViewRepresentable {
             context.coordinator.insertDate()
         }
 
+        // Handle time insertion trigger
+        if insertTimeTrigger != context.coordinator.lastTimeTrigger {
+            context.coordinator.lastTimeTrigger = insertTimeTrigger
+            context.coordinator.insertTime()
+        }
+
         // Handle URL insertion trigger
         if insertURLTrigger?.0 != context.coordinator.lastURLTrigger?.0 {
             context.coordinator.lastURLTrigger = insertURLTrigger
@@ -989,6 +1039,7 @@ struct RichTextEditor: UIViewRepresentable {
         var lastBulletTrigger: UUID?
         var lastNumberingTrigger: UUID?
         var lastDateTrigger: UUID?
+        var lastTimeTrigger: UUID?
         var lastURLTrigger: (UUID, String, String)?
         weak var textView: UITextView?
 
@@ -1528,6 +1579,40 @@ struct RichTextEditor: UIViewRepresentable {
             }
         }
 
+        func insertTime() {
+            guard let textView = textView else { return }
+
+            isProgrammaticUpdate = true
+
+            let insertionRange = textView.selectedRange
+            let mutableText = (textView.attributedText?.mutableCopy() as? NSMutableAttributedString) ?? NSMutableAttributedString()
+
+            // Format the time as "HH:mm" in 24-hour format
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm"
+            let timeText = formatter.string(from: Date())
+
+            // Create attributed string with proper font attributes
+            let fontAttrs: [NSAttributedString.Key: Any] = [
+                NSAttributedString.Key.font: UIFont.systemFont(ofSize: activeFontSize.rawValue),
+                NSAttributedString.Key.foregroundColor: activeColor.uiColor,
+                ColorMapping.colorIDKey: activeColor.id,
+                ColorMapping.fontSizeKey: activeFontSize.rawValue
+            ]
+            let timeString = NSAttributedString(string: timeText, attributes: fontAttrs)
+            mutableText.insert(timeString, at: insertionRange.location)
+
+            let newCursorPosition = insertionRange.location + timeText.count
+            textView.attributedText = mutableText
+            textView.selectedRange = NSRange(location: newCursorPosition, length: 0)
+
+            let updatedText = NSAttributedString(attributedString: mutableText)
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.text = updatedText
+                self?.isProgrammaticUpdate = false
+            }
+        }
+
         func insertURL(urlString: String, displayText: String) {
             guard let textView = textView else { return }
 
@@ -1713,6 +1798,7 @@ struct ListToolbar: View {
     @Binding var insertBulletTrigger: UUID?
     @Binding var insertNumberingTrigger: UUID?
     @Binding var insertDateTrigger: UUID?
+    @Binding var insertTimeTrigger: UUID?
     @Binding var showingAddURLDialog: Bool
     @Binding var tempURLData: (String, String)?
 
@@ -1758,6 +1844,12 @@ struct ListToolbar: View {
                     insertDateTrigger = UUID()
                 } label: {
                     Label("Insert Date", systemImage: "calendar")
+                }
+
+                Button {
+                    insertTimeTrigger = UUID()
+                } label: {
+                    Label("Insert Time", systemImage: "clock")
                 }
 
             } label: {
@@ -1821,6 +1913,12 @@ struct ListToolbar: View {
                 insertDateTrigger = UUID()
             } label: {
                 Label("Insert Date", systemImage: "calendar")
+            }
+
+            Button {
+                insertTimeTrigger = UUID()
+            } label: {
+                Label("Insert Time", systemImage: "clock")
             }
         } label: {
             Image(systemName: "list.bullet")

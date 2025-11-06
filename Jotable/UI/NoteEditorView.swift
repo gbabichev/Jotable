@@ -22,6 +22,7 @@ struct NoteEditorView: View {
     @State private var insertBulletTrigger: UUID?
     @State private var insertNumberingTrigger: UUID?
     @State private var insertDateTrigger: UUID?
+    @State private var insertTimeTrigger: UUID?
     @State private var insertURLTrigger: (UUID, String, String)?
     @State private var tempURLData: (String, String)? = nil
     @State private var showingAddURLDialog: Bool = false
@@ -88,6 +89,7 @@ struct NoteEditorView: View {
                         insertBulletTrigger: $insertBulletTrigger,
                         insertNumberingTrigger: $insertNumberingTrigger,
                         insertDateTrigger: $insertDateTrigger,
+                        insertTimeTrigger: $insertTimeTrigger,
                         insertURLTrigger: $insertURLTrigger
                     )
                         .frame(maxWidth: .infinity)
@@ -137,6 +139,7 @@ struct NoteEditorView: View {
                     insertBulletTrigger: $insertBulletTrigger,
                     insertNumberingTrigger: $insertNumberingTrigger,
                     insertDateTrigger: $insertDateTrigger,
+                    insertTimeTrigger: $insertTimeTrigger,
                     showingAddURLDialog: $showingAddURLDialog,
                     tempURLData: $tempURLData
                 )

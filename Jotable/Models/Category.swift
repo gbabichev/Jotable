@@ -37,6 +37,9 @@ extension Color {
         case "pink": return .pink
         case "yellow": return .yellow
         case "gray": return .gray
+        case "teal": return .teal
+        case "mint": return .mint
+        case "brown": return .brown
         default: return .blue
         }
     }

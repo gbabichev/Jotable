@@ -18,7 +18,7 @@ struct AddCategoryView: View {
     // Optional category for editing
     let categoryToEdit: Category?
     
-    private let availableColors = ["blue", "green", "orange", "red", "purple", "yellow", "gray"]
+    private let availableColors = ["blue", "green", "orange", "red", "purple", "yellow", "gray", "teal"]
     
     // Computed properties for UI text
     private var navigationTitle: String {
@@ -71,7 +71,11 @@ struct AddCategoryView: View {
                             .foregroundColor(.primary)
                         
                         TextField("Enter category name", text: $categoryName)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 10)
+                            .textFieldStyle(.plain)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.regularMaterial, in: Capsule())
 #if os(iOS)
                             .textInputAutocapitalization(.words)
 #endif
