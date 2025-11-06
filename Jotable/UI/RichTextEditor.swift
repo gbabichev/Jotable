@@ -134,6 +134,7 @@ struct RichTextEditor: NSViewRepresentable {
     @Binding var insertCheckedCheckboxTrigger: UUID?
     @Binding var insertBulletTrigger: UUID?
     @Binding var insertNumberingTrigger: UUID?
+    @Binding var insertDateTrigger: UUID?
     @Binding var insertURLTrigger: (UUID, String, String)?
 
     func makeCoordinator() -> Coordinator {
@@ -238,6 +239,12 @@ struct RichTextEditor: NSViewRepresentable {
             context.coordinator.insertNumbering()
         }
 
+        // Handle date insertion trigger
+        if insertDateTrigger != context.coordinator.lastDateTrigger {
+            context.coordinator.lastDateTrigger = insertDateTrigger
+            context.coordinator.insertDate()
+        }
+
         // Handle URL insertion trigger
         if insertURLTrigger?.0 != context.coordinator.lastURLTrigger?.0 {
             context.coordinator.lastURLTrigger = insertURLTrigger
@@ -261,6 +268,7 @@ struct RichTextEditor: NSViewRepresentable {
         var lastCheckedCheckboxTrigger: UUID?
         var lastBulletTrigger: UUID?
         var lastNumberingTrigger: UUID?
+        var lastDateTrigger: UUID?
         var lastURLTrigger: (UUID, String, String)?
         weak var textView: NSTextView?
 
@@ -747,6 +755,41 @@ struct RichTextEditor: NSViewRepresentable {
             }
         }
 
+        func insertDate() {
+            guard let textView = textView,
+                  let storage = textView.textStorage else {
+                return
+            }
+
+            isProgrammaticUpdate = true
+
+            let insertionRange = textView.selectedRange
+
+            // Format the date as "Wednesday, 11/5/25"
+            let formatter = DateFormatter()
+            formatter.dateFormat = "EEEE, M/d/yy"
+            let dateText = formatter.string(from: Date())
+
+            // Create attributed string with proper font attributes
+            let fontAttrs: [NSAttributedString.Key: Any] = [
+                NSAttributedString.Key.font: NSFont.systemFont(ofSize: activeFontSize.rawValue),
+                NSAttributedString.Key.foregroundColor: activeColor.nsColor,
+                ColorMapping.colorIDKey: activeColor.id,
+                ColorMapping.fontSizeKey: activeFontSize.rawValue
+            ]
+            let dateString = NSAttributedString(string: dateText, attributes: fontAttrs)
+            storage.insert(dateString, at: insertionRange.location)
+
+            let newCursorPosition = insertionRange.location + dateText.count
+            textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+
+            let newText = NSAttributedString(attributedString: storage)
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.text = newText
+                self?.isProgrammaticUpdate = false
+            }
+        }
+
         func insertURL(urlString: String, displayText: String) {
             guard let textView = textView,
                   let storage = textView.textStorage else {
@@ -825,6 +868,7 @@ struct RichTextEditor: UIViewRepresentable {
     @Binding var insertCheckedCheckboxTrigger: UUID?
     @Binding var insertBulletTrigger: UUID?
     @Binding var insertNumberingTrigger: UUID?
+    @Binding var insertDateTrigger: UUID?
     @Binding var insertURLTrigger: (UUID, String, String)?
     @Environment(\.colorScheme) var colorScheme
 
@@ -914,6 +958,12 @@ struct RichTextEditor: UIViewRepresentable {
             context.coordinator.insertNumbering()
         }
 
+        // Handle date insertion trigger
+        if insertDateTrigger != context.coordinator.lastDateTrigger {
+            context.coordinator.lastDateTrigger = insertDateTrigger
+            context.coordinator.insertDate()
+        }
+
         // Handle URL insertion trigger
         if insertURLTrigger?.0 != context.coordinator.lastURLTrigger?.0 {
             context.coordinator.lastURLTrigger = insertURLTrigger
@@ -938,6 +988,7 @@ struct RichTextEditor: UIViewRepresentable {
         var lastCheckedCheckboxTrigger: UUID?
         var lastBulletTrigger: UUID?
         var lastNumberingTrigger: UUID?
+        var lastDateTrigger: UUID?
         var lastURLTrigger: (UUID, String, String)?
         weak var textView: UITextView?
 
@@ -1443,6 +1494,40 @@ struct RichTextEditor: UIViewRepresentable {
             }
         }
 
+        func insertDate() {
+            guard let textView = textView else { return }
+
+            isProgrammaticUpdate = true
+
+            let insertionRange = textView.selectedRange
+            let mutableText = (textView.attributedText?.mutableCopy() as? NSMutableAttributedString) ?? NSMutableAttributedString()
+
+            // Format the date as "Wednesday, 11/5/25"
+            let formatter = DateFormatter()
+            formatter.dateFormat = "EEEE, M/d/yy"
+            let dateText = formatter.string(from: Date())
+
+            // Create attributed string with proper font attributes
+            let fontAttrs: [NSAttributedString.Key: Any] = [
+                NSAttributedString.Key.font: UIFont.systemFont(ofSize: activeFontSize.rawValue),
+                NSAttributedString.Key.foregroundColor: activeColor.uiColor,
+                ColorMapping.colorIDKey: activeColor.id,
+                ColorMapping.fontSizeKey: activeFontSize.rawValue
+            ]
+            let dateString = NSAttributedString(string: dateText, attributes: fontAttrs)
+            mutableText.insert(dateString, at: insertionRange.location)
+
+            let newCursorPosition = insertionRange.location + dateText.count
+            textView.attributedText = mutableText
+            textView.selectedRange = NSRange(location: newCursorPosition, length: 0)
+
+            let updatedText = NSAttributedString(attributedString: mutableText)
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.text = updatedText
+                self?.isProgrammaticUpdate = false
+            }
+        }
+
         func insertURL(urlString: String, displayText: String) {
             guard let textView = textView else { return }
 
@@ -1627,6 +1712,7 @@ struct ListToolbar: View {
     @Binding var insertCheckedCheckboxTrigger: UUID?
     @Binding var insertBulletTrigger: UUID?
     @Binding var insertNumberingTrigger: UUID?
+    @Binding var insertDateTrigger: UUID?
     @Binding var showingAddURLDialog: Bool
     @Binding var tempURLData: (String, String)?
 
@@ -1664,6 +1750,14 @@ struct ListToolbar: View {
                     showingAddURLDialog = true
                 } label: {
                     Label("Add URL", systemImage: "link")
+                }
+
+                Divider()
+                
+                Button {
+                    insertDateTrigger = UUID()
+                } label: {
+                    Label("Insert Date", systemImage: "calendar")
                 }
 
             } label: {
@@ -1719,6 +1813,14 @@ struct ListToolbar: View {
                 }
             } label: {
                 Label("Add URL", systemImage: "link")
+            }
+
+            Divider()
+            
+            Button {
+                insertDateTrigger = UUID()
+            } label: {
+                Label("Insert Date", systemImage: "calendar")
             }
         } label: {
             Image(systemName: "list.bullet")

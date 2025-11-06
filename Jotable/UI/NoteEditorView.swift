@@ -21,6 +21,7 @@ struct NoteEditorView: View {
     @State private var insertCheckedCheckboxTrigger: UUID?
     @State private var insertBulletTrigger: UUID?
     @State private var insertNumberingTrigger: UUID?
+    @State private var insertDateTrigger: UUID?
     @State private var insertURLTrigger: (UUID, String, String)?
     @State private var tempURLData: (String, String)? = nil
     @State private var showingAddURLDialog: Bool = false
@@ -86,6 +87,7 @@ struct NoteEditorView: View {
                         insertCheckedCheckboxTrigger: $insertCheckedCheckboxTrigger,
                         insertBulletTrigger: $insertBulletTrigger,
                         insertNumberingTrigger: $insertNumberingTrigger,
+                        insertDateTrigger: $insertDateTrigger,
                         insertURLTrigger: $insertURLTrigger
                     )
                         .frame(maxWidth: .infinity)
@@ -134,6 +136,7 @@ struct NoteEditorView: View {
                     insertCheckedCheckboxTrigger: $insertCheckedCheckboxTrigger,
                     insertBulletTrigger: $insertBulletTrigger,
                     insertNumberingTrigger: $insertNumberingTrigger,
+                    insertDateTrigger: $insertDateTrigger,
                     showingAddURLDialog: $showingAddURLDialog,
                     tempURLData: $tempURLData
                 )
