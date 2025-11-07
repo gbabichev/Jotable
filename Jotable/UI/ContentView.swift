@@ -43,12 +43,21 @@ struct ContentView: View {
     // Filtered items based on selected category and search
     var filteredItems: [Item] {
         var items = allItems
-        
+
+        // Get locked category IDs for filtering
+        let lockedCategoryIDs = Set(categories.filter { $0.isPrivate }.compactMap { $0.id })
+
         // If searching, ignore category scope (search across all notes)
         if searchText.isEmpty, let selectedCategory = selectedCategory {
             items = items.filter { $0.category == selectedCategory }
+        } else {
+            // When viewing "All Notes" or searching, hide notes from locked categories
+            items = items.filter { item in
+                guard let category = item.category else { return true }
+                return !lockedCategoryIDs.contains(category.id)
+            }
         }
-        
+
         // Filter by search text
         if !searchText.isEmpty {
             items = items.filter { item in
@@ -56,7 +65,7 @@ struct ContentView: View {
                 item.content.localizedCaseInsensitiveContains(searchText)
             }
         }
-        
+
         return items
     }
     
