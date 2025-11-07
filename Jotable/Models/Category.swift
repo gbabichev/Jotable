@@ -14,15 +14,17 @@ final class Category {
     var color: String = "blue"         // Add default value
     var timestamp: Date = Date()       // Add default value
     var sortOrder: Int = 0             // Add default value
-    
+    var isPrivate: Bool = false        // Privacy/lock status
+
     @Relationship(deleteRule: .nullify, inverse: \Item.category)
     var notes: [Item]? = []            // Make optional with default empty array
-    
-    init(name: String, color: String = "blue", sortOrder: Int = 0) {
+
+    init(name: String, color: String = "blue", sortOrder: Int = 0, isPrivate: Bool = false) {
         self.name = name
         self.color = color
         self.timestamp = Date()
         self.sortOrder = sortOrder
+        self.isPrivate = isPrivate
     }
 }
 

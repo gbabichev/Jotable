@@ -6,6 +6,7 @@
 import SwiftUI
 import SwiftData
 import CoreData
+import LocalAuthentication
 
 // Selection type for the sidebar
 enum SidebarSelection: Hashable {
@@ -24,6 +25,9 @@ struct ContentView: View {
     @State private var showingAddCategory = false
     @State private var categoryToEdit: Category?
     @State private var searchText = ""
+    @State private var authenticatingCategoryID: PersistentIdentifier?
+    @State private var showAuthError = false
+    @State private var authErrorMessage = ""
 
     
     // Computed property to get the selected category for filtering
@@ -64,6 +68,34 @@ struct ContentView: View {
             }
             .listStyle(SidebarListStyle())
             .navigationTitle("Jotable")
+            .onChange(of: sidebarSelection) { oldValue, newValue in
+                // Check if the newly selected item is a locked category
+                if case .category(let category) = newValue, category.isPrivate {
+                    // If we just authenticated for this category, allow the selection
+                    if authenticatingCategoryID == category.id {
+                        authenticatingCategoryID = nil
+                        return
+                    }
+
+                    // Revert selection while we authenticate
+                    sidebarSelection = oldValue
+                    authenticatingCategoryID = category.id
+                    let categoryID = category.id
+
+                    // Authenticate
+                    authenticateWithBiometrics(reason: "Authenticate to access this private category") { success in
+                        DispatchQueue.main.async {
+                            if success {
+                                // Mark as authenticated and allow selection
+                                self.authenticatingCategoryID = categoryID
+                                self.sidebarSelection = newValue
+                            } else {
+                                self.authenticatingCategoryID = nil
+                            }
+                        }
+                    }
+                }
+            }
             .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 300)
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction)
@@ -132,6 +164,13 @@ struct ContentView: View {
         .onAppear {
             setupCloudKitNotifications()
         }
+        .alert("Authentication Failed", isPresented: $showAuthError) {
+            Button("OK") {
+                showAuthError = false
+            }
+        } message: {
+            Text(authErrorMessage)
+        }
     }
     
     // Shared sidebar content
@@ -143,7 +182,8 @@ struct ContentView: View {
                 icon: "note.text",
                 title: "All Notes",
                 count: allItems.count,
-                color: nil
+                color: nil,
+                isPrivate: false
             )
             .tag(SidebarSelection.allNotes)
         }
@@ -155,7 +195,8 @@ struct ContentView: View {
                     icon: nil,
                     title: category.name,
                     count: category.notes?.count ?? 0,
-                    color: category.color
+                    color: category.color,
+                    isPrivate: category.isPrivate
                 )
                 .tag(SidebarSelection.category(category))
                 .contextMenu {
@@ -164,15 +205,34 @@ struct ContentView: View {
                     } label: {
                         Label("Edit", systemImage: "pencil")
                     }
-                    
+
                     Divider()
-                    
+
+                    Button {
+                        togglePrivacy(for: category)
+                    } label: {
+                        Label(
+                            category.isPrivate ? "Unlock" : "Lock",
+                            systemImage: category.isPrivate ? "lock.open" : "lock"
+                        )
+                    }
+
                     Button(role: .destructive) {
                         deleteCategory(category)
                     } label: {
                         Label("Delete", systemImage: "trash")
                     }
                 }
+                #if os(iOS)
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button(role: .none) {
+                        togglePrivacy(for: category)
+                    } label: {
+                        Label(category.isPrivate ? "Unlock" : "Lock", systemImage: category.isPrivate ? "lock.open" : "lock")
+                    }
+                    .tint(.blue)
+                }
+                #endif
             }
             .onMove(perform: moveCategories)
             .onDelete(perform: deleteCategories)
@@ -328,7 +388,89 @@ struct ContentView: View {
             }
         }
     }
-    
+
+    private func togglePrivacy(for category: Category) {
+        // If disabling privacy, just toggle it off
+        if category.isPrivate {
+            category.isPrivate = false
+            saveCategory()
+            return
+        }
+
+        // If enabling privacy, verify with biometrics first
+        authenticateWithBiometrics(reason: "Authenticate to enable privacy for this category") { success in
+            if success {
+                category.isPrivate = true
+                self.saveCategory()
+            }
+        }
+    }
+
+    private func saveCategory() {
+        withAnimation {
+            do {
+                try modelContext.save()
+                print("✅ Category privacy setting updated - CloudKit sync queued")
+            } catch {
+                print("❌ Failed to save category: \(error)")
+                authErrorMessage = "Failed to save privacy setting"
+                showAuthError = true
+            }
+        }
+    }
+
+    private func authenticateWithBiometrics(reason: String = "Authenticate to continue", completion: @escaping (Bool) -> Void) {
+        let context = LAContext()
+        var error: NSError?
+
+        // Check if biometric authentication is available
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
+            authErrorMessage = error?.localizedDescription ?? "Biometric authentication not available"
+            showAuthError = true
+            completion(false)
+            return
+        }
+
+        // Perform biometric authentication
+        // Suppress Sendable warning - completion is dispatched to main thread and auth callbacks are safe
+        nonisolated(unsafe) let unsafeCompletion = completion
+        context.evaluatePolicy(
+            .deviceOwnerAuthenticationWithBiometrics,
+            localizedReason: reason
+        ) { success, error in
+            if success {
+                DispatchQueue.main.async {
+                    unsafeCompletion(true)
+                }
+            } else {
+                let errorMessage: String
+                if let error = error as? LAError {
+                    switch error.code {
+                    case .userCancel:
+                        errorMessage = "Authentication cancelled"
+                    case .userFallback:
+                        errorMessage = "Authentication failed"
+                    case .biometryNotAvailable:
+                        errorMessage = "Biometric authentication not available"
+                    case .biometryNotEnrolled:
+                        errorMessage = "No biometric data enrolled"
+                    case .biometryLockout:
+                        errorMessage = "Too many failed attempts. Try again later."
+                    default:
+                        errorMessage = error.localizedDescription
+                    }
+                } else {
+                    errorMessage = error?.localizedDescription ?? "Authentication failed"
+                }
+                DispatchQueue.main.async {
+                    self.authErrorMessage = errorMessage
+                    self.showAuthError = true
+                    unsafeCompletion(false)
+                }
+            }
+        }
+    }
+
     private func deleteEverything() {
         // Clear selection IMMEDIATELY and SYNCHRONOUSLY before any deletion
         selectedItem = nil
@@ -424,7 +566,8 @@ struct CategoryRowView: View {
     let title: String
     let count: Int
     let color: String?
-    
+    let isPrivate: Bool
+
     var body: some View {
         HStack {
             if let icon = icon {
@@ -435,11 +578,17 @@ struct CategoryRowView: View {
                     .fill(Color.fromString(color))
                     .frame(width: 12, height: 12)
             }
-            
+
             Text(title)
-            
+
+            if isPrivate {
+                Image(systemName: "lock.fill")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+
             Spacer()
-            
+
             Text("\(count)")
                 .foregroundColor(.secondary)
                 .font(.caption)
