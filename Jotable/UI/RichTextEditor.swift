@@ -1074,10 +1074,9 @@ struct RichTextEditor: UIViewRepresentable {
 
             // Scan for text missing the colorIDKey (what autocorrect strips) and apply the active color
             if let mutableText = textView.attributedText?.mutableCopy() as? NSMutableAttributedString {
-                var fixed = false
+                var textChanged = false
                 let length = mutableText.length
                 var i = 0
-                var uncoloredCount = 0
 
                 while i < length {
                     var effectiveRange = NSRange()
@@ -1086,22 +1085,14 @@ struct RichTextEditor: UIViewRepresentable {
                     // If this range has no colorIDKey, it lost its color info (autocorrect stripped it)
                     // Apply the active color with its colorIDKey
                     if attrs[ColorMapping.colorIDKey] == nil {
-                        uncoloredCount += 1
                         let colorAttrs: [NSAttributedString.Key: Any] = [
                             NSAttributedString.Key.foregroundColor: activeColor.uiColor,
                             ColorMapping.colorIDKey: activeColor.id
                         ]
                         mutableText.addAttributes(colorAttrs, range: effectiveRange)
-                        fixed = true
+                        textChanged = true
                     }
                     i = effectiveRange.location + effectiveRange.length
-                }
-
-                if fixed {
-                    isProgrammaticUpdate = true
-                    textView.attributedText = mutableText
-                    textView.selectedRange = cursorPosition
-                    isProgrammaticUpdate = false
                 }
 
                 // Convert checkbox patterns to attachments
@@ -1112,19 +1103,26 @@ struct RichTextEditor: UIViewRepresentable {
                     ColorMapping.fontSizeKey: activeFontSize.rawValue
                 ]
                 if AutoFormatting.convertCheckboxPatterns(in: mutableText, spaceAttributes: spaceAttrs) {
+                    textChanged = true
+                }
+
+                // Only update UI if we actually changed something
+                if textChanged {
                     isProgrammaticUpdate = true
                     textView.attributedText = mutableText
                     textView.selectedRange = cursorPosition
-                    isProgrammaticUpdate = false
+
+                    // Defer binding update to ensure UI updates complete first
+                    DispatchQueue.main.async { [weak self] in
+                        self?.parent.text = mutableText
+                        self?.isProgrammaticUpdate = false
+                    }
                 }
             }
 
             // Restore typing attributes after text changes
             textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.uiColor
             textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
-
-            let updatedText = textView.attributedText ?? NSAttributedString()
-            parent.text = updatedText
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
