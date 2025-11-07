@@ -267,6 +267,7 @@ struct RichTextEditor: NSViewRepresentable {
         context.coordinator.handleAppearanceChange()
     }
 
+    @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: RichTextEditor
         var activeColor: RichTextColor
@@ -1034,6 +1035,7 @@ struct RichTextEditor: UIViewRepresentable {
         context.coordinator.handleAppearanceChange(to: uiView)
     }
 
+    @MainActor
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: RichTextEditor
         var activeColor: RichTextColor
@@ -1082,18 +1084,20 @@ struct RichTextEditor: UIViewRepresentable {
 
         private func scheduleDeferredTextFix(for textView: UITextView, delay: TimeInterval = 0.15) {
             fixTextTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self, weak textView] _ in
-                guard let self = self else { return }
-                self.fixTextTimer = nil
+                Task { @MainActor [weak self, weak textView] in
+                    guard let self = self else { return }
+                    self.fixTextTimer = nil
 
-                guard let textView = textView else { return }
+                    guard let textView = textView else { return }
 
-                // If iOS is still managing marked text (autocorrect/composition), postpone the fix again
-                if textView.markedTextRange != nil {
-                    self.scheduleDeferredTextFix(for: textView, delay: delay)
-                    return
+                    // If iOS is still managing marked text (autocorrect/composition), postpone the fix again
+                    if textView.markedTextRange != nil {
+                        self.scheduleDeferredTextFix(for: textView, delay: delay)
+                        return
+                    }
+
+                    self.fixUncoloredText(in: textView)
                 }
-
-                self.fixUncoloredText(in: textView)
             }
         }
 
