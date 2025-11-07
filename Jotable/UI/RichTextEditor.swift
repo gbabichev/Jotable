@@ -1072,6 +1072,7 @@ struct RichTextEditor: UIViewRepresentable {
             parent.text = updatedText
 
             _ = applyPendingReplacementAttributesIfNeeded(to: textView)
+            fixAutoPeriodColorIfNeeded(in: textView)
 
             // Cancel any pending timer to debounce rapid text changes (like holding delete key)
             fixTextTimer?.invalidate()
@@ -1114,7 +1115,21 @@ struct RichTextEditor: UIViewRepresentable {
             guard pending.range.location <= maxLength else { return false }
             let availableLength = max(0, maxLength - pending.range.location)
             guard availableLength > 0 else { return false }
-            let clampedLength = min(pending.newLength, availableLength)
+
+            var effectiveLength = min(pending.newLength, availableLength)
+
+            if pending.range.length == 0,
+               pending.newLength == 1,
+               availableLength >= 2,
+               let attributedText = textView.attributedText {
+                let checkRange = NSRange(location: pending.range.location, length: 2)
+                if checkRange.upperBound <= attributedText.length {
+                    let substring = attributedText.attributedSubstring(from: checkRange).string
+                    if substring == ". " {
+                        effectiveLength = 2
+                    }
+                }
+            }
 
             let resolvedColorID: String
             let resolvedColor: UIColor
@@ -1137,13 +1152,57 @@ struct RichTextEditor: UIViewRepresentable {
 
             let currentSelection = textView.selectedRange
             isProgrammaticUpdate = true
-            textView.textStorage.addAttributes(attrs, range: NSRange(location: pending.range.location, length: clampedLength))
+            textView.textStorage.addAttributes(attrs, range: NSRange(location: pending.range.location, length: effectiveLength))
             isProgrammaticUpdate = false
             textView.selectedRange = currentSelection
 
             parent.text = textView.attributedText ?? NSAttributedString()
 
             return true
+        }
+
+        private func fixAutoPeriodColorIfNeeded(in textView: UITextView) {
+            guard pendingReplacementAttributes == nil else { return }
+            guard textView.markedTextRange == nil else { return }
+            let selection = textView.selectedRange
+            guard selection.length == 0 else { return }
+            guard let attributed = textView.attributedText else { return }
+            let cursorLocation = selection.location
+            guard cursorLocation >= 2, cursorLocation <= attributed.length else { return }
+            let rangeStart = cursorLocation - 2
+            let autoPeriodRange = NSRange(location: rangeStart, length: min(2, attributed.length - rangeStart))
+            guard autoPeriodRange.length == 2 else { return }
+
+            let substring = attributed.attributedSubstring(from: autoPeriodRange).string
+            guard substring == ". " else { return }
+
+            var needsFix = false
+            for offset in 0..<autoPeriodRange.length {
+                let index = autoPeriodRange.location + offset
+                if attributed.attribute(NSAttributedString.Key.foregroundColor, at: index, effectiveRange: nil) == nil ||
+                    attributed.attribute(ColorMapping.colorIDKey, at: index, effectiveRange: nil) == nil {
+                    needsFix = true
+                    break
+                }
+            }
+            if !needsFix { return }
+
+            let sampleIndex = max(0, autoPeriodRange.location - 1)
+            let clampedSampleIndex = min(sampleIndex, max(0, attributed.length - 1))
+            let sampleAttrs = attributed.attributes(at: clampedSampleIndex, effectiveRange: nil)
+
+            let resolvedColorID = (sampleAttrs[ColorMapping.colorIDKey] as? String) ?? activeColor.id
+            let resolvedColor = (sampleAttrs[NSAttributedString.Key.foregroundColor] as? UIColor) ?? RichTextColor.from(id: resolvedColorID).uiColor
+
+            let attrs: [NSAttributedString.Key: Any] = [
+                NSAttributedString.Key.foregroundColor: resolvedColor,
+                ColorMapping.colorIDKey: resolvedColorID
+            ]
+
+            isProgrammaticUpdate = true
+            textView.textStorage.addAttributes(attrs, range: autoPeriodRange)
+            isProgrammaticUpdate = false
+            parent.text = textView.attributedText ?? NSAttributedString()
         }
 
         /// Validates and constrains a cursor position to valid bounds
@@ -1351,30 +1410,89 @@ struct RichTextEditor: UIViewRepresentable {
         }
 
         func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            if handleAutoPeriodReplacement(in: textView, range: range, replacementText: text) {
+                return false
+            }
+
             // Handle return key for auto-numbering and auto-formatting
             if text == "\n" {
                 return handleReturnKey(textView: textView, range: range)
             }
 
-            if range.length > 0 && !text.isEmpty {
-                let attributedLength = textView.attributedText?.length ?? 0
-                var existingColor: UIColor?
-                var existingColorID: String?
+            if !text.isEmpty {
+                let isAutoPeriod = (range.length == 0 && text == ". " && range.location > 0)
+                let shouldCapture = range.length > 0 || isAutoPeriod
 
-                if attributedLength > 0 {
-                    let attributeLocation = min(range.location, max(0, attributedLength - 1))
-                    if attributeLocation < attributedLength {
+                if shouldCapture {
+                    let attributedLength = textView.attributedText?.length ?? 0
+                    var attributeLocation = range.location
+                    if isAutoPeriod {
+                        attributeLocation = max(0, range.location - 1)
+                    }
+                    attributeLocation = min(attributeLocation, max(0, attributedLength - 1))
+
+                    var existingColor: UIColor?
+                    var existingColorID: String?
+
+                    if attributedLength > 0 && attributeLocation < attributedLength {
                         let attrs = textView.attributedText?.attributes(at: attributeLocation, effectiveRange: nil)
                         existingColor = attrs?[NSAttributedString.Key.foregroundColor] as? UIColor
                         existingColorID = attrs?[ColorMapping.colorIDKey] as? String
                     }
-                }
 
-                let newLength = (text as NSString).length
-                pendingReplacementAttributes = (range: range, newLength: newLength, color: existingColor, colorID: existingColorID)
+                    let newLength = (text as NSString).length
+                    pendingReplacementAttributes = (range: range, newLength: newLength, color: existingColor, colorID: existingColorID)
+                } else {
+                    pendingReplacementAttributes = nil
+                }
             } else {
                 pendingReplacementAttributes = nil
             }
+            return true
+        }
+
+        private func handleAutoPeriodReplacement(in textView: UITextView, range: NSRange, replacementText text: String) -> Bool {
+            guard text == ". ",
+                  range.location > 0,
+                  let mutableText = textView.attributedText?.mutableCopy() as? NSMutableAttributedString else {
+                return false
+            }
+
+            var attributes = textView.typingAttributes
+            let attributedLength = mutableText.length
+
+            if attributedLength > 0 {
+                let sampleIndex = min(max(range.location - 1, 0), attributedLength - 1)
+                if sampleIndex < attributedLength {
+                    let sampleAttrs = mutableText.attributes(at: sampleIndex, effectiveRange: nil)
+                    for (key, value) in sampleAttrs {
+                        attributes[key] = value
+                    }
+                }
+            }
+
+            if attributes[NSAttributedString.Key.foregroundColor] == nil {
+                attributes[NSAttributedString.Key.foregroundColor] = activeColor.uiColor
+            }
+            if attributes[ColorMapping.colorIDKey] == nil {
+                attributes[ColorMapping.colorIDKey] = activeColor.id
+            }
+            if attributes[ColorMapping.fontSizeKey] == nil {
+                attributes[ColorMapping.fontSizeKey] = activeFontSize.rawValue
+            }
+
+            let replacement = NSAttributedString(string: text, attributes: attributes)
+
+            let newCursorLocation = range.location + replacement.length
+
+            isProgrammaticUpdate = true
+            mutableText.replaceCharacters(in: range, with: replacement)
+            textView.attributedText = mutableText
+            textView.selectedRange = NSRange(location: newCursorLocation, length: 0)
+            parent.text = mutableText
+            isProgrammaticUpdate = false
+
+            pendingReplacementAttributes = nil
             return true
         }
 
