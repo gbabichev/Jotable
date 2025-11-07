@@ -955,8 +955,8 @@ struct RichTextEditor: UIViewRepresentable {
                 // Save cursor position before updating text
                 let cursorPosition = uiView.selectedRange
                 uiView.attributedText = text
-                // Restore cursor position after updating text
-                uiView.selectedRange = cursorPosition
+                // Restore cursor position after updating text, with bounds validation
+                context.coordinator.setCursorPosition(cursorPosition, in: uiView)
                 context.coordinator.isProgrammaticUpdate = false
             }
         }
@@ -1050,6 +1050,8 @@ struct RichTextEditor: UIViewRepresentable {
         var lastTimeTrigger: UUID?
         var lastURLTrigger: (UUID, String, String)?
         weak var textView: UITextView?
+        private var fixTextTimer: Timer?
+        private var pendingReplacementAttributes: (range: NSRange, newLength: Int, color: UIColor?, colorID: String?)?
 
         init(_ parent: RichTextEditor) {
             self.parent = parent
@@ -1063,11 +1065,96 @@ struct RichTextEditor: UIViewRepresentable {
         func textViewDidChange(_ textView: UITextView) {
             guard !isProgrammaticUpdate else { return }
 
-            // Defer uncolored text fixing to avoid interfering with autocorrect
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak textView] in
-                guard let self = self, let textView = textView else { return }
+            // Push latest text to the SwiftUI binding immediately so SwiftUI does not overwrite user edits
+            let updatedText = textView.attributedText ?? NSAttributedString()
+            parent.text = updatedText
+
+            _ = applyPendingReplacementAttributesIfNeeded(to: textView)
+
+            // Cancel any pending timer to debounce rapid text changes (like holding delete key)
+            fixTextTimer?.invalidate()
+            fixTextTimer = nil
+
+            // Debounce fixUncoloredText to execute AFTER rapid changes stop
+            // This prevents interference with word/line deletion on iOS when holding delete key
+            scheduleDeferredTextFix(for: textView)
+        }
+
+        private func scheduleDeferredTextFix(for textView: UITextView, delay: TimeInterval = 0.15) {
+            fixTextTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self, weak textView] _ in
+                guard let self = self else { return }
+                self.fixTextTimer = nil
+
+                guard let textView = textView else { return }
+
+                // If iOS is still managing marked text (autocorrect/composition), postpone the fix again
+                if textView.markedTextRange != nil {
+                    self.scheduleDeferredTextFix(for: textView, delay: delay)
+                    return
+                }
+
                 self.fixUncoloredText(in: textView)
             }
+        }
+
+        @discardableResult
+        private func applyPendingReplacementAttributesIfNeeded(to textView: UITextView) -> Bool {
+            guard textView.markedTextRange == nil,
+                  let pending = pendingReplacementAttributes else {
+                return false
+            }
+            pendingReplacementAttributes = nil
+
+            guard pending.newLength > 0 else { return false }
+            let maxLength = textView.attributedText?.length ?? 0
+            guard pending.range.location <= maxLength else { return false }
+            let availableLength = max(0, maxLength - pending.range.location)
+            guard availableLength > 0 else { return false }
+            let clampedLength = min(pending.newLength, availableLength)
+
+            let resolvedColorID: String
+            let resolvedColor: UIColor
+
+            if let colorID = pending.colorID {
+                resolvedColorID = colorID
+                resolvedColor = RichTextColor.from(id: colorID).uiColor
+            } else if let color = pending.color {
+                resolvedColor = color
+                resolvedColorID = activeColor.id
+            } else {
+                resolvedColor = activeColor.uiColor
+                resolvedColorID = activeColor.id
+            }
+
+            let attrs: [NSAttributedString.Key: Any] = [
+                NSAttributedString.Key.foregroundColor: resolvedColor,
+                ColorMapping.colorIDKey: resolvedColorID
+            ]
+
+            let currentSelection = textView.selectedRange
+            isProgrammaticUpdate = true
+            textView.textStorage.addAttributes(attrs, range: NSRange(location: pending.range.location, length: clampedLength))
+            isProgrammaticUpdate = false
+            textView.selectedRange = currentSelection
+
+            parent.text = textView.attributedText ?? NSAttributedString()
+
+            return true
+        }
+
+        /// Validates and constrains a cursor position to valid bounds
+        func validateCursorPosition(_ position: NSRange, for textView: UITextView) -> NSRange {
+            let maxLength = textView.attributedText?.length ?? 0
+            let validLocation = min(max(0, position.location), maxLength)
+            let remainingLength = max(0, maxLength - validLocation)
+            let validLength = min(max(0, position.length), remainingLength)
+            return NSRange(location: validLocation, length: validLength)
+        }
+
+        /// Safely sets the cursor position with bounds checking
+        func setCursorPosition(_ position: NSRange, in textView: UITextView) {
+            let validPosition = validateCursorPosition(position, for: textView)
+            textView.selectedRange = validPosition
         }
 
         private func fixUncoloredText(in textView: UITextView) {
@@ -1084,13 +1171,27 @@ struct RichTextEditor: UIViewRepresentable {
                     var effectiveRange = NSRange()
                     let attrs = mutableText.attributes(at: i, effectiveRange: &effectiveRange)
 
-                    // If this range has no colorIDKey, it lost its color info (autocorrect stripped it)
-                    // Apply the active color with its colorIDKey
-                    if attrs[ColorMapping.colorIDKey] == nil {
-                        let colorAttrs: [NSAttributedString.Key: Any] = [
-                            NSAttributedString.Key.foregroundColor: activeColor.uiColor,
-                            ColorMapping.colorIDKey: activeColor.id
-                        ]
+                    let storedColorID = attrs[ColorMapping.colorIDKey] as? String
+                    let expectedColor: UIColor
+                    let expectedColorID: String
+
+                    if let storedColorID = storedColorID {
+                        let color = RichTextColor.from(id: storedColorID)
+                        expectedColor = color.uiColor
+                        expectedColorID = storedColorID
+                    } else {
+                        expectedColor = activeColor.uiColor
+                        expectedColorID = activeColor.id
+                    }
+
+                    let currentColor = attrs[NSAttributedString.Key.foregroundColor] as? UIColor
+                    let needsColorFix = currentColor == nil || !currentColor!.isEqual(expectedColor)
+                    let needsIDFix = storedColorID == nil
+
+                    if needsColorFix || needsIDFix {
+                        var colorAttrs: [NSAttributedString.Key: Any] = [:]
+                        colorAttrs[NSAttributedString.Key.foregroundColor] = expectedColor
+                        colorAttrs[ColorMapping.colorIDKey] = expectedColorID
                         mutableText.addAttributes(colorAttrs, range: effectiveRange)
                         textChanged = true
                     }
@@ -1112,7 +1213,7 @@ struct RichTextEditor: UIViewRepresentable {
                 if textChanged {
                     isProgrammaticUpdate = true
                     textView.attributedText = mutableText
-                    textView.selectedRange = cursorPosition
+                    setCursorPosition(cursorPosition, in: textView)
                     isProgrammaticUpdate = false
                 }
             }
@@ -1249,6 +1350,26 @@ struct RichTextEditor: UIViewRepresentable {
             // Handle return key for auto-numbering and auto-formatting
             if text == "\n" {
                 return handleReturnKey(textView: textView, range: range)
+            }
+
+            if range.length > 0 && !text.isEmpty {
+                let attributedLength = textView.attributedText?.length ?? 0
+                var existingColor: UIColor?
+                var existingColorID: String?
+
+                if attributedLength > 0 {
+                    let attributeLocation = min(range.location, max(0, attributedLength - 1))
+                    if attributeLocation < attributedLength {
+                        let attrs = textView.attributedText?.attributes(at: attributeLocation, effectiveRange: nil)
+                        existingColor = attrs?[NSAttributedString.Key.foregroundColor] as? UIColor
+                        existingColorID = attrs?[ColorMapping.colorIDKey] as? String
+                    }
+                }
+
+                let newLength = (text as NSString).length
+                pendingReplacementAttributes = (range: range, newLength: newLength, color: existingColor, colorID: existingColorID)
+            } else {
+                pendingReplacementAttributes = nil
             }
             return true
         }
@@ -1519,13 +1640,13 @@ struct RichTextEditor: UIViewRepresentable {
 
             let newCursorPosition = insertionRange.location + bulletText.count
             textView.attributedText = mutableText
-            textView.selectedRange = NSRange(location: newCursorPosition, length: 0)
+            setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
 
+            // Update binding synchronously while isProgrammaticUpdate is true to prevent race conditions
             let updatedText = NSAttributedString(attributedString: mutableText)
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.text = updatedText
-                self?.isProgrammaticUpdate = false
-            }
+            parent.text = updatedText
+
+            isProgrammaticUpdate = false
         }
 
         func insertNumbering() {
@@ -1549,13 +1670,13 @@ struct RichTextEditor: UIViewRepresentable {
 
             let newCursorPosition = insertionRange.location + numberText.count
             textView.attributedText = mutableText
-            textView.selectedRange = NSRange(location: newCursorPosition, length: 0)
+            setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
 
+            // Update binding synchronously while isProgrammaticUpdate is true to prevent race conditions
             let updatedText = NSAttributedString(attributedString: mutableText)
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.text = updatedText
-                self?.isProgrammaticUpdate = false
-            }
+            parent.text = updatedText
+
+            isProgrammaticUpdate = false
         }
 
         func insertDate() {
@@ -1583,13 +1704,13 @@ struct RichTextEditor: UIViewRepresentable {
 
             let newCursorPosition = insertionRange.location + dateText.count
             textView.attributedText = mutableText
-            textView.selectedRange = NSRange(location: newCursorPosition, length: 0)
+            setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
 
+            // Update binding synchronously while isProgrammaticUpdate is true to prevent race conditions
             let updatedText = NSAttributedString(attributedString: mutableText)
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.text = updatedText
-                self?.isProgrammaticUpdate = false
-            }
+            parent.text = updatedText
+
+            isProgrammaticUpdate = false
         }
 
         func insertTime() {
@@ -1617,13 +1738,13 @@ struct RichTextEditor: UIViewRepresentable {
 
             let newCursorPosition = insertionRange.location + timeText.count
             textView.attributedText = mutableText
-            textView.selectedRange = NSRange(location: newCursorPosition, length: 0)
+            setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
 
+            // Update binding synchronously while isProgrammaticUpdate is true to prevent race conditions
             let updatedText = NSAttributedString(attributedString: mutableText)
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.text = updatedText
-                self?.isProgrammaticUpdate = false
-            }
+            parent.text = updatedText
+
+            isProgrammaticUpdate = false
         }
 
         func insertURL(urlString: String, displayText: String) {
@@ -1680,13 +1801,13 @@ struct RichTextEditor: UIViewRepresentable {
 
             let newCursorPosition = spaceInsertionPos + 1
             textView.attributedText = mutableText
-            textView.selectedRange = NSRange(location: newCursorPosition, length: 0)
+            setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
 
+            // Update binding synchronously while isProgrammaticUpdate is true to prevent race conditions
             let updatedText = NSAttributedString(attributedString: mutableText)
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.text = updatedText
-                self?.isProgrammaticUpdate = false
-            }
+            parent.text = updatedText
+
+            isProgrammaticUpdate = false
         }
     }
 }
