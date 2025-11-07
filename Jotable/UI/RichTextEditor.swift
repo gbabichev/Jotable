@@ -186,7 +186,11 @@ struct RichTextEditor: NSViewRepresentable {
            !text.isEqual(to: currentText) {
             context.coordinator.isProgrammaticUpdate = true
 
+            // Save cursor position before updating text
+            let cursorPosition = textView.selectedRange
             textView.textStorage?.setAttributedString(text)
+            // Restore cursor position after updating text
+            textView.setSelectedRange(cursorPosition)
 
             context.coordinator.isProgrammaticUpdate = false
         }
@@ -948,7 +952,11 @@ struct RichTextEditor: UIViewRepresentable {
             let currentText = uiView.attributedText ?? NSAttributedString()
             if !text.isEqual(to: currentText) {
                 context.coordinator.isProgrammaticUpdate = true
+                // Save cursor position before updating text
+                let cursorPosition = uiView.selectedRange
                 uiView.attributedText = text
+                // Restore cursor position after updating text
+                uiView.selectedRange = cursorPosition
                 context.coordinator.isProgrammaticUpdate = false
             }
         }
@@ -1061,6 +1069,9 @@ struct RichTextEditor: UIViewRepresentable {
         }
 
         private func fixUncoloredText(in textView: UITextView) {
+            // Save the current cursor position to restore it after modifications
+            let cursorPosition = textView.selectedRange
+
             // Scan for text missing the colorIDKey (what autocorrect strips) and apply the active color
             if let mutableText = textView.attributedText?.mutableCopy() as? NSMutableAttributedString {
                 var fixed = false
@@ -1076,7 +1087,6 @@ struct RichTextEditor: UIViewRepresentable {
                     // Apply the active color with its colorIDKey
                     if attrs[ColorMapping.colorIDKey] == nil {
                         uncoloredCount += 1
-                        print("DEBUG: Found uncolored text at \(effectiveRange)")
                         let colorAttrs: [NSAttributedString.Key: Any] = [
                             NSAttributedString.Key.foregroundColor: activeColor.uiColor,
                             ColorMapping.colorIDKey: activeColor.id
@@ -1087,11 +1097,10 @@ struct RichTextEditor: UIViewRepresentable {
                     i = effectiveRange.location + effectiveRange.length
                 }
 
-                print("DEBUG: fixUncoloredText - found \(uncoloredCount) uncolored ranges, fixed=\(fixed), activeColor=\(activeColor)")
-
                 if fixed {
                     isProgrammaticUpdate = true
                     textView.attributedText = mutableText
+                    textView.selectedRange = cursorPosition
                     isProgrammaticUpdate = false
                 }
 
@@ -1105,6 +1114,7 @@ struct RichTextEditor: UIViewRepresentable {
                 if AutoFormatting.convertCheckboxPatterns(in: mutableText, spaceAttributes: spaceAttrs) {
                     isProgrammaticUpdate = true
                     textView.attributedText = mutableText
+                    textView.selectedRange = cursorPosition
                     isProgrammaticUpdate = false
                 }
             }
