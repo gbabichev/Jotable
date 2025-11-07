@@ -1063,9 +1063,11 @@ struct RichTextEditor: UIViewRepresentable {
         func textViewDidChange(_ textView: UITextView) {
             guard !isProgrammaticUpdate else { return }
 
-            // Fix text that lost color due to autocorrect or other system changes
-            // This runs on every text change and scans for uncolored text
-            fixUncoloredText(in: textView)
+            // Defer uncolored text fixing to avoid interfering with autocorrect
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak textView] in
+                guard let self = self, let textView = textView else { return }
+                self.fixUncoloredText(in: textView)
+            }
         }
 
         private func fixUncoloredText(in textView: UITextView) {
@@ -1111,13 +1113,16 @@ struct RichTextEditor: UIViewRepresentable {
                     isProgrammaticUpdate = true
                     textView.attributedText = mutableText
                     textView.selectedRange = cursorPosition
-
-                    // Defer binding update to ensure UI updates complete first
-                    DispatchQueue.main.async { [weak self] in
-                        self?.parent.text = mutableText
-                        self?.isProgrammaticUpdate = false
-                    }
+                    isProgrammaticUpdate = false
                 }
+            }
+
+            // Always update binding to ensure text is saved
+            isProgrammaticUpdate = true
+            let updatedText = textView.attributedText ?? NSAttributedString()
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.text = updatedText
+                self?.isProgrammaticUpdate = false
             }
 
             // Restore typing attributes after text changes
