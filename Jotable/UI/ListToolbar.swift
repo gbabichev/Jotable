@@ -45,10 +45,8 @@ struct ListToolbar: View {
             Button {
                 insertUncheckedCheckboxTrigger = UUID()
             } label: {
-                Label("Unchecked Checkbox", systemImage: "square")
+                Label("Checkbox", systemImage: "square")
             }
-
-            Divider()
 
             Button {
                 insertBulletTrigger = UUID()

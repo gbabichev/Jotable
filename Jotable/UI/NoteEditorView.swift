@@ -28,34 +28,13 @@ struct NoteEditorView: View {
     @State private var showingAddURLDialog: Bool = false
     @State private var headerHeight: CGFloat = 0
 
-    @ViewBuilder
     var body: some View {
-#if os(iOS)
         editorContent
-            .sheet(isPresented: $showingAddURLDialog) {
-                NavigationStack {
-                    AddURLView(tempURLData: $tempURLData)
-                }
-            }
+            .addURLSheet(isPresented: $showingAddURLDialog, tempURLData: $tempURLData)
             .onChange(of: tempURLData != nil) { _, hasData in
-                guard hasData, let (urlString, displayText) = tempURLData else { return }
-                DispatchQueue.main.async {
-                    insertURLTrigger = (UUID(), urlString, displayText)
-                    showingAddURLDialog = false
-                    tempURLData = nil
-                }
+                guard hasData else { return }
+                handlePendingURLData(tempURLData)
             }
-#else
-        editorContent
-            .onChange(of: tempURLData != nil) { _, hasData in
-                guard hasData, let (urlString, displayText) = tempURLData else { return }
-                DispatchQueue.main.async {
-                    insertURLTrigger = (UUID(), urlString, displayText)
-                    showingAddURLDialog = false
-                    tempURLData = nil
-                }
-            }
-#endif
     }
 
     private var editorContent: some View {
@@ -102,11 +81,6 @@ struct NoteEditorView: View {
             .scrollDismissesKeyboard(.interactively)
             .onPreferenceChange(HeaderHeightPreferenceKey.self) { headerHeight = $0 }
         }
-#if !os(macOS)
-        .sheet(isPresented: $showingCategoryPicker) {
-            CategoryPickerView(selectedCategory: $item.category)
-        }
-#endif
         .onAppear {
             loadContentIfNeeded()
             if item.title.isEmpty && item.content.isEmpty {
@@ -198,16 +172,7 @@ struct NoteEditorView: View {
             .padding(.vertical, 4)
             .background(Color.secondary.opacity(0.1))
             .cornerRadius(6)
-#if os(macOS)
-            .popover(
-                isPresented: $showingCategoryPicker,
-                attachmentAnchor: .rect(.bounds),
-                arrowEdge: .bottom
-            ) {
-                CategoryPickerView(selectedCategory: $item.category)
-                    .frame(width: 280, height: 320)
-            }
-#endif
+            .categoryPickerPresenter(isPresented: $showingCategoryPicker, selectedCategory: $item.category)
         }
     }
 
@@ -265,6 +230,15 @@ struct NoteEditorView: View {
         } catch {
         }
     }
+
+    private func handlePendingURLData(_ data: (String, String)?) {
+        guard let (urlString, displayText) = data else { return }
+        DispatchQueue.main.async {
+            insertURLTrigger = (UUID(), urlString, displayText)
+            showingAddURLDialog = false
+            tempURLData = nil
+        }
+    }
 }
 
 private struct HeaderHeightPreferenceKey: PreferenceKey {
@@ -282,3 +256,38 @@ private struct AttributedTextWrapper: Equatable {
         lhs.value.isEqual(to: rhs.value)
     }
 }
+
+#if os(macOS)
+private extension View {
+    func addURLSheet(isPresented: Binding<Bool>, tempURLData: Binding<(String, String)?>) -> some View {
+        self
+    }
+
+    func categoryPickerPresenter(isPresented: Binding<Bool>, selectedCategory: Binding<Category?>) -> some View {
+        popover(
+            isPresented: isPresented,
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .bottom
+        ) {
+            CategoryPickerView(selectedCategory: selectedCategory)
+                .frame(width: 280, height: 320)
+        }
+    }
+}
+#else
+private extension View {
+    func addURLSheet(isPresented: Binding<Bool>, tempURLData: Binding<(String, String)?>) -> some View {
+        sheet(isPresented: isPresented) {
+            NavigationStack {
+                AddURLView(tempURLData: tempURLData)
+            }
+        }
+    }
+
+    func categoryPickerPresenter(isPresented: Binding<Bool>, selectedCategory: Binding<Category?>) -> some View {
+        sheet(isPresented: isPresented) {
+            CategoryPickerView(selectedCategory: selectedCategory)
+        }
+    }
+}
+#endif
