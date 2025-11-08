@@ -187,10 +187,53 @@ enum HighlighterColor: Equatable, Identifiable, CaseIterable {
 
 private final class DynamicColorTextView: NSTextView {
     var onAppearanceChange: (() -> Void)?
+    var onCheckboxTap: ((Int) -> Void)?
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         onAppearanceChange?()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard event.type == .leftMouseDown else {
+            super.mouseDown(with: event)
+            return
+        }
+
+        let localPoint = convert(event.locationInWindow, from: nil)
+        if event.clickCount == 1,
+           let charIndex = checkboxCharacterIndex(at: localPoint) {
+            onCheckboxTap?(charIndex)
+            return
+        }
+
+        super.mouseDown(with: event)
+    }
+
+    private func checkboxCharacterIndex(at point: NSPoint) -> Int? {
+        guard let layoutManager = layoutManager,
+              let textContainer = textContainer else { return nil }
+
+        let textContainerOrigin = textContainerOrigin
+        let containerPoint = NSPoint(x: point.x - textContainerOrigin.x,
+                                     y: point.y - textContainerOrigin.y)
+
+        let glyphIndex = layoutManager.glyphIndex(for: containerPoint, in: textContainer)
+        let glyphRect = layoutManager.boundingRect(forGlyphRange: NSRange(location: glyphIndex, length: 1), in: textContainer)
+        let adjustedRect = glyphRect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+
+        guard adjustedRect.contains(point) else { return nil }
+
+        let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+        guard charIndex != NSNotFound,
+              let storage = textStorage,
+              charIndex < storage.length else { return nil }
+
+        if storage.attribute(NSAttributedString.Key.attachment, at: charIndex, effectiveRange: nil) is CheckboxTextAttachment {
+            return charIndex
+        }
+
+        return nil
     }
 }
 
@@ -250,6 +293,9 @@ struct RichTextEditor: NSViewRepresentable {
         context.coordinator.textView = textView
         textView.onAppearanceChange = { [weak coordinator = context.coordinator] in
             coordinator?.handleAppearanceChange()
+        }
+        textView.onCheckboxTap = { [weak coordinator = context.coordinator] charIndex in
+            coordinator?.handleCheckboxTap(at: charIndex)
         }
 
         return scrollView
@@ -414,7 +460,6 @@ struct RichTextEditor: NSViewRepresentable {
             let strikethroughValue = isStrikethrough ? NSUnderlineStyle.single.rawValue : 0
             textView.typingAttributes[NSAttributedString.Key.strikethroughStyle] = strikethroughValue
             updateTypingAttributesHighlight(textView)
-            updateTypingAttributesHighlight(textView)
 
             // Force update the parent binding to ensure color changes are captured
             if !isProgrammaticUpdate {
@@ -575,6 +620,31 @@ struct RichTextEditor: NSViewRepresentable {
                 return handleReturnKey(textView: textView)
             }
             return false
+        }
+
+        func handleCheckboxTap(at charIndex: Int) {
+            guard let textView = textView,
+                  let storage = textView.textStorage,
+                  charIndex >= 0,
+                  charIndex < storage.length else { return }
+
+            var effectiveRange = NSRange(location: charIndex, length: 1)
+            guard let attachment = storage.attribute(NSAttributedString.Key.attachment,
+                                                     at: charIndex,
+                                                     effectiveRange: &effectiveRange) as? CheckboxTextAttachment else {
+                return
+            }
+
+            isProgrammaticUpdate = true
+            attachment.isChecked.toggle()
+            textView.layoutManager?.invalidateDisplay(forCharacterRange: effectiveRange)
+
+            let updatedText = NSAttributedString(attributedString: storage)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.parent.text = updatedText
+                self.isProgrammaticUpdate = false
+            }
         }
 
         private func handleReturnKey(textView: NSTextView) -> Bool {
@@ -1610,6 +1680,33 @@ struct RichTextEditor: UIViewRepresentable {
                 pendingReplacementAttributes = nil
             }
             return true
+        }
+
+        func textView(_ textView: UITextView, shouldInteractWith attachment: NSTextAttachment, in characterRange: NSRange) -> Bool {
+            return handleCheckboxInteraction(attachment: attachment, range: characterRange, textView: textView)
+        }
+
+        func textView(_ textView: UITextView, shouldInteractWith attachment: NSTextAttachment, in characterRange: NSRange, interaction: UITextItemInteraction) -> Bool {
+            return handleCheckboxInteraction(attachment: attachment, range: characterRange, textView: textView)
+        }
+
+        private func handleCheckboxInteraction(attachment: NSTextAttachment, range: NSRange, textView: UITextView) -> Bool {
+            guard let checkbox = attachment as? CheckboxTextAttachment else {
+                return true
+            }
+
+            isProgrammaticUpdate = true
+            checkbox.isChecked.toggle()
+
+            textView.layoutManager.invalidateDisplay(forCharacterRange: range)
+
+            let updatedText = textView.attributedText ?? NSAttributedString()
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.text = updatedText
+                self?.isProgrammaticUpdate = false
+            }
+
+            return false
         }
 
         private func handleAutoPeriodReplacement(in textView: UITextView, range: NSRange, replacementText text: String) -> Bool {
