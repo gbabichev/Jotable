@@ -162,9 +162,14 @@ struct RichTextEditor: UIViewRepresentable {
         func textViewDidChange(_ textView: UITextView) {
             guard !isProgrammaticUpdate else { return }
 
-            // Push latest text to the SwiftUI binding immediately so SwiftUI does not overwrite user edits
-            let updatedText = textView.attributedText ?? NSAttributedString()
-            parent.text = updatedText
+            // CRITICAL: Don't update the binding while iOS is managing marked text (autocorrect in progress)
+            // When attachments (checkboxes) are present, premature binding updates can cause iOS to
+            // misalculate text ranges and insert multiple words or corrupt the text
+            if textView.markedTextRange == nil {
+                // Push latest text to the SwiftUI binding only after autocorrect is complete
+                let updatedText = textView.attributedText ?? NSAttributedString()
+                parent.text = updatedText
+            }
 
             _ = applyPendingReplacementAttributesIfNeeded(to: textView)
             fixAutoPeriodColorIfNeeded(in: textView)
