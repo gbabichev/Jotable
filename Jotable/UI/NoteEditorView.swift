@@ -13,6 +13,7 @@ struct NoteEditorView: View {
     @State private var showingCategoryPicker = false
     @State private var richText = AttributedTextWrapper(value: NSAttributedString(string: ""))
     @State private var activeColor: RichTextColor = .automatic
+    @State private var activeHighlighter: HighlighterColor = .none
     @State private var activeFontSize: FontSize = .normal
     @State private var isBold: Bool = false
     @State private var isUnderlined: Bool = false
@@ -80,6 +81,7 @@ struct NoteEditorView: View {
                             }
                         ),
                         activeColor: $activeColor,
+                        activeHighlighter: $activeHighlighter,
                         activeFontSize: $activeFontSize,
                         isBold: $isBold,
                         isUnderlined: $isUnderlined,
@@ -146,6 +148,7 @@ struct NoteEditorView: View {
 
                 FontToolbar(
                     activeColor: $activeColor,
+                    activeHighlighter: $activeHighlighter,
                     activeFontSize: $activeFontSize,
                     isBold: $isBold,
                     isUnderlined: $isUnderlined,

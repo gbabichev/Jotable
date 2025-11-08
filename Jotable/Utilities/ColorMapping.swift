@@ -14,6 +14,9 @@ struct ColorMapping {
     /// Custom attribute key to store the font size
     static let fontSizeKey = NSAttributedString.Key("com.betternotes.fontSize")
 
+    /// Custom attribute key to store the highlight ID (e.g., "yellow")
+    static let highlightIDKey = NSAttributedString.Key("com.betternotes.highlightID")
+
     /// Applies a color to the attributed string with the color ID stored for cross-platform sync
     static func applyColor(_ color: RichTextColor, to attributedString: NSMutableAttributedString, range: NSRange) {
         #if os(macOS)
@@ -24,6 +27,24 @@ struct ColorMapping {
 
         attributedString.addAttribute(NSAttributedString.Key.foregroundColor, value: platformColor, range: range)
         attributedString.addAttribute(colorIDKey, value: color.id, range: range)
+    }
+
+    /// Applies highlight background with the highlight ID stored for cross-platform sync
+    static func applyHighlight(_ highlight: HighlighterColor, to attributedString: NSMutableAttributedString, range: NSRange) {
+        if highlight == .none {
+            attributedString.removeAttribute(NSAttributedString.Key.backgroundColor, range: range)
+            attributedString.removeAttribute(highlightIDKey, range: range)
+            return
+        }
+
+        #if os(macOS)
+        guard let platformColor: NSColor = highlight.nsColor else { return }
+        #else
+        guard let platformColor: UIColor = highlight.uiColor else { return }
+        #endif
+
+        attributedString.addAttribute(NSAttributedString.Key.backgroundColor, value: platformColor, range: range)
+        attributedString.addAttribute(highlightIDKey, value: highlight.id, range: range)
     }
 
     /// Processes an attributed string for archiving, ensuring color IDs are preserved
@@ -43,6 +64,20 @@ struct ColorMapping {
                 // Otherwise default to "automatic"
                 mutableString.addAttribute(colorIDKey, value: "automatic", range: range)
             }
+
+            #if os(macOS)
+            if let backgroundColor = attrs[NSAttributedString.Key.backgroundColor] as? NSColor,
+               attrs[highlightIDKey] == nil,
+               let highlight = matchingHighlight(for: backgroundColor) {
+                mutableString.addAttribute(highlightIDKey, value: highlight.id, range: range)
+            }
+            #else
+            if let backgroundColor = attrs[NSAttributedString.Key.backgroundColor] as? UIColor,
+               attrs[highlightIDKey] == nil,
+               let highlight = matchingHighlight(for: backgroundColor) {
+                mutableString.addAttribute(highlightIDKey, value: highlight.id, range: range)
+            }
+            #endif
 
             currentPos = range.location + range.length
         }
@@ -81,9 +116,64 @@ struct ColorMapping {
                 mutableString.addAttribute(colorIDKey, value: "automatic", range: range)
             }
 
+            if let highlightID = attrs[highlightIDKey] as? String {
+                let highlight = HighlighterColor.from(id: highlightID)
+
+                #if os(macOS)
+                if let platformColor = highlight.nsColor {
+                    mutableString.addAttribute(NSAttributedString.Key.backgroundColor, value: platformColor, range: range)
+                } else {
+                    mutableString.removeAttribute(NSAttributedString.Key.backgroundColor, range: range)
+                }
+                #else
+                if let platformColor = highlight.uiColor {
+                    mutableString.addAttribute(NSAttributedString.Key.backgroundColor, value: platformColor, range: range)
+                } else {
+                    mutableString.removeAttribute(NSAttributedString.Key.backgroundColor, range: range)
+                }
+                #endif
+            }
+
             currentPos = range.location + range.length
         }
 
         return mutableString
     }
+
+    #if os(macOS)
+    private static func matchingHighlight(for color: NSColor) -> HighlighterColor? {
+        guard let converted = color.usingColorSpace(.deviceRGB) else { return nil }
+        for highlight in HighlighterColor.allCases where highlight != .none {
+            guard let highlightColor = highlight.nsColor?.usingColorSpace(.deviceRGB) else { continue }
+            if converted.isEqual(highlightColor) {
+                return highlight
+            }
+        }
+        return nil
+    }
+    #else
+    private static func matchingHighlight(for color: UIColor) -> HighlighterColor? {
+        for highlight in HighlighterColor.allCases where highlight != .none {
+            guard let highlightColor = highlight.uiColor else { continue }
+            if colorsEqual(color, highlightColor) {
+                return highlight
+            }
+        }
+        return nil
+    }
+
+    private static func colorsEqual(_ lhs: UIColor, _ rhs: UIColor) -> Bool {
+        var lr: CGFloat = 0, lg: CGFloat = 0, lb: CGFloat = 0, la: CGFloat = 0
+        var rr: CGFloat = 0, rg: CGFloat = 0, rb: CGFloat = 0, ra: CGFloat = 0
+        guard lhs.getRed(&lr, green: &lg, blue: &lb, alpha: &la),
+              rhs.getRed(&rr, green: &rg, blue: &rb, alpha: &ra) else {
+            return lhs == rhs
+        }
+        let tolerance: CGFloat = 0.001
+        return abs(lr - rr) < tolerance &&
+            abs(lg - rg) < tolerance &&
+            abs(lb - rb) < tolerance &&
+            abs(la - ra) < tolerance
+    }
+    #endif
 }

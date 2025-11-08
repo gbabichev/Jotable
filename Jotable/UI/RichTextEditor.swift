@@ -112,6 +112,77 @@ enum RichTextColor: Equatable, Identifiable {
     }
 }
 
+enum HighlighterColor: Equatable, Identifiable, CaseIterable {
+    case none
+    case yellow
+    case red
+    case green
+
+    var id: String {
+        switch self {
+        case .none: return "none"
+        case .yellow: return "yellow"
+        case .red: return "red"
+        case .green: return "green"
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .none: return "None"
+        case .yellow: return "Yellow"
+        case .red: return "Red"
+        case .green: return "Green"
+        }
+    }
+
+    var emoji: String {
+        switch self {
+        case .none: return "◻️"
+        case .yellow: return "🟨"
+        case .red: return "🟥"
+        case .green: return "🟩"
+        }
+    }
+
+    #if os(macOS)
+    var nsColor: NSColor? {
+        switch self {
+        case .none:
+            return nil
+        case .yellow:
+            return NSColor.systemYellow.withAlphaComponent(0.35)
+        case .red:
+            return NSColor.systemRed.withAlphaComponent(0.35)
+        case .green:
+            return NSColor.systemGreen.withAlphaComponent(0.35)
+        }
+    }
+    #else
+    var uiColor: UIColor? {
+        switch self {
+        case .none:
+            return nil
+        case .yellow:
+            return UIColor.systemYellow.withAlphaComponent(0.35)
+        case .red:
+            return UIColor.systemRed.withAlphaComponent(0.35)
+        case .green:
+            return UIColor.systemGreen.withAlphaComponent(0.35)
+        }
+    }
+    #endif
+
+    static func from(id: String) -> HighlighterColor {
+        switch id {
+        case "yellow": return .yellow
+        case "red": return .red
+        case "green": return .green
+        default: return .none
+        }
+    }
+}
+
 #if os(macOS)
 
 private final class DynamicColorTextView: NSTextView {
@@ -126,6 +197,7 @@ private final class DynamicColorTextView: NSTextView {
 struct RichTextEditor: NSViewRepresentable {
     @Binding var text: NSAttributedString
     @Binding var activeColor: RichTextColor
+    @Binding var activeHighlighter: HighlighterColor
     @Binding var activeFontSize: FontSize
     @Binding var isBold: Bool
     @Binding var isUnderlined: Bool
@@ -161,6 +233,10 @@ struct RichTextEditor: NSViewRepresentable {
         textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
         textView.typingAttributes[NSAttributedString.Key.font] = NSFont.systemFont(ofSize: activeFontSize.rawValue)
         textView.typingAttributes[ColorMapping.fontSizeKey] = activeFontSize.rawValue
+        if let highlightColor = activeHighlighter.nsColor {
+            textView.typingAttributes[NSAttributedString.Key.backgroundColor] = highlightColor
+            textView.typingAttributes[ColorMapping.highlightIDKey] = activeHighlighter.id
+        }
         textView.textStorage?.setAttributedString(text)
 
         textView.minSize = NSSize(width: 0, height: 0)
@@ -198,6 +274,11 @@ struct RichTextEditor: NSViewRepresentable {
         if context.coordinator.activeColor != activeColor {
             context.coordinator.activeColor = activeColor
             context.coordinator.apply(color: activeColor, to: textView)
+        }
+
+        if context.coordinator.activeHighlighter != activeHighlighter {
+            context.coordinator.activeHighlighter = activeHighlighter
+            context.coordinator.apply(highlighter: activeHighlighter, to: textView)
         }
 
         if context.coordinator.activeFontSize != activeFontSize {
@@ -271,6 +352,7 @@ struct RichTextEditor: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: RichTextEditor
         var activeColor: RichTextColor
+        var activeHighlighter: HighlighterColor
         var activeFontSize: FontSize
         var isBold: Bool
         var isUnderlined: Bool
@@ -288,6 +370,7 @@ struct RichTextEditor: NSViewRepresentable {
         init(_ parent: RichTextEditor) {
             self.parent = parent
             self.activeColor = parent.activeColor
+            self.activeHighlighter = parent.activeHighlighter
             self.activeFontSize = parent.activeFontSize
             self.isBold = parent.isBold
             self.isUnderlined = parent.isUnderlined
@@ -330,6 +413,8 @@ struct RichTextEditor: NSViewRepresentable {
 
             let strikethroughValue = isStrikethrough ? NSUnderlineStyle.single.rawValue : 0
             textView.typingAttributes[NSAttributedString.Key.strikethroughStyle] = strikethroughValue
+            updateTypingAttributesHighlight(textView)
+            updateTypingAttributesHighlight(textView)
 
             // Force update the parent binding to ensure color changes are captured
             if !isProgrammaticUpdate {
@@ -357,6 +442,7 @@ struct RichTextEditor: NSViewRepresentable {
 
             textView.typingAttributes[NSAttributedString.Key.foregroundColor] = nsColor
             textView.typingAttributes[ColorMapping.colorIDKey] = color.id
+            updateTypingAttributesHighlight(textView)
         }
 
         func apply(fontSize: FontSize, to textView: NSTextView) {
@@ -381,6 +467,36 @@ struct RichTextEditor: NSViewRepresentable {
 
             textView.typingAttributes[NSAttributedString.Key.font] = NSFont.systemFont(ofSize: fontSize.rawValue)
             textView.typingAttributes[ColorMapping.fontSizeKey] = fontSize.rawValue
+            updateTypingAttributesHighlight(textView)
+        }
+
+        func apply(highlighter: HighlighterColor, to textView: NSTextView) {
+            let selectedRange = textView.selectedRange
+
+            if selectedRange.length > 0,
+               let storage = textView.textStorage {
+                isProgrammaticUpdate = true
+                ColorMapping.applyHighlight(highlighter, to: storage, range: selectedRange)
+                textView.setSelectedRange(selectedRange)
+
+                DispatchQueue.main.async { [weak self] in
+                    self?.isProgrammaticUpdate = false
+                    self?.parent.text = NSAttributedString(attributedString: storage)
+                }
+            }
+
+            updateTypingAttributesHighlight(textView, using: highlighter)
+        }
+
+        private func updateTypingAttributesHighlight(_ textView: NSTextView, using highlight: HighlighterColor? = nil) {
+            let targetHighlight = highlight ?? activeHighlighter
+            if targetHighlight == .none {
+                textView.typingAttributes.removeValue(forKey: NSAttributedString.Key.backgroundColor)
+                textView.typingAttributes.removeValue(forKey: ColorMapping.highlightIDKey)
+            } else if let color = targetHighlight.nsColor {
+                textView.typingAttributes[NSAttributedString.Key.backgroundColor] = color
+                textView.typingAttributes[ColorMapping.highlightIDKey] = targetHighlight.id
+            }
         }
 
         func toggleBold(_ textView: NSTextView) {
@@ -450,6 +566,7 @@ struct RichTextEditor: NSViewRepresentable {
                 textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.nsColor
                 textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
             }
+            updateTypingAttributesHighlight(textView)
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -550,6 +667,7 @@ struct RichTextEditor: NSViewRepresentable {
             textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.nsColor
             textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
             textView.typingAttributes[ColorMapping.fontSizeKey] = activeFontSize.rawValue
+            updateTypingAttributesHighlight(textView)
 
             parent.text = NSAttributedString(attributedString: storage)
             isProgrammaticUpdate = false
@@ -908,6 +1026,7 @@ struct RichTextEditor: NSViewRepresentable {
 struct RichTextEditor: UIViewRepresentable {
     @Binding var text: NSAttributedString
     @Binding var activeColor: RichTextColor
+    @Binding var activeHighlighter: HighlighterColor
     @Binding var activeFontSize: FontSize
     @Binding var isBold: Bool
     @Binding var isUnderlined: Bool
@@ -941,6 +1060,10 @@ struct RichTextEditor: UIViewRepresentable {
         textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
         textView.typingAttributes[NSAttributedString.Key.font] = UIFont.systemFont(ofSize: activeFontSize.rawValue)
         textView.typingAttributes[ColorMapping.fontSizeKey] = activeFontSize.rawValue
+        if let highlightColor = activeHighlighter.uiColor {
+            textView.typingAttributes[NSAttributedString.Key.backgroundColor] = highlightColor
+            textView.typingAttributes[ColorMapping.highlightIDKey] = activeHighlighter.id
+        }
         context.coordinator.textView = textView
 
         return textView
@@ -965,6 +1088,11 @@ struct RichTextEditor: UIViewRepresentable {
         if context.coordinator.activeColor != activeColor {
             context.coordinator.activeColor = activeColor
             context.coordinator.apply(color: activeColor, to: uiView)
+        }
+
+        if context.coordinator.activeHighlighter != activeHighlighter {
+            context.coordinator.activeHighlighter = activeHighlighter
+            context.coordinator.apply(highlighter: activeHighlighter, to: uiView)
         }
 
         if context.coordinator.activeFontSize != activeFontSize {
@@ -1039,6 +1167,7 @@ struct RichTextEditor: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: RichTextEditor
         var activeColor: RichTextColor
+        var activeHighlighter: HighlighterColor
         var activeFontSize: FontSize
         var isBold: Bool
         var isUnderlined: Bool
@@ -1058,6 +1187,7 @@ struct RichTextEditor: UIViewRepresentable {
         init(_ parent: RichTextEditor) {
             self.parent = parent
             self.activeColor = parent.activeColor
+            self.activeHighlighter = parent.activeHighlighter
             self.activeFontSize = parent.activeFontSize
             self.isBold = parent.isBold
             self.isUnderlined = parent.isUnderlined
@@ -1292,6 +1422,7 @@ struct RichTextEditor: UIViewRepresentable {
             // Restore typing attributes after text changes
             textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.uiColor
             textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
+            updateTypingAttributesHighlight(textView)
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
@@ -1324,6 +1455,7 @@ struct RichTextEditor: UIViewRepresentable {
 
             textView.typingAttributes[NSAttributedString.Key.foregroundColor] = uiColor
             textView.typingAttributes[ColorMapping.colorIDKey] = color.id
+            updateTypingAttributesHighlight(textView)
         }
 
         func apply(fontSize: FontSize, to textView: UITextView) {
@@ -1345,6 +1477,34 @@ struct RichTextEditor: UIViewRepresentable {
 
             textView.typingAttributes[NSAttributedString.Key.font] = UIFont.systemFont(ofSize: fontSize.rawValue)
             textView.typingAttributes[ColorMapping.fontSizeKey] = fontSize.rawValue
+            updateTypingAttributesHighlight(textView)
+        }
+
+        func apply(highlighter: HighlighterColor, to textView: UITextView) {
+            let selectedRange = textView.selectedRange
+
+            if selectedRange.length > 0,
+               let currentText = textView.attributedText?.mutableCopy() as? NSMutableAttributedString {
+                isProgrammaticUpdate = true
+                ColorMapping.applyHighlight(highlighter, to: currentText, range: selectedRange)
+                textView.attributedText = currentText
+                textView.selectedRange = selectedRange
+                parent.text = currentText
+                isProgrammaticUpdate = false
+            }
+
+            updateTypingAttributesHighlight(textView, using: highlighter)
+        }
+
+        private func updateTypingAttributesHighlight(_ textView: UITextView, using highlight: HighlighterColor? = nil) {
+            let targetHighlight = highlight ?? activeHighlighter
+            if targetHighlight == .none {
+                textView.typingAttributes.removeValue(forKey: NSAttributedString.Key.backgroundColor)
+                textView.typingAttributes.removeValue(forKey: ColorMapping.highlightIDKey)
+            } else if let color = targetHighlight.uiColor {
+                textView.typingAttributes[NSAttributedString.Key.backgroundColor] = color
+                textView.typingAttributes[ColorMapping.highlightIDKey] = targetHighlight.id
+            }
         }
 
         func toggleBold(_ textView: UITextView) {
@@ -1407,6 +1567,7 @@ struct RichTextEditor: UIViewRepresentable {
                 textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.uiColor
                 textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
             }
+            updateTypingAttributesHighlight(textView)
         }
 
         func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
@@ -1479,6 +1640,14 @@ struct RichTextEditor: UIViewRepresentable {
             }
             if attributes[ColorMapping.fontSizeKey] == nil {
                 attributes[ColorMapping.fontSizeKey] = activeFontSize.rawValue
+            }
+            if attributes[ColorMapping.highlightIDKey] == nil, activeHighlighter != .none {
+                attributes[ColorMapping.highlightIDKey] = activeHighlighter.id
+            }
+            if attributes[NSAttributedString.Key.backgroundColor] == nil,
+               activeHighlighter != .none,
+               let highlightColor = activeHighlighter.uiColor {
+                attributes[NSAttributedString.Key.backgroundColor] = highlightColor
             }
 
             let replacement = NSAttributedString(string: text, attributes: attributes)
@@ -1588,6 +1757,7 @@ struct RichTextEditor: UIViewRepresentable {
             textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.uiColor
             textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
             textView.typingAttributes[ColorMapping.fontSizeKey] = activeFontSize.rawValue
+            updateTypingAttributesHighlight(textView)
 
             parent.text = textView.attributedText ?? NSAttributedString()
             isProgrammaticUpdate = false
@@ -1937,6 +2107,7 @@ struct RichTextEditor: UIViewRepresentable {
 
 struct FontToolbar: View {
     @Binding var activeColor: RichTextColor
+    @Binding var activeHighlighter: HighlighterColor
     @Binding var activeFontSize: FontSize
     @Binding var isBold: Bool
     @Binding var isUnderlined: Bool
@@ -2011,6 +2182,39 @@ struct FontToolbar: View {
                 }
             } label: {
                 Label("Font Size", systemImage: "textformat.size")
+            }
+
+            Divider()
+
+            // MARK: - Highlighter Section
+            Menu {
+                Button {
+                    activeHighlighter = .none
+                } label: {
+                    HStack {
+                        Text("None")
+                        if activeHighlighter == .none {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+
+                Divider()
+
+                ForEach(HighlighterColor.allCases.filter { $0 != .none }, id: \.id) { highlight in
+                    Button {
+                        activeHighlighter = highlight
+                    } label: {
+                        HStack {
+                            Text("\(highlight.emoji) \(highlight.displayName)")
+                            if activeHighlighter == highlight {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Label("Highlighter", systemImage: "highlighter")
             }
 
             Divider()
