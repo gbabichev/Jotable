@@ -246,7 +246,6 @@ struct RichTextEditor: NSViewRepresentable {
     @Binding var isUnderlined: Bool
     @Binding var isStrikethrough: Bool
     @Binding var insertUncheckedCheckboxTrigger: UUID?
-    @Binding var insertCheckedCheckboxTrigger: UUID?
     @Binding var insertBulletTrigger: UUID?
     @Binding var insertNumberingTrigger: UUID?
     @Binding var insertDateTrigger: UUID?
@@ -346,12 +345,6 @@ struct RichTextEditor: NSViewRepresentable {
             context.coordinator.insertUncheckedCheckbox()
         }
 
-        // Handle checked checkbox insertion trigger
-        if insertCheckedCheckboxTrigger != context.coordinator.lastCheckedCheckboxTrigger {
-            context.coordinator.lastCheckedCheckboxTrigger = insertCheckedCheckboxTrigger
-            context.coordinator.insertCheckedCheckbox()
-        }
-
         // Handle bullet insertion trigger
         if insertBulletTrigger != context.coordinator.lastBulletTrigger {
             context.coordinator.lastBulletTrigger = insertBulletTrigger
@@ -398,7 +391,6 @@ struct RichTextEditor: NSViewRepresentable {
         var isStrikethrough: Bool
         var isProgrammaticUpdate = false
         var lastUncheckedCheckboxTrigger: UUID?
-        var lastCheckedCheckboxTrigger: UUID?
         var lastBulletTrigger: UUID?
         var lastNumberingTrigger: UUID?
         var lastDateTrigger: UUID?
@@ -784,73 +776,6 @@ struct RichTextEditor: NSViewRepresentable {
             }
         }
 
-        func insertCheckedCheckbox() {
-            guard let textView = textView,
-                  let storage = textView.textStorage else {
-                return
-            }
-
-            isProgrammaticUpdate = true
-
-            let cursorPosition = textView.selectedRange.location
-            let plainText = storage.string as NSString
-            let lineRange = plainText.lineRange(for: NSRange(location: cursorPosition, length: 0))
-
-            // Search for an unchecked checkbox on this line
-            var foundCheckbox = false
-            var searchPos = lineRange.location
-
-            while searchPos < lineRange.location + lineRange.length {
-                var effectiveRange = NSRange()
-                if let attachment = storage.attribute(NSAttributedString.Key.attachment, at: searchPos, longestEffectiveRange: &effectiveRange, in: lineRange) as? CheckboxTextAttachment {
-                    if !attachment.isChecked {
-                        // Found an unchecked checkbox - toggle it to checked
-                        attachment.isChecked = true
-                        foundCheckbox = true
-                    }
-                    searchPos = effectiveRange.location + effectiveRange.length
-                } else {
-                    searchPos += 1
-                }
-            }
-
-            // If no unchecked checkbox found, insert a new checked one
-            if !foundCheckbox {
-                let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: true)
-                let checkboxString = NSAttributedString(attachment: checkbox)
-                let insertionRange = textView.selectedRange
-
-                // Insert checkbox
-                storage.insert(checkboxString, at: insertionRange.location)
-
-                // Insert space after checkbox if next character is not already a space
-                let spaceInsertionPos = insertionRange.location + 1
-                if spaceInsertionPos < storage.length {
-                    let nextCharRange = NSRange(location: spaceInsertionPos, length: 1)
-                    let nextChar = storage.attributedSubstring(from: nextCharRange).string
-                    if nextChar != " " {
-                        let spaceAttrs = currentTypingAttributes(from: textView)
-                        storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
-                    }
-                } else {
-                    // End of text, just add space
-                    let spaceAttrs = currentTypingAttributes(from: textView)
-                    storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
-                }
-
-                let newCursorPosition = spaceInsertionPos + 1
-                textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
-                applyTypingAttributes(to: textView)
-            }
-
-            // Defer binding update to next runloop to avoid state modification during view update
-            let newText = NSAttributedString(attributedString: storage)
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.text = newText
-                self?.isProgrammaticUpdate = false
-            }
-        }
-
         func insertBullet() {
             guard let textView = textView,
                   let storage = textView.textStorage else {
@@ -1034,7 +959,6 @@ struct RichTextEditor: UIViewRepresentable {
     @Binding var isUnderlined: Bool
     @Binding var isStrikethrough: Bool
     @Binding var insertUncheckedCheckboxTrigger: UUID?
-    @Binding var insertCheckedCheckboxTrigger: UUID?
     @Binding var insertBulletTrigger: UUID?
     @Binding var insertNumberingTrigger: UUID?
     @Binding var insertDateTrigger: UUID?
@@ -1117,12 +1041,6 @@ struct RichTextEditor: UIViewRepresentable {
             context.coordinator.insertUncheckedCheckbox()
         }
 
-        // Handle checked checkbox insertion trigger
-        if insertCheckedCheckboxTrigger != context.coordinator.lastCheckedCheckboxTrigger {
-            context.coordinator.lastCheckedCheckboxTrigger = insertCheckedCheckboxTrigger
-            context.coordinator.insertCheckedCheckbox()
-        }
-
         // Handle bullet insertion trigger
         if insertBulletTrigger != context.coordinator.lastBulletTrigger {
             context.coordinator.lastBulletTrigger = insertBulletTrigger
@@ -1170,7 +1088,6 @@ struct RichTextEditor: UIViewRepresentable {
         var isStrikethrough: Bool
         var isProgrammaticUpdate = false
         var lastUncheckedCheckboxTrigger: UUID?
-        var lastCheckedCheckboxTrigger: UUID?
         var lastBulletTrigger: UUID?
         var lastNumberingTrigger: UUID?
         var lastDateTrigger: UUID?
@@ -1832,75 +1749,6 @@ struct RichTextEditor: UIViewRepresentable {
             }
         }
 
-        func insertCheckedCheckbox() {
-            guard let textView = textView,
-                  let attributedText = textView.attributedText?.mutableCopy() as? NSMutableAttributedString else {
-                return
-            }
-
-            isProgrammaticUpdate = true
-
-            let cursorPosition = textView.selectedRange.location
-            let plainText = attributedText.string as NSString
-            let lineRange = plainText.lineRange(for: NSRange(location: cursorPosition, length: 0))
-
-            // Search for an unchecked checkbox on this line
-            var foundCheckbox = false
-            var searchPos = lineRange.location
-
-            while searchPos < lineRange.location + lineRange.length {
-                var effectiveRange = NSRange()
-                if let attachment = attributedText.attribute(NSAttributedString.Key.attachment, at: searchPos, longestEffectiveRange: &effectiveRange, in: lineRange) as? CheckboxTextAttachment {
-                    if !attachment.isChecked {
-                        // Found an unchecked checkbox - toggle it to checked
-                        attachment.isChecked = true
-                        foundCheckbox = true
-                    }
-                    searchPos = effectiveRange.location + effectiveRange.length
-                } else {
-                    searchPos += 1
-                }
-            }
-
-            // If no unchecked checkbox found, insert a new checked one
-            if !foundCheckbox {
-                let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: true)
-                let checkboxString = NSAttributedString(attachment: checkbox)
-                let insertionRange = textView.selectedRange
-
-                // Insert checkbox
-                attributedText.insert(checkboxString, at: insertionRange.location)
-
-                // Insert space after checkbox if next character is not already a space
-                let spaceInsertionPos = insertionRange.location + 1
-                if spaceInsertionPos < attributedText.length {
-                    let nextCharRange = NSRange(location: spaceInsertionPos, length: 1)
-                    let nextChar = attributedText.attributedSubstring(from: nextCharRange).string
-                    if nextChar != " " {
-                        let spaceAttrs = currentTypingAttributes(from: textView)
-                        attributedText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
-                    }
-                } else {
-                    // End of text, just add space
-                    let spaceAttrs = currentTypingAttributes(from: textView)
-                    attributedText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
-                }
-
-                let newCursorPosition = spaceInsertionPos + 1
-                textView.selectedRange = NSRange(location: newCursorPosition, length: 0)
-            }
-
-            // Reassign attributedText to trigger redraw
-            textView.attributedText = attributedText
-            applyTypingAttributes(to: textView)
-
-            // Defer binding update to next runloop to avoid state modification during view update
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.text = attributedText
-                self?.isProgrammaticUpdate = false
-            }
-        }
-
         func insertBullet() {
             guard let textView = textView else { return }
 
@@ -2219,7 +2067,6 @@ struct FontToolbar: View {
 
 struct ListToolbar: View {
     @Binding var insertUncheckedCheckboxTrigger: UUID?
-    @Binding var insertCheckedCheckboxTrigger: UUID?
     @Binding var insertBulletTrigger: UUID?
     @Binding var insertNumberingTrigger: UUID?
     @Binding var insertDateTrigger: UUID?
@@ -2235,12 +2082,6 @@ struct ListToolbar: View {
                     insertUncheckedCheckboxTrigger = UUID()
                 } label: {
                     Label("Unchecked Checkbox", systemImage: "square")
-                }
-
-                Button {
-                    insertCheckedCheckboxTrigger = UUID()
-                } label: {
-                    Label("Checked Checkbox", systemImage: "checkmark.square.fill")
                 }
 
                 Divider()
@@ -2301,14 +2142,6 @@ struct ListToolbar: View {
             } label: {
                 Label("Unchecked Checkbox", systemImage: "square")
             }
-
-            Button {
-                insertCheckedCheckboxTrigger = UUID()
-            } label: {
-                Label("Checked Checkbox", systemImage: "checkmark.square.fill")
-            }
-
-            Divider()
 
             Button {
                 insertBulletTrigger = UUID()
