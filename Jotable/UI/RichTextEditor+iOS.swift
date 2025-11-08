@@ -162,17 +162,19 @@ struct RichTextEditor: UIViewRepresentable {
         func textViewDidChange(_ textView: UITextView) {
             guard !isProgrammaticUpdate else { return }
 
+            // Apply attribute fixes BEFORE updating binding (so fixes are included in the binding update)
+            _ = applyPendingReplacementAttributesIfNeeded(to: textView)
+            fixAutoPeriodColorIfNeeded(in: textView)
+
             // CRITICAL: Don't update the binding while iOS is managing marked text (autocorrect in progress)
             // When attachments (checkboxes) are present, premature binding updates can cause iOS to
             // misalculate text ranges and insert multiple words or corrupt the text
             if textView.markedTextRange == nil {
                 // Push latest text to the SwiftUI binding only after autocorrect is complete
+                // This is done AFTER the attribute fixes above so the binding includes fixed attributes
                 let updatedText = textView.attributedText ?? NSAttributedString()
                 parent.text = updatedText
             }
-
-            _ = applyPendingReplacementAttributesIfNeeded(to: textView)
-            fixAutoPeriodColorIfNeeded(in: textView)
 
             // Cancel any pending timer to debounce rapid text changes (like holding delete key)
             fixTextTimer?.invalidate()
@@ -276,23 +278,30 @@ struct RichTextEditor: UIViewRepresentable {
             let substring = attributed.attributedSubstring(from: autoPeriodRange).string
             guard substring == ". " else { return }
 
+            // Check if we need to fix the colors
+            // Sample the character right before the period to get expected colors
+            let sampleIndex = max(0, autoPeriodRange.location - 1)
+            let sampleAttrs = attributed.attributes(at: sampleIndex, effectiveRange: nil)
+            let expectedColorID = sampleAttrs[ColorMapping.colorIDKey] as? String
+            let expectedColor = sampleAttrs[NSAttributedString.Key.foregroundColor] as? UIColor
+
             var needsFix = false
             for offset in 0..<autoPeriodRange.length {
                 let index = autoPeriodRange.location + offset
-                if attributed.attribute(NSAttributedString.Key.foregroundColor, at: index, effectiveRange: nil) == nil ||
-                    attributed.attribute(ColorMapping.colorIDKey, at: index, effectiveRange: nil) == nil {
+                let color = attributed.attribute(NSAttributedString.Key.foregroundColor, at: index, effectiveRange: nil) as? UIColor
+                let colorID = attributed.attribute(ColorMapping.colorIDKey, at: index, effectiveRange: nil) as? String
+
+                // Fix if: missing attributes OR has different colorID than expected
+                if colorID != expectedColorID || (color == nil && expectedColor != nil) {
                     needsFix = true
                     break
                 }
             }
-            if !needsFix { return }
+            guard needsFix else { return }
 
-            let sampleIndex = max(0, autoPeriodRange.location - 1)
-            let clampedSampleIndex = min(sampleIndex, max(0, attributed.length - 1))
-            let sampleAttrs = attributed.attributes(at: clampedSampleIndex, effectiveRange: nil)
-
-            let resolvedColorID = (sampleAttrs[ColorMapping.colorIDKey] as? String) ?? activeColor.id
-            let resolvedColor = (sampleAttrs[NSAttributedString.Key.foregroundColor] as? UIColor) ?? RichTextColor.from(id: resolvedColorID).uiColor
+            // Use the expected colors we already sampled
+            let resolvedColorID = expectedColorID ?? activeColor.id
+            let resolvedColor = expectedColor ?? RichTextColor.from(id: resolvedColorID).uiColor
 
             let attrs: [NSAttributedString.Key: Any] = [
                 NSAttributedString.Key.foregroundColor: resolvedColor,
