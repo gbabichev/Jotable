@@ -272,16 +272,7 @@ struct RichTextEditor: NSViewRepresentable {
         textView.textContainer?.lineFragmentPadding = 0
         textView.font = NSFont.systemFont(ofSize: activeFontSize.rawValue)
         textView.allowsUndo = true
-        textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.nsColor
-        textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
-        textView.typingAttributes[NSAttributedString.Key.font] = NSFont.systemFont(ofSize: activeFontSize.rawValue)
-        textView.typingAttributes[ColorMapping.fontSizeKey] = activeFontSize.rawValue
-        if let highlightColor = activeHighlighter.nsColor {
-            textView.typingAttributes[NSAttributedString.Key.backgroundColor] = highlightColor
-            textView.typingAttributes[ColorMapping.highlightIDKey] = activeHighlighter.id
-        }
         textView.textStorage?.setAttributedString(text)
-
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
@@ -291,6 +282,7 @@ struct RichTextEditor: NSViewRepresentable {
 
         scrollView.documentView = textView
         context.coordinator.textView = textView
+        context.coordinator.applyTypingAttributes(to: textView)
         textView.onAppearanceChange = { [weak coordinator = context.coordinator] in
             coordinator?.handleAppearanceChange()
         }
@@ -315,6 +307,7 @@ struct RichTextEditor: NSViewRepresentable {
             textView.setSelectedRange(cursorPosition)
 
             context.coordinator.isProgrammaticUpdate = false
+            context.coordinator.applyTypingAttributes(to: textView)
         }
 
         if context.coordinator.activeColor != activeColor {
@@ -430,12 +423,7 @@ struct RichTextEditor: NSViewRepresentable {
 
             // Convert checkbox patterns to attachments
             if let storage = textView.textStorage {
-                let spaceAttrs: [NSAttributedString.Key: Any] = [
-                    NSAttributedString.Key.font: NSFont.systemFont(ofSize: activeFontSize.rawValue),
-                    NSAttributedString.Key.foregroundColor: activeColor.nsColor,
-                    ColorMapping.colorIDKey: activeColor.id,
-                    ColorMapping.fontSizeKey: activeFontSize.rawValue
-                ]
+                let spaceAttrs = currentTypingAttributes(from: textView)
                 if AutoFormatting.convertCheckboxPatterns(in: storage, spaceAttributes: spaceAttrs) {
                     // Layout needs to be invalidated after replacing attachments
                 }
@@ -448,18 +436,7 @@ struct RichTextEditor: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView,
                   textView === self.textView else { return }
-            let font = NSFont.systemFont(ofSize: activeFontSize.rawValue, weight: isBold ? .bold : .regular)
-            textView.typingAttributes[NSAttributedString.Key.font] = font
-            textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.nsColor
-            textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
-            textView.typingAttributes[ColorMapping.fontSizeKey] = activeFontSize.rawValue
-
-            let underlineValue = isUnderlined ? NSUnderlineStyle.single.rawValue : 0
-            textView.typingAttributes[NSAttributedString.Key.underlineStyle] = underlineValue
-
-            let strikethroughValue = isStrikethrough ? NSUnderlineStyle.single.rawValue : 0
-            textView.typingAttributes[NSAttributedString.Key.strikethroughStyle] = strikethroughValue
-            updateTypingAttributesHighlight(textView)
+            applyTypingAttributes(to: textView)
 
             // Force update the parent binding to ensure color changes are captured
             if !isProgrammaticUpdate {
@@ -469,7 +446,6 @@ struct RichTextEditor: NSViewRepresentable {
         }
 
         func apply(color: RichTextColor, to textView: NSTextView) {
-            let nsColor = color.nsColor
             let selectedRange = textView.selectedRange
 
             if selectedRange.length > 0,
@@ -485,9 +461,7 @@ struct RichTextEditor: NSViewRepresentable {
                 }
             }
 
-            textView.typingAttributes[NSAttributedString.Key.foregroundColor] = nsColor
-            textView.typingAttributes[ColorMapping.colorIDKey] = color.id
-            updateTypingAttributesHighlight(textView)
+            applyTypingAttributes(to: textView)
         }
 
         func apply(fontSize: FontSize, to textView: NSTextView) {
@@ -510,9 +484,7 @@ struct RichTextEditor: NSViewRepresentable {
                 }
             }
 
-            textView.typingAttributes[NSAttributedString.Key.font] = NSFont.systemFont(ofSize: fontSize.rawValue)
-            textView.typingAttributes[ColorMapping.fontSizeKey] = fontSize.rawValue
-            updateTypingAttributesHighlight(textView)
+            applyTypingAttributes(to: textView)
         }
 
         func apply(highlighter: HighlighterColor, to textView: NSTextView) {
@@ -530,18 +502,42 @@ struct RichTextEditor: NSViewRepresentable {
                 }
             }
 
-            updateTypingAttributesHighlight(textView, using: highlighter)
+            applyTypingAttributes(to: textView, highlightOverride: highlighter)
         }
 
         private func updateTypingAttributesHighlight(_ textView: NSTextView, using highlight: HighlighterColor? = nil) {
-            let targetHighlight = highlight ?? activeHighlighter
+            applyTypingAttributes(to: textView, highlightOverride: highlight)
+        }
+
+        private func currentTypingAttributes(from textView: NSTextView?, highlightOverride: HighlighterColor? = nil) -> [NSAttributedString.Key: Any] {
+            var attrs = textView?.typingAttributes ?? [:]
+
+            let font = NSFont.systemFont(ofSize: activeFontSize.rawValue, weight: isBold ? .bold : .regular)
+            attrs[NSAttributedString.Key.font] = font
+            attrs[ColorMapping.fontSizeKey] = activeFontSize.rawValue
+            attrs[NSAttributedString.Key.foregroundColor] = activeColor.nsColor
+            attrs[ColorMapping.colorIDKey] = activeColor.id
+
+            let underlineValue = isUnderlined ? NSUnderlineStyle.single.rawValue : 0
+            attrs[NSAttributedString.Key.underlineStyle] = underlineValue
+
+            let strikethroughValue = isStrikethrough ? NSUnderlineStyle.single.rawValue : 0
+            attrs[NSAttributedString.Key.strikethroughStyle] = strikethroughValue
+
+            let targetHighlight = highlightOverride ?? activeHighlighter
             if targetHighlight == .none {
-                textView.typingAttributes.removeValue(forKey: NSAttributedString.Key.backgroundColor)
-                textView.typingAttributes.removeValue(forKey: ColorMapping.highlightIDKey)
+                attrs.removeValue(forKey: NSAttributedString.Key.backgroundColor)
+                attrs.removeValue(forKey: ColorMapping.highlightIDKey)
             } else if let color = targetHighlight.nsColor {
-                textView.typingAttributes[NSAttributedString.Key.backgroundColor] = color
-                textView.typingAttributes[ColorMapping.highlightIDKey] = targetHighlight.id
+                attrs[NSAttributedString.Key.backgroundColor] = color
+                attrs[ColorMapping.highlightIDKey] = targetHighlight.id
             }
+
+            return attrs
+        }
+
+        func applyTypingAttributes(to textView: NSTextView, highlightOverride: HighlighterColor? = nil) {
+            textView.typingAttributes = currentTypingAttributes(from: textView, highlightOverride: highlightOverride)
         }
 
         func toggleBold(_ textView: NSTextView) {
@@ -560,8 +556,7 @@ struct RichTextEditor: NSViewRepresentable {
                 }
             }
 
-            let boldFont = NSFont.systemFont(ofSize: activeFontSize.rawValue, weight: isBold ? .bold : .regular)
-            textView.typingAttributes[NSAttributedString.Key.font] = boldFont
+            applyTypingAttributes(to: textView)
         }
 
         func toggleUnderline(_ textView: NSTextView) {
@@ -580,8 +575,7 @@ struct RichTextEditor: NSViewRepresentable {
                 }
             }
 
-            let underlineValue = isUnderlined ? NSUnderlineStyle.single.rawValue : 0
-            textView.typingAttributes[NSAttributedString.Key.underlineStyle] = underlineValue
+            applyTypingAttributes(to: textView)
         }
 
         func toggleStrikethrough(_ textView: NSTextView) {
@@ -600,18 +594,12 @@ struct RichTextEditor: NSViewRepresentable {
                 }
             }
 
-            let strikethroughValue = isStrikethrough ? NSUnderlineStyle.single.rawValue : 0
-            textView.typingAttributes[NSAttributedString.Key.strikethroughStyle] = strikethroughValue
+            applyTypingAttributes(to: textView)
         }
 
         func handleAppearanceChange() {
             guard let textView = textView else { return }
-            // Only update typing attributes, don't override the text view's rendering of existing text
-            if activeColor == .automatic {
-                textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.nsColor
-                textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
-            }
-            updateTypingAttributesHighlight(textView)
+            applyTypingAttributes(to: textView)
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -699,12 +687,7 @@ struct RichTextEditor: NSViewRepresentable {
 
             if contentAfter.isEmpty {
                 // Blank line after checkbox - remove the checkbox, just add newline with proper attributes
-                let fontAttrs: [NSAttributedString.Key: Any] = [
-                    NSAttributedString.Key.font: NSFont.systemFont(ofSize: activeFontSize.rawValue),
-                    NSAttributedString.Key.foregroundColor: activeColor.nsColor,
-                    ColorMapping.colorIDKey: activeColor.id,
-                    ColorMapping.fontSizeKey: activeFontSize.rawValue
-                ]
+                let fontAttrs = currentTypingAttributes(from: textView)
                 let newlineWithAttrs = NSAttributedString(string: "\n", attributes: fontAttrs)
                 storage.replaceCharacters(in: lineRange, with: newlineWithAttrs)
             } else {
@@ -713,12 +696,7 @@ struct RichTextEditor: NSViewRepresentable {
                 let newCheckboxString = NSAttributedString(attachment: newCheckbox)
 
                 // Add font attributes for proper rendering
-                let fontAttrs: [NSAttributedString.Key: Any] = [
-                    NSAttributedString.Key.font: NSFont.systemFont(ofSize: activeFontSize.rawValue),
-                    NSAttributedString.Key.foregroundColor: activeColor.nsColor,
-                    ColorMapping.colorIDKey: activeColor.id,
-                    ColorMapping.fontSizeKey: activeFontSize.rawValue
-                ]
+                let fontAttrs = currentTypingAttributes(from: textView)
 
                 let newLine = NSMutableAttributedString(string: "\n", attributes: fontAttrs)
                 newLine.append(newCheckboxString)
@@ -733,11 +711,7 @@ struct RichTextEditor: NSViewRepresentable {
             textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
 
             // Ensure typing attributes are set for the next line
-            textView.typingAttributes[NSAttributedString.Key.font] = NSFont.systemFont(ofSize: activeFontSize.rawValue)
-            textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.nsColor
-            textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
-            textView.typingAttributes[ColorMapping.fontSizeKey] = activeFontSize.rawValue
-            updateTypingAttributesHighlight(textView)
+            applyTypingAttributes(to: textView)
 
             parent.text = NSAttributedString(attributedString: storage)
             isProgrammaticUpdate = false
@@ -760,6 +734,7 @@ struct RichTextEditor: NSViewRepresentable {
             // Position cursor after the inserted text
             let newCursorPosition = replacementRange.location + newText.count
             textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+            applyTypingAttributes(to: textView)
 
             parent.text = NSAttributedString(attributedString: storage)
             isProgrammaticUpdate = false
@@ -788,27 +763,18 @@ struct RichTextEditor: NSViewRepresentable {
                 let nextCharRange = NSRange(location: spaceInsertionPos, length: 1)
                 let nextChar = storage.attributedSubstring(from: nextCharRange).string
                 if nextChar != " " {
-                    let spaceAttrs: [NSAttributedString.Key: Any] = [
-                        NSAttributedString.Key.font: NSFont.systemFont(ofSize: activeFontSize.rawValue),
-                        NSAttributedString.Key.foregroundColor: activeColor.nsColor,
-                        ColorMapping.colorIDKey: activeColor.id,
-                        ColorMapping.fontSizeKey: activeFontSize.rawValue
-                    ]
+                    let spaceAttrs = currentTypingAttributes(from: textView)
                     storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
                 }
             } else {
                 // End of text, just add space
-                let spaceAttrs: [NSAttributedString.Key: Any] = [
-                    NSAttributedString.Key.font: NSFont.systemFont(ofSize: activeFontSize.rawValue),
-                    NSAttributedString.Key.foregroundColor: activeColor.nsColor,
-                    ColorMapping.colorIDKey: activeColor.id,
-                    ColorMapping.fontSizeKey: activeFontSize.rawValue
-                ]
+                let spaceAttrs = currentTypingAttributes(from: textView)
                 storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
             }
 
             let newCursorPosition = spaceInsertionPos + 1
             textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+            applyTypingAttributes(to: textView)
 
             // Defer binding update to next runloop to avoid state modification during view update
             let newText = NSAttributedString(attributedString: storage)
@@ -863,27 +829,18 @@ struct RichTextEditor: NSViewRepresentable {
                     let nextCharRange = NSRange(location: spaceInsertionPos, length: 1)
                     let nextChar = storage.attributedSubstring(from: nextCharRange).string
                     if nextChar != " " {
-                        let spaceAttrs: [NSAttributedString.Key: Any] = [
-                            NSAttributedString.Key.font: NSFont.systemFont(ofSize: activeFontSize.rawValue),
-                            NSAttributedString.Key.foregroundColor: activeColor.nsColor,
-                            ColorMapping.colorIDKey: activeColor.id,
-                            ColorMapping.fontSizeKey: activeFontSize.rawValue
-                        ]
+                        let spaceAttrs = currentTypingAttributes(from: textView)
                         storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
                     }
                 } else {
                     // End of text, just add space
-                    let spaceAttrs: [NSAttributedString.Key: Any] = [
-                        NSAttributedString.Key.font: NSFont.systemFont(ofSize: activeFontSize.rawValue),
-                        NSAttributedString.Key.foregroundColor: activeColor.nsColor,
-                        ColorMapping.colorIDKey: activeColor.id,
-                        ColorMapping.fontSizeKey: activeFontSize.rawValue
-                    ]
+                    let spaceAttrs = currentTypingAttributes(from: textView)
                     storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
                 }
 
                 let newCursorPosition = spaceInsertionPos + 1
                 textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+                applyTypingAttributes(to: textView)
             }
 
             // Defer binding update to next runloop to avoid state modification during view update
@@ -906,17 +863,13 @@ struct RichTextEditor: NSViewRepresentable {
             let bulletText = "- "
 
             // Create attributed string with proper font attributes
-            let fontAttrs: [NSAttributedString.Key: Any] = [
-                NSAttributedString.Key.font: NSFont.systemFont(ofSize: activeFontSize.rawValue),
-                NSAttributedString.Key.foregroundColor: activeColor.nsColor,
-                ColorMapping.colorIDKey: activeColor.id,
-                ColorMapping.fontSizeKey: activeFontSize.rawValue
-            ]
+            let fontAttrs = currentTypingAttributes(from: textView)
             let bulletString = NSAttributedString(string: bulletText, attributes: fontAttrs)
             storage.insert(bulletString, at: insertionRange.location)
 
             let newCursorPosition = insertionRange.location + bulletText.count
             textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+            applyTypingAttributes(to: textView)
 
             let newText = NSAttributedString(attributedString: storage)
             DispatchQueue.main.async { [weak self] in
@@ -937,17 +890,13 @@ struct RichTextEditor: NSViewRepresentable {
             let numberText = "1. "
 
             // Create attributed string with proper font attributes
-            let fontAttrs: [NSAttributedString.Key: Any] = [
-                NSAttributedString.Key.font: NSFont.systemFont(ofSize: activeFontSize.rawValue),
-                NSAttributedString.Key.foregroundColor: activeColor.nsColor,
-                ColorMapping.colorIDKey: activeColor.id,
-                ColorMapping.fontSizeKey: activeFontSize.rawValue
-            ]
+            let fontAttrs = currentTypingAttributes(from: textView)
             let numberString = NSAttributedString(string: numberText, attributes: fontAttrs)
             storage.insert(numberString, at: insertionRange.location)
 
             let newCursorPosition = insertionRange.location + numberText.count
             textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+            applyTypingAttributes(to: textView)
 
             let newText = NSAttributedString(attributedString: storage)
             DispatchQueue.main.async { [weak self] in
@@ -972,17 +921,13 @@ struct RichTextEditor: NSViewRepresentable {
             let dateText = formatter.string(from: Date())
 
             // Create attributed string with proper font attributes
-            let fontAttrs: [NSAttributedString.Key: Any] = [
-                NSAttributedString.Key.font: NSFont.systemFont(ofSize: activeFontSize.rawValue),
-                NSAttributedString.Key.foregroundColor: activeColor.nsColor,
-                ColorMapping.colorIDKey: activeColor.id,
-                ColorMapping.fontSizeKey: activeFontSize.rawValue
-            ]
+            let fontAttrs = currentTypingAttributes(from: textView)
             let dateString = NSAttributedString(string: dateText, attributes: fontAttrs)
             storage.insert(dateString, at: insertionRange.location)
 
             let newCursorPosition = insertionRange.location + dateText.count
             textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+            applyTypingAttributes(to: textView)
 
             let newText = NSAttributedString(attributedString: storage)
             DispatchQueue.main.async { [weak self] in
@@ -1007,17 +952,13 @@ struct RichTextEditor: NSViewRepresentable {
             let timeText = formatter.string(from: Date())
 
             // Create attributed string with proper font attributes
-            let fontAttrs: [NSAttributedString.Key: Any] = [
-                NSAttributedString.Key.font: NSFont.systemFont(ofSize: activeFontSize.rawValue),
-                NSAttributedString.Key.foregroundColor: activeColor.nsColor,
-                ColorMapping.colorIDKey: activeColor.id,
-                ColorMapping.fontSizeKey: activeFontSize.rawValue
-            ]
+            let fontAttrs = currentTypingAttributes(from: textView)
             let timeString = NSAttributedString(string: timeText, attributes: fontAttrs)
             storage.insert(timeString, at: insertionRange.location)
 
             let newCursorPosition = insertionRange.location + timeText.count
             textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+            applyTypingAttributes(to: textView)
 
             let newText = NSAttributedString(attributedString: storage)
             DispatchQueue.main.async { [weak self] in
@@ -1061,27 +1002,18 @@ struct RichTextEditor: NSViewRepresentable {
                 let nextCharRange = NSRange(location: spaceInsertionPos, length: 1)
                 let nextChar = storage.attributedSubstring(from: nextCharRange).string
                 if nextChar != " " {
-                    let spaceAttrs: [NSAttributedString.Key: Any] = [
-                        NSAttributedString.Key.font: NSFont.systemFont(ofSize: activeFontSize.rawValue),
-                        NSAttributedString.Key.foregroundColor: activeColor.nsColor,
-                        ColorMapping.colorIDKey: activeColor.id,
-                        ColorMapping.fontSizeKey: activeFontSize.rawValue
-                    ]
+                    let spaceAttrs = currentTypingAttributes(from: textView)
                     storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
                 }
             } else {
                 // End of text, just add space
-                let spaceAttrs: [NSAttributedString.Key: Any] = [
-                    NSAttributedString.Key.font: NSFont.systemFont(ofSize: activeFontSize.rawValue),
-                    NSAttributedString.Key.foregroundColor: activeColor.nsColor,
-                    ColorMapping.colorIDKey: activeColor.id,
-                    ColorMapping.fontSizeKey: activeFontSize.rawValue
-                ]
+                let spaceAttrs = currentTypingAttributes(from: textView)
                 storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
             }
 
             let newCursorPosition = spaceInsertionPos + 1
             textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+            applyTypingAttributes(to: textView)
 
             // Defer binding update to next runloop to avoid state modification during view update
             let newText = NSAttributedString(attributedString: storage)
@@ -1126,15 +1058,8 @@ struct RichTextEditor: UIViewRepresentable {
         textView.textColor = UIColor.label  // Set default to dynamic label color
         textView.textContainerInset = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         textView.attributedText = text
-        textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.uiColor
-        textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
-        textView.typingAttributes[NSAttributedString.Key.font] = UIFont.systemFont(ofSize: activeFontSize.rawValue)
-        textView.typingAttributes[ColorMapping.fontSizeKey] = activeFontSize.rawValue
-        if let highlightColor = activeHighlighter.uiColor {
-            textView.typingAttributes[NSAttributedString.Key.backgroundColor] = highlightColor
-            textView.typingAttributes[ColorMapping.highlightIDKey] = activeHighlighter.id
-        }
         context.coordinator.textView = textView
+        context.coordinator.applyTypingAttributes(to: textView)
 
         return textView
     }
@@ -1152,6 +1077,7 @@ struct RichTextEditor: UIViewRepresentable {
                 // Restore cursor position after updating text, with bounds validation
                 context.coordinator.setCursorPosition(cursorPosition, in: uiView)
                 context.coordinator.isProgrammaticUpdate = false
+                context.coordinator.applyTypingAttributes(to: uiView)
             }
         }
 
@@ -1462,12 +1388,7 @@ struct RichTextEditor: UIViewRepresentable {
                 }
 
                 // Convert checkbox patterns to attachments
-                let spaceAttrs: [NSAttributedString.Key: Any] = [
-                    NSAttributedString.Key.font: UIFont.systemFont(ofSize: activeFontSize.rawValue),
-                    NSAttributedString.Key.foregroundColor: activeColor.uiColor,
-                    ColorMapping.colorIDKey: activeColor.id,
-                    ColorMapping.fontSizeKey: activeFontSize.rawValue
-                ]
+                let spaceAttrs = currentTypingAttributes(from: textView)
                 if AutoFormatting.convertCheckboxPatterns(in: mutableText, spaceAttributes: spaceAttrs) {
                     textChanged = true
                 }
@@ -1478,6 +1399,7 @@ struct RichTextEditor: UIViewRepresentable {
                     textView.attributedText = mutableText
                     setCursorPosition(cursorPosition, in: textView)
                     isProgrammaticUpdate = false
+                    applyTypingAttributes(to: textView)
                 }
             }
 
@@ -1490,27 +1412,14 @@ struct RichTextEditor: UIViewRepresentable {
             }
 
             // Restore typing attributes after text changes
-            textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.uiColor
-            textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
-            updateTypingAttributesHighlight(textView)
+            applyTypingAttributes(to: textView)
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
-            let font = UIFont.systemFont(ofSize: activeFontSize.rawValue, weight: isBold ? .bold : .regular)
-            textView.typingAttributes[NSAttributedString.Key.font] = font
-            textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.uiColor
-            textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
-            textView.typingAttributes[ColorMapping.fontSizeKey] = activeFontSize.rawValue
-
-            let underlineValue = isUnderlined ? NSUnderlineStyle.single.rawValue : 0
-            textView.typingAttributes[NSAttributedString.Key.underlineStyle] = underlineValue
-
-            let strikethroughValue = isStrikethrough ? NSUnderlineStyle.single.rawValue : 0
-            textView.typingAttributes[NSAttributedString.Key.strikethroughStyle] = strikethroughValue
+            applyTypingAttributes(to: textView)
         }
 
         func apply(color: RichTextColor, to textView: UITextView) {
-            let uiColor = color.uiColor
             let selectedRange = textView.selectedRange
 
             if selectedRange.length > 0,
@@ -1523,8 +1432,7 @@ struct RichTextEditor: UIViewRepresentable {
                 isProgrammaticUpdate = false
             }
 
-            textView.typingAttributes[NSAttributedString.Key.foregroundColor] = uiColor
-            textView.typingAttributes[ColorMapping.colorIDKey] = color.id
+            applyTypingAttributes(to: textView)
             updateTypingAttributesHighlight(textView)
         }
 
@@ -1545,8 +1453,7 @@ struct RichTextEditor: UIViewRepresentable {
                 isProgrammaticUpdate = false
             }
 
-            textView.typingAttributes[NSAttributedString.Key.font] = UIFont.systemFont(ofSize: fontSize.rawValue)
-            textView.typingAttributes[ColorMapping.fontSizeKey] = fontSize.rawValue
+            applyTypingAttributes(to: textView)
             updateTypingAttributesHighlight(textView)
         }
 
@@ -1564,6 +1471,7 @@ struct RichTextEditor: UIViewRepresentable {
             }
 
             updateTypingAttributesHighlight(textView, using: highlighter)
+            applyTypingAttributes(to: textView)
         }
 
         private func updateTypingAttributesHighlight(_ textView: UITextView, using highlight: HighlighterColor? = nil) {
@@ -1575,6 +1483,32 @@ struct RichTextEditor: UIViewRepresentable {
                 textView.typingAttributes[NSAttributedString.Key.backgroundColor] = color
                 textView.typingAttributes[ColorMapping.highlightIDKey] = targetHighlight.id
             }
+        }
+
+        private func currentTypingAttributes(from textView: UITextView?) -> [NSAttributedString.Key: Any] {
+            var attrs = textView?.typingAttributes ?? [:]
+
+            let font = UIFont.systemFont(ofSize: activeFontSize.rawValue, weight: isBold ? .bold : .regular)
+            attrs[NSAttributedString.Key.font] = font
+            attrs[ColorMapping.fontSizeKey] = activeFontSize.rawValue
+            attrs[NSAttributedString.Key.foregroundColor] = activeColor.uiColor
+            attrs[ColorMapping.colorIDKey] = activeColor.id
+            attrs[NSAttributedString.Key.underlineStyle] = isUnderlined ? NSUnderlineStyle.single.rawValue : 0
+            attrs[NSAttributedString.Key.strikethroughStyle] = isStrikethrough ? NSUnderlineStyle.single.rawValue : 0
+
+            if activeHighlighter == .none {
+                attrs.removeValue(forKey: NSAttributedString.Key.backgroundColor)
+                attrs.removeValue(forKey: ColorMapping.highlightIDKey)
+            } else if let color = activeHighlighter.uiColor {
+                attrs[NSAttributedString.Key.backgroundColor] = color
+                attrs[ColorMapping.highlightIDKey] = activeHighlighter.id
+            }
+
+            return attrs
+        }
+
+        func applyTypingAttributes(to textView: UITextView) {
+            textView.typingAttributes = currentTypingAttributes(from: textView)
         }
 
         func toggleBold(_ textView: UITextView) {
@@ -1591,8 +1525,7 @@ struct RichTextEditor: UIViewRepresentable {
                 isProgrammaticUpdate = false
             }
 
-            let boldFont = UIFont.systemFont(ofSize: activeFontSize.rawValue, weight: isBold ? .bold : .regular)
-            textView.typingAttributes[NSAttributedString.Key.font] = boldFont
+            applyTypingAttributes(to: textView)
         }
 
         func toggleUnderline(_ textView: UITextView) {
@@ -1609,8 +1542,7 @@ struct RichTextEditor: UIViewRepresentable {
                 isProgrammaticUpdate = false
             }
 
-            let underlineValue = isUnderlined ? NSUnderlineStyle.single.rawValue : 0
-            textView.typingAttributes[NSAttributedString.Key.underlineStyle] = underlineValue
+            applyTypingAttributes(to: textView)
         }
 
         func toggleStrikethrough(_ textView: UITextView) {
@@ -1627,16 +1559,11 @@ struct RichTextEditor: UIViewRepresentable {
                 isProgrammaticUpdate = false
             }
 
-            let strikethroughValue = isStrikethrough ? NSUnderlineStyle.single.rawValue : 0
-            textView.typingAttributes[NSAttributedString.Key.strikethroughStyle] = strikethroughValue
+            applyTypingAttributes(to: textView)
         }
 
         func handleAppearanceChange(to textView: UITextView) {
-            // Only update typing attributes when appearance changes if using automatic color
-            if activeColor == .automatic {
-                textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.uiColor
-                textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
-            }
+            applyTypingAttributes(to: textView)
             updateTypingAttributesHighlight(textView)
         }
 
@@ -1683,10 +1610,6 @@ struct RichTextEditor: UIViewRepresentable {
         }
 
         func textView(_ textView: UITextView, shouldInteractWith attachment: NSTextAttachment, in characterRange: NSRange) -> Bool {
-            return handleCheckboxInteraction(attachment: attachment, range: characterRange, textView: textView)
-        }
-
-        func textView(_ textView: UITextView, shouldInteractWith attachment: NSTextAttachment, in characterRange: NSRange, interaction: UITextItemInteraction) -> Bool {
             return handleCheckboxInteraction(attachment: attachment, range: characterRange, textView: textView)
         }
 
@@ -1755,6 +1678,7 @@ struct RichTextEditor: UIViewRepresentable {
             mutableText.replaceCharacters(in: range, with: replacement)
             textView.attributedText = mutableText
             textView.selectedRange = NSRange(location: newCursorLocation, length: 0)
+            applyTypingAttributes(to: textView)
             parent.text = mutableText
             isProgrammaticUpdate = false
 
@@ -1816,12 +1740,7 @@ struct RichTextEditor: UIViewRepresentable {
 
             if contentAfter.isEmpty {
                 // Blank line after checkbox - remove the checkbox, just add newline with proper attributes
-                let fontAttrs: [NSAttributedString.Key: Any] = [
-                    NSAttributedString.Key.font: UIFont.systemFont(ofSize: activeFontSize.rawValue),
-                    NSAttributedString.Key.foregroundColor: activeColor.uiColor,
-                    ColorMapping.colorIDKey: activeColor.id,
-                    ColorMapping.fontSizeKey: activeFontSize.rawValue
-                ]
+                let fontAttrs = currentTypingAttributes(from: textView)
                 let newlineWithAttrs = NSAttributedString(string: "\n", attributes: fontAttrs)
                 textView.textStorage.replaceCharacters(in: lineRange, with: newlineWithAttrs)
             } else {
@@ -1830,12 +1749,7 @@ struct RichTextEditor: UIViewRepresentable {
                 let newCheckboxString = NSAttributedString(attachment: newCheckbox)
 
                 // Add font attributes for proper rendering
-                let fontAttrs: [NSAttributedString.Key: Any] = [
-                    NSAttributedString.Key.font: UIFont.systemFont(ofSize: activeFontSize.rawValue),
-                    NSAttributedString.Key.foregroundColor: activeColor.uiColor,
-                    ColorMapping.colorIDKey: activeColor.id,
-                    ColorMapping.fontSizeKey: activeFontSize.rawValue
-                ]
+                let fontAttrs = currentTypingAttributes(from: textView)
 
                 let newLine = NSMutableAttributedString(string: "\n", attributes: fontAttrs)
                 newLine.append(newCheckboxString)
@@ -1850,10 +1764,7 @@ struct RichTextEditor: UIViewRepresentable {
             textView.selectedRange = NSRange(location: newCursorPosition, length: 0)
 
             // Ensure typing attributes are set for the next line
-            textView.typingAttributes[NSAttributedString.Key.font] = UIFont.systemFont(ofSize: activeFontSize.rawValue)
-            textView.typingAttributes[NSAttributedString.Key.foregroundColor] = activeColor.uiColor
-            textView.typingAttributes[ColorMapping.colorIDKey] = activeColor.id
-            textView.typingAttributes[ColorMapping.fontSizeKey] = activeFontSize.rawValue
+            applyTypingAttributes(to: textView)
             updateTypingAttributesHighlight(textView)
 
             parent.text = textView.attributedText ?? NSAttributedString()
@@ -1900,28 +1811,19 @@ struct RichTextEditor: UIViewRepresentable {
                 let nextCharRange = NSRange(location: spaceInsertionPos, length: 1)
                 let nextChar = attributedText.attributedSubstring(from: nextCharRange).string
                 if nextChar != " " {
-                    let spaceAttrs: [NSAttributedString.Key: Any] = [
-                        NSAttributedString.Key.font: UIFont.systemFont(ofSize: activeFontSize.rawValue),
-                        NSAttributedString.Key.foregroundColor: activeColor.uiColor,
-                        ColorMapping.colorIDKey: activeColor.id,
-                        ColorMapping.fontSizeKey: activeFontSize.rawValue
-                    ]
+                    let spaceAttrs = currentTypingAttributes(from: textView)
                     attributedText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
                 }
             } else {
                 // End of text, just add space
-                let spaceAttrs: [NSAttributedString.Key: Any] = [
-                    NSAttributedString.Key.font: UIFont.systemFont(ofSize: activeFontSize.rawValue),
-                    NSAttributedString.Key.foregroundColor: activeColor.uiColor,
-                    ColorMapping.colorIDKey: activeColor.id,
-                    ColorMapping.fontSizeKey: activeFontSize.rawValue
-                ]
+                let spaceAttrs = currentTypingAttributes(from: textView)
                 attributedText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
             }
 
             let newCursorPosition = spaceInsertionPos + 1
             textView.attributedText = attributedText
             textView.selectedRange = NSRange(location: newCursorPosition, length: 0)
+            applyTypingAttributes(to: textView)
 
             // Defer binding update to next runloop to avoid state modification during view update
             DispatchQueue.main.async { [weak self] in
@@ -1975,22 +1877,12 @@ struct RichTextEditor: UIViewRepresentable {
                     let nextCharRange = NSRange(location: spaceInsertionPos, length: 1)
                     let nextChar = attributedText.attributedSubstring(from: nextCharRange).string
                     if nextChar != " " {
-                        let spaceAttrs: [NSAttributedString.Key: Any] = [
-                            NSAttributedString.Key.font: UIFont.systemFont(ofSize: activeFontSize.rawValue),
-                            NSAttributedString.Key.foregroundColor: activeColor.uiColor,
-                            ColorMapping.colorIDKey: activeColor.id,
-                            ColorMapping.fontSizeKey: activeFontSize.rawValue
-                        ]
+                        let spaceAttrs = currentTypingAttributes(from: textView)
                         attributedText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
                     }
                 } else {
                     // End of text, just add space
-                    let spaceAttrs: [NSAttributedString.Key: Any] = [
-                        NSAttributedString.Key.font: UIFont.systemFont(ofSize: activeFontSize.rawValue),
-                        NSAttributedString.Key.foregroundColor: activeColor.uiColor,
-                        ColorMapping.colorIDKey: activeColor.id,
-                        ColorMapping.fontSizeKey: activeFontSize.rawValue
-                    ]
+                    let spaceAttrs = currentTypingAttributes(from: textView)
                     attributedText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
                 }
 
@@ -2000,6 +1892,7 @@ struct RichTextEditor: UIViewRepresentable {
 
             // Reassign attributedText to trigger redraw
             textView.attributedText = attributedText
+            applyTypingAttributes(to: textView)
 
             // Defer binding update to next runloop to avoid state modification during view update
             DispatchQueue.main.async { [weak self] in
@@ -2018,18 +1911,14 @@ struct RichTextEditor: UIViewRepresentable {
             let mutableText = (textView.attributedText?.mutableCopy() as? NSMutableAttributedString) ?? NSMutableAttributedString()
 
             // Create attributed string with proper font attributes
-            let fontAttrs: [NSAttributedString.Key: Any] = [
-                NSAttributedString.Key.font: UIFont.systemFont(ofSize: activeFontSize.rawValue),
-                NSAttributedString.Key.foregroundColor: activeColor.uiColor,
-                ColorMapping.colorIDKey: activeColor.id,
-                ColorMapping.fontSizeKey: activeFontSize.rawValue
-            ]
+            let fontAttrs = currentTypingAttributes(from: textView)
             let bulletString = NSAttributedString(string: bulletText, attributes: fontAttrs)
             mutableText.insert(bulletString, at: insertionRange.location)
 
             let newCursorPosition = insertionRange.location + bulletText.count
             textView.attributedText = mutableText
             setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
+            applyTypingAttributes(to: textView)
 
             // Update binding synchronously while isProgrammaticUpdate is true to prevent race conditions
             let updatedText = NSAttributedString(attributedString: mutableText)
@@ -2048,18 +1937,14 @@ struct RichTextEditor: UIViewRepresentable {
             let mutableText = (textView.attributedText?.mutableCopy() as? NSMutableAttributedString) ?? NSMutableAttributedString()
 
             // Create attributed string with proper font attributes
-            let fontAttrs: [NSAttributedString.Key: Any] = [
-                NSAttributedString.Key.font: UIFont.systemFont(ofSize: activeFontSize.rawValue),
-                NSAttributedString.Key.foregroundColor: activeColor.uiColor,
-                ColorMapping.colorIDKey: activeColor.id,
-                ColorMapping.fontSizeKey: activeFontSize.rawValue
-            ]
+            let fontAttrs = currentTypingAttributes(from: textView)
             let numberString = NSAttributedString(string: numberText, attributes: fontAttrs)
             mutableText.insert(numberString, at: insertionRange.location)
 
             let newCursorPosition = insertionRange.location + numberText.count
             textView.attributedText = mutableText
             setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
+            applyTypingAttributes(to: textView)
 
             // Update binding synchronously while isProgrammaticUpdate is true to prevent race conditions
             let updatedText = NSAttributedString(attributedString: mutableText)
@@ -2082,18 +1967,14 @@ struct RichTextEditor: UIViewRepresentable {
             let dateText = formatter.string(from: Date())
 
             // Create attributed string with proper font attributes
-            let fontAttrs: [NSAttributedString.Key: Any] = [
-                NSAttributedString.Key.font: UIFont.systemFont(ofSize: activeFontSize.rawValue),
-                NSAttributedString.Key.foregroundColor: activeColor.uiColor,
-                ColorMapping.colorIDKey: activeColor.id,
-                ColorMapping.fontSizeKey: activeFontSize.rawValue
-            ]
+            let fontAttrs = currentTypingAttributes(from: textView)
             let dateString = NSAttributedString(string: dateText, attributes: fontAttrs)
             mutableText.insert(dateString, at: insertionRange.location)
 
             let newCursorPosition = insertionRange.location + dateText.count
             textView.attributedText = mutableText
             setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
+            applyTypingAttributes(to: textView)
 
             // Update binding synchronously while isProgrammaticUpdate is true to prevent race conditions
             let updatedText = NSAttributedString(attributedString: mutableText)
@@ -2116,18 +1997,14 @@ struct RichTextEditor: UIViewRepresentable {
             let timeText = formatter.string(from: Date())
 
             // Create attributed string with proper font attributes
-            let fontAttrs: [NSAttributedString.Key: Any] = [
-                NSAttributedString.Key.font: UIFont.systemFont(ofSize: activeFontSize.rawValue),
-                NSAttributedString.Key.foregroundColor: activeColor.uiColor,
-                ColorMapping.colorIDKey: activeColor.id,
-                ColorMapping.fontSizeKey: activeFontSize.rawValue
-            ]
+            let fontAttrs = currentTypingAttributes(from: textView)
             let timeString = NSAttributedString(string: timeText, attributes: fontAttrs)
             mutableText.insert(timeString, at: insertionRange.location)
 
             let newCursorPosition = insertionRange.location + timeText.count
             textView.attributedText = mutableText
             setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
+            applyTypingAttributes(to: textView)
 
             // Update binding synchronously while isProgrammaticUpdate is true to prevent race conditions
             let updatedText = NSAttributedString(attributedString: mutableText)
@@ -2169,28 +2046,19 @@ struct RichTextEditor: UIViewRepresentable {
                 let nextCharRange = NSRange(location: spaceInsertionPos, length: 1)
                 let nextChar = mutableText.attributedSubstring(from: nextCharRange).string
                 if nextChar != " " {
-                    let spaceAttrs: [NSAttributedString.Key: Any] = [
-                        NSAttributedString.Key.font: UIFont.systemFont(ofSize: activeFontSize.rawValue),
-                        NSAttributedString.Key.foregroundColor: activeColor.uiColor,
-                        ColorMapping.colorIDKey: activeColor.id,
-                        ColorMapping.fontSizeKey: activeFontSize.rawValue
-                    ]
+                    let spaceAttrs = currentTypingAttributes(from: textView)
                     mutableText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
                 }
             } else {
                 // End of text, just add space
-                let spaceAttrs: [NSAttributedString.Key: Any] = [
-                    NSAttributedString.Key.font: UIFont.systemFont(ofSize: activeFontSize.rawValue),
-                    NSAttributedString.Key.foregroundColor: activeColor.uiColor,
-                    ColorMapping.colorIDKey: activeColor.id,
-                    ColorMapping.fontSizeKey: activeFontSize.rawValue
-                ]
+                let spaceAttrs = currentTypingAttributes(from: textView)
                 mutableText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
             }
 
             let newCursorPosition = spaceInsertionPos + 1
             textView.attributedText = mutableText
             setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
+            applyTypingAttributes(to: textView)
 
             // Update binding synchronously while isProgrammaticUpdate is true to prevent race conditions
             let updatedText = NSAttributedString(attributedString: mutableText)
