@@ -411,7 +411,12 @@ struct RichTextEditor: UIViewRepresentable {
                 ColorMapping.applyColor(color, to: currentText, range: selectedRange)
                 textView.attributedText = currentText
                 textView.selectedRange = selectedRange
-                parent.text = currentText
+                // Defer binding update to avoid modifying state during view update
+                DispatchQueue.main.async { [weak self] in
+                    self?.parent.text = currentText
+                    self?.isProgrammaticUpdate = false
+                }
+            } else {
                 isProgrammaticUpdate = false
             }
 
@@ -432,7 +437,12 @@ struct RichTextEditor: UIViewRepresentable {
                 currentText.addAttributes(fontAttrs, range: selectedRange)
                 textView.attributedText = currentText
                 textView.selectedRange = selectedRange
-                parent.text = currentText
+                // Defer binding update to avoid modifying state during view update
+                DispatchQueue.main.async { [weak self] in
+                    self?.parent.text = currentText
+                    self?.isProgrammaticUpdate = false
+                }
+            } else {
                 isProgrammaticUpdate = false
             }
 
@@ -449,7 +459,12 @@ struct RichTextEditor: UIViewRepresentable {
                 ColorMapping.applyHighlight(highlighter, to: currentText, range: selectedRange)
                 textView.attributedText = currentText
                 textView.selectedRange = selectedRange
-                parent.text = currentText
+                // Defer binding update to avoid modifying state during view update
+                DispatchQueue.main.async { [weak self] in
+                    self?.parent.text = currentText
+                    self?.isProgrammaticUpdate = false
+                }
+            } else {
                 isProgrammaticUpdate = false
             }
 
