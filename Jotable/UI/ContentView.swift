@@ -210,7 +210,7 @@ struct ContentView: View {
                 .tag(SidebarSelection.category(category))
                 .contextMenu {
                     Button {
-                        categoryToEdit = category
+                        beginEditing(category)
                     } label: {
                         Label("Edit", systemImage: "pencil")
                     }
@@ -221,8 +221,8 @@ struct ContentView: View {
                         togglePrivacy(for: category)
                     } label: {
                         Label(
-                            category.isPrivate ? "Unlock" : "Lock",
-                            systemImage: category.isPrivate ? "lock.open" : "lock"
+                            category.isPrivate ? "Disable Privacy" : "Enable Privacy",
+                            systemImage: category.isPrivate ? "eye" : "eye.slash"
                         )
                     }
 
@@ -232,16 +232,6 @@ struct ContentView: View {
                         Label("Delete", systemImage: "trash")
                     }
                 }
-                #if os(iOS)
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                    Button(role: .none) {
-                        togglePrivacy(for: category)
-                    } label: {
-                        Label(category.isPrivate ? "Unlock" : "Lock", systemImage: category.isPrivate ? "lock.open" : "lock")
-                    }
-                    .tint(.blue)
-                }
-                #endif
             }
             .onMove(perform: moveCategories)
             .onDelete(perform: deleteCategories)
@@ -395,6 +385,18 @@ struct ContentView: View {
             } catch {
                 print("Failed to delete category: \(error)")
             }
+        }
+    }
+
+    private func beginEditing(_ category: Category) {
+        if category.isPrivate {
+            authenticateWithBiometrics(reason: "Authenticate to edit this private category") { success in
+                if success {
+                    self.categoryToEdit = category
+                }
+            }
+        } else {
+            categoryToEdit = category
         }
     }
 
@@ -591,7 +593,7 @@ struct CategoryRowView: View {
             Text(title)
 
             if isPrivate {
-                Image(systemName: "lock.fill")
+                Image(systemName: "eye.slash.fill")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
