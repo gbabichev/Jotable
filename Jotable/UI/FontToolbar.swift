@@ -7,10 +7,22 @@ struct FontToolbar: View {
     @Binding var isBold: Bool
     @Binding var isUnderlined: Bool
     @Binding var isStrikethrough: Bool
+    @Binding var presentFormatMenuTrigger: UUID?
 
     var body: some View {
         Menu {
             // MARK: - Colors Section
+            #if os(iOS)
+            Button {
+                DispatchQueue.main.async {
+                    presentFormatMenuTrigger = UUID()
+                }
+            } label: {
+                Label("Format & Color", systemImage: "textformat")
+            }
+
+            Divider()
+            #else
             Menu {
                 Button {
                     activeColor = .automatic
@@ -60,6 +72,7 @@ struct FontToolbar: View {
             }
 
             Divider()
+            #endif
 
             // MARK: - Font Size Section
             Menu {

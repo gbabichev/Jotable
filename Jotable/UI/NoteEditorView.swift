@@ -24,6 +24,7 @@ struct NoteEditorView: View {
     @State private var insertDateTrigger: UUID?
     @State private var insertTimeTrigger: UUID?
     @State private var insertURLTrigger: (UUID, String, String)?
+    @State private var presentFormatMenuTrigger: UUID?
     @State private var tempURLData: (String, String)? = nil
     @State private var showingAddURLDialog: Bool = false
     @State private var headerHeight: CGFloat = 0
@@ -69,7 +70,8 @@ struct NoteEditorView: View {
                         insertNumberingTrigger: $insertNumberingTrigger,
                         insertDateTrigger: $insertDateTrigger,
                         insertTimeTrigger: $insertTimeTrigger,
-                        insertURLTrigger: $insertURLTrigger
+                        insertURLTrigger: $insertURLTrigger,
+                        presentFormatMenuTrigger: $presentFormatMenuTrigger
                     )
                         .frame(maxWidth: .infinity)
                         .frame(minHeight: max(proxy.size.height - headerHeight - 12, 0))
@@ -123,7 +125,8 @@ struct NoteEditorView: View {
                     activeFontSize: $activeFontSize,
                     isBold: $isBold,
                     isUnderlined: $isUnderlined,
-                    isStrikethrough: $isStrikethrough
+                    isStrikethrough: $isStrikethrough,
+                    presentFormatMenuTrigger: $presentFormatMenuTrigger
                 )
             }
             

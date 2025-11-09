@@ -25,7 +25,7 @@ enum FontSize: CGFloat, Equatable, Identifiable, CaseIterable {
     }
 }
 
-enum RichTextColor: Equatable, Identifiable {
+enum RichTextColor: Equatable, Identifiable, CaseIterable {
     case automatic
     case red
     case green
@@ -182,4 +182,3 @@ enum HighlighterColor: Equatable, Identifiable, CaseIterable {
         }
     }
 }
-

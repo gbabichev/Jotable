@@ -59,11 +59,19 @@ struct ColorMapping {
             let attrs = mutableString.attributes(at: currentPos, longestEffectiveRange: &range, in: NSRange(location: currentPos, length: mutableString.length - currentPos))
 
             // If there's a foreground color but no color ID, infer it
-            if attrs[NSAttributedString.Key.foregroundColor] != nil && attrs[colorIDKey] == nil {
-                // If no color ID was set, try to infer from the color itself
-                // Otherwise default to "automatic"
-                mutableString.addAttribute(colorIDKey, value: "automatic", range: range)
+            #if os(macOS)
+            if let foregroundColor = attrs[NSAttributedString.Key.foregroundColor] as? NSColor,
+               attrs[colorIDKey] == nil,
+               let inferredID = matchingColorID(for: foregroundColor) {
+                mutableString.addAttribute(colorIDKey, value: inferredID, range: range)
             }
+            #else
+            if let foregroundColor = attrs[NSAttributedString.Key.foregroundColor] as? UIColor,
+               attrs[colorIDKey] == nil,
+               let inferredID = matchingColorID(for: foregroundColor) {
+                mutableString.addAttribute(colorIDKey, value: inferredID, range: range)
+            }
+            #endif
 
             #if os(macOS)
             if let backgroundColor = attrs[NSAttributedString.Key.backgroundColor] as? NSColor,
@@ -140,7 +148,7 @@ struct ColorMapping {
         return mutableString
     }
 
-    #if os(macOS)
+#if os(macOS)
     private static func matchingHighlight(for color: NSColor) -> HighlighterColor? {
         guard let converted = color.usingColorSpace(.deviceRGB) else { return nil }
         for highlight in HighlighterColor.allCases where highlight != .none {
@@ -151,12 +159,32 @@ struct ColorMapping {
         }
         return nil
     }
-    #else
+
+    private static func matchingColorID(for color: NSColor) -> String? {
+        guard let converted = color.usingColorSpace(.deviceRGB) else { return nil }
+        for candidate in RichTextColor.allCases {
+            guard let candidateColor = candidate.nsColor.usingColorSpace(.deviceRGB) else { continue }
+            if converted.isEqual(candidateColor) {
+                return candidate.id
+            }
+        }
+        return nil
+    }
+#else
     private static func matchingHighlight(for color: UIColor) -> HighlighterColor? {
         for highlight in HighlighterColor.allCases where highlight != .none {
             guard let highlightColor = highlight.uiColor else { continue }
             if colorsEqual(color, highlightColor) {
                 return highlight
+            }
+        }
+        return nil
+    }
+
+    private static func matchingColorID(for color: UIColor) -> String? {
+        for candidate in RichTextColor.allCases {
+            if colorsEqual(color, candidate.uiColor) {
+                return candidate.id
             }
         }
         return nil

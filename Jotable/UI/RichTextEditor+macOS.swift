@@ -68,6 +68,7 @@ struct RichTextEditor: NSViewRepresentable {
     @Binding var insertDateTrigger: UUID?
     @Binding var insertTimeTrigger: UUID?
     @Binding var insertURLTrigger: (UUID, String, String)?
+    @Binding var presentFormatMenuTrigger: UUID?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
