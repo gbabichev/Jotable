@@ -138,7 +138,10 @@ struct RichTextEditor: NSViewRepresentable {
 
         if context.coordinator.activeColor != activeColor {
             context.coordinator.activeColor = activeColor
-            if !context.coordinator.hasCustomTypingColor {
+            if context.coordinator.pendingActiveColorFeedback == activeColor {
+                context.coordinator.pendingActiveColorFeedback = nil
+            } else {
+                context.coordinator.customTypingColor = nil
                 context.coordinator.apply(color: activeColor, to: textView)
             }
         }
@@ -234,7 +237,8 @@ struct RichTextEditor: NSViewRepresentable {
         var lastURLTrigger: (UUID, String, String)?
         var lastFormatMenuTrigger: UUID?
         weak var textView: NSTextView?
-        private var customTypingColor: NSColor?
+        var pendingActiveColorFeedback: RichTextColor?
+        var customTypingColor: NSColor?
         var hasCustomTypingColor: Bool { customTypingColor != nil }
 
         private func effectiveColorComponents() -> (color: NSColor, id: String?) {
@@ -277,6 +281,7 @@ struct RichTextEditor: NSViewRepresentable {
                     customTypingColor = nil
                     if paletteColor != activeColor {
                         activeColor = paletteColor
+                        pendingActiveColorFeedback = paletteColor
                         parent.activeColor = paletteColor
                     }
                 }
@@ -431,6 +436,7 @@ struct RichTextEditor: NSViewRepresentable {
             if let paletteMatch = ColorMapping.matchingRichTextColor(for: color),
                paletteMatch != activeColor {
                 activeColor = paletteMatch
+                pendingActiveColorFeedback = paletteMatch
                 parent.activeColor = paletteMatch
             }
 

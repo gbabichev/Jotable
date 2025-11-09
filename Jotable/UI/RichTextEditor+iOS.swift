@@ -60,7 +60,10 @@ struct RichTextEditor: UIViewRepresentable {
 
         if context.coordinator.activeColor != activeColor {
             context.coordinator.activeColor = activeColor
-            if !context.coordinator.hasCustomTypingColor {
+            if context.coordinator.pendingActiveColorFeedback == activeColor {
+                context.coordinator.pendingActiveColorFeedback = nil
+            } else {
+                context.coordinator.customTypingColor = nil
                 context.coordinator.apply(color: activeColor, to: uiView)
             }
         }
@@ -156,9 +159,10 @@ struct RichTextEditor: UIViewRepresentable {
         var lastURLTrigger: (UUID, String, String)?
         var lastFormatMenuTrigger: UUID?
         weak var textView: UITextView?
+        var pendingActiveColorFeedback: RichTextColor?
         private var fixTextTimer: Timer?
         private var pendingReplacementAttributes: (range: NSRange, newLength: Int, color: UIColor?, colorID: String?)?
-        private var customTypingColor: UIColor?
+        var customTypingColor: UIColor?
         var hasCustomTypingColor: Bool { customTypingColor != nil }
         @available(iOS 16.0, *)
         private weak var manualEditMenuInteraction: UIEditMenuInteraction?
@@ -473,6 +477,7 @@ struct RichTextEditor: UIViewRepresentable {
                     customTypingColor = nil
                     if paletteColor != activeColor {
                         activeColor = paletteColor
+                        pendingActiveColorFeedback = paletteColor
                         DispatchQueue.main.async { [weak self] in
                             self?.parent.activeColor = paletteColor
                         }

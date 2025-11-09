@@ -32,6 +32,21 @@ struct FontToolbar: View {
             Divider()
             #endif
 
+            Button {
+                activeColor = .red
+            } label: {
+                Label("Text Color: Red", systemImage: "circle.fill")
+                    .foregroundStyle(Color.red)
+            }
+
+            Button {
+                activeColor = .automatic
+            } label: {
+                Label("Reset Text Color", systemImage: "arrow.uturn.backward")
+            }
+
+            Divider()
+
             // MARK: - Font Size Section
             Menu {
                 ForEach(FontSize.allCases, id: \.self) { size in
