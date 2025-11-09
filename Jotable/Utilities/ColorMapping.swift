@@ -26,6 +26,12 @@ struct ColorMapping {
 
     /// Applies a color to the attributed string with the color ID stored for cross-platform sync
     static func applyColor(_ color: RichTextColor, to attributedString: NSMutableAttributedString, range: NSRange) {
+        if color == .automatic {
+            attributedString.removeAttribute(NSAttributedString.Key.foregroundColor, range: range)
+            attributedString.addAttribute(colorIDKey, value: color.id, range: range)
+            return
+        }
+
         #if os(macOS)
         let platformColor: NSColor = color.nsColor
         #else

@@ -461,11 +461,17 @@ struct RichTextEditor: NSViewRepresentable {
             attrs[NSAttributedString.Key.font] = font
             attrs[ColorMapping.fontSizeKey] = activeFontSize.rawValue
             let components = effectiveColorComponents()
-            attrs[NSAttributedString.Key.foregroundColor] = components.color
-            if let id = components.id {
-                attrs[ColorMapping.colorIDKey] = id
+            let usingAutomatic = customTypingColor == nil && activeColor == .automatic
+            if usingAutomatic {
+                attrs.removeValue(forKey: NSAttributedString.Key.foregroundColor)
+                attrs[ColorMapping.colorIDKey] = RichTextColor.automatic.id
             } else {
-                attrs.removeValue(forKey: ColorMapping.colorIDKey)
+                attrs[NSAttributedString.Key.foregroundColor] = components.color
+                if let id = components.id {
+                    attrs[ColorMapping.colorIDKey] = id
+                } else {
+                    attrs.removeValue(forKey: ColorMapping.colorIDKey)
+                }
             }
 
             let underlineValue = isUnderlined ? NSUnderlineStyle.single.rawValue : 0

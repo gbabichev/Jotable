@@ -186,10 +186,13 @@ struct RichTextEditor: UIViewRepresentable {
             }
         }
 
-        private func effectiveColorComponents() -> (color: UIColor, id: String?) {
+        private func effectiveColorComponents() -> (color: UIColor?, id: String?) {
             if let customTypingColor {
                 let identifier = ColorMapping.identifier(for: customTypingColor, preferPaletteMatch: false)
                 return (customTypingColor, identifier)
+            }
+            if activeColor == .automatic {
+                return (nil, RichTextColor.automatic.id)
             }
             return (activeColor.uiColor, activeColor.id)
         }
@@ -299,16 +302,19 @@ struct RichTextEditor: UIViewRepresentable {
             }
 
             var attrs: [NSAttributedString.Key: Any] = [:]
-            if let resolvedColor = resolvedColor {
-                attrs[NSAttributedString.Key.foregroundColor] = resolvedColor
-            }
             if let resolvedColorID = resolvedColorID {
                 attrs[ColorMapping.colorIDKey] = resolvedColorID
             }
 
             let currentSelection = textView.selectedRange
+            let targetRange = NSRange(location: pending.range.location, length: effectiveLength)
             isProgrammaticUpdate = true
-            textView.textStorage.addAttributes(attrs, range: NSRange(location: pending.range.location, length: effectiveLength))
+            if resolvedColor == nil {
+                textView.textStorage.removeAttribute(NSAttributedString.Key.foregroundColor, range: targetRange)
+            } else if let resolvedColor {
+                textView.textStorage.addAttribute(NSAttributedString.Key.foregroundColor, value: resolvedColor, range: targetRange)
+            }
+            textView.textStorage.addAttributes(attrs, range: targetRange)
             isProgrammaticUpdate = false
             textView.selectedRange = currentSelection
 
@@ -360,14 +366,17 @@ struct RichTextEditor: UIViewRepresentable {
             let resolvedColor = expectedColor ?? fallback.color
             let resolvedColorID = expectedColorID ?? fallback.id
 
-            var attrs: [NSAttributedString.Key: Any] = [
-                NSAttributedString.Key.foregroundColor: resolvedColor
-            ]
+            var attrs: [NSAttributedString.Key: Any] = [:]
             if let resolvedColorID {
                 attrs[ColorMapping.colorIDKey] = resolvedColorID
             }
 
             isProgrammaticUpdate = true
+            if let resolvedColor {
+                textView.textStorage.addAttribute(NSAttributedString.Key.foregroundColor, value: resolvedColor, range: autoPeriodRange)
+            } else {
+                textView.textStorage.removeAttribute(NSAttributedString.Key.foregroundColor, range: autoPeriodRange)
+            }
             textView.textStorage.addAttributes(attrs, range: autoPeriodRange)
             isProgrammaticUpdate = false
             if let updated = textView.attributedText {
@@ -410,14 +419,29 @@ struct RichTextEditor: UIViewRepresentable {
 
                     // Only repair runs that truly lack a color and color ID
                     if storedColorID == nil && hasExplicitColor != nil {
+                        if let color = hasExplicitColor,
+                           matchesAutomaticColor(color, in: textView) {
+                            mutableText.removeAttribute(NSAttributedString.Key.foregroundColor, range: effectiveRange)
+                            mutableText.addAttribute(ColorMapping.colorIDKey, value: RichTextColor.automatic.id, range: effectiveRange)
+                            textChanged = true
+                        }
                         i = effectiveRange.location + effectiveRange.length
                         continue
                     }
 
                     if storedColorID == nil && hasExplicitColor == nil {
+                        let usingAutomatic = customTypingColor == nil && activeColor == .automatic
+                        if usingAutomatic {
+                            i = effectiveRange.location + effectiveRange.length
+                            continue
+                        }
                         var colorAttrs: [NSAttributedString.Key: Any] = [:]
                         let fallback = effectiveColorComponents()
-                        colorAttrs[NSAttributedString.Key.foregroundColor] = fallback.color
+                        if let color = fallback.color {
+                            colorAttrs[NSAttributedString.Key.foregroundColor] = color
+                        } else {
+                            mutableText.removeAttribute(NSAttributedString.Key.foregroundColor, range: effectiveRange)
+                        }
                         if let id = fallback.id {
                             colorAttrs[ColorMapping.colorIDKey] = id
                         } else {
@@ -426,6 +450,14 @@ struct RichTextEditor: UIViewRepresentable {
                         mutableText.addAttributes(colorAttrs, range: effectiveRange)
                         textChanged = true
                     } else if let storedColorID = storedColorID {
+                        if storedColorID == RichTextColor.automatic.id {
+                            if hasExplicitColor != nil {
+                                mutableText.removeAttribute(NSAttributedString.Key.foregroundColor, range: effectiveRange)
+                                textChanged = true
+                            }
+                            i = effectiveRange.location + effectiveRange.length
+                            continue
+                        }
                         let currentColor = attrs[NSAttributedString.Key.foregroundColor] as? UIColor
                         if let currentColor {
                             let identifier = ColorMapping.identifier(for: currentColor, preferPaletteMatch: false)
@@ -489,10 +521,17 @@ struct RichTextEditor: UIViewRepresentable {
             }
             textStorage.enumerateAttributes(in: intersection, options: []) { attrs, range, _ in
                 if let color = attrs[NSAttributedString.Key.foregroundColor] as? UIColor {
-                    let identifier = ColorMapping.identifier(for: color, preferPaletteMatch: false)
-                    if attrs[ColorMapping.colorIDKey] as? String != identifier {
-                        textStorage.addAttribute(ColorMapping.colorIDKey, value: identifier, range: range)
+                    if matchesAutomaticColor(color, in: textView) {
+                        textStorage.removeAttribute(NSAttributedString.Key.foregroundColor, range: range)
+                        textStorage.addAttribute(ColorMapping.colorIDKey, value: RichTextColor.automatic.id, range: range)
+                    } else {
+                        let identifier = ColorMapping.identifier(for: color, preferPaletteMatch: false)
+                        if attrs[ColorMapping.colorIDKey] as? String != identifier {
+                            textStorage.addAttribute(ColorMapping.colorIDKey, value: identifier, range: range)
+                        }
                     }
+                } else if attrs[ColorMapping.colorIDKey] as? String == RichTextColor.automatic.id {
+                    textStorage.removeAttribute(NSAttributedString.Key.foregroundColor, range: range)
                 } else {
                     textStorage.removeAttribute(ColorMapping.colorIDKey, range: range)
                 }
@@ -602,8 +641,13 @@ struct RichTextEditor: UIViewRepresentable {
             customTypingColor = nil
             caretColorLockID = color.id
             releaseColorLockOnTextChange = selectedRange.length == 0
-            textView.typingAttributes[NSAttributedString.Key.foregroundColor] = color.uiColor
-            textView.typingAttributes[ColorMapping.colorIDKey] = color.id
+            if color == .automatic {
+                textView.typingAttributes.removeValue(forKey: NSAttributedString.Key.foregroundColor)
+                textView.typingAttributes[ColorMapping.colorIDKey] = color.id
+            } else {
+                textView.typingAttributes[NSAttributedString.Key.foregroundColor] = color.uiColor
+                textView.typingAttributes[ColorMapping.colorIDKey] = color.id
+            }
             applyTypingAttributes(to: textView)
             updateTypingAttributesHighlight(textView)
         }
@@ -671,10 +715,19 @@ struct RichTextEditor: UIViewRepresentable {
             attrs[ColorMapping.fontSizeKey] = activeFontSize.rawValue
 
             let components = effectiveColorComponents()
-            attrs[NSAttributedString.Key.foregroundColor] = components.color
-            if let id = components.id {
-                attrs[ColorMapping.colorIDKey] = id
+            let usingAutomatic = customTypingColor == nil && activeColor == .automatic
+            if usingAutomatic {
+                attrs.removeValue(forKey: NSAttributedString.Key.foregroundColor)
+                attrs[ColorMapping.colorIDKey] = RichTextColor.automatic.id
+            } else if let color = components.color {
+                attrs[NSAttributedString.Key.foregroundColor] = color
+                if let id = components.id {
+                    attrs[ColorMapping.colorIDKey] = id
+                } else {
+                    attrs.removeValue(forKey: ColorMapping.colorIDKey)
+                }
             } else {
+                attrs.removeValue(forKey: NSAttributedString.Key.foregroundColor)
                 attrs.removeValue(forKey: ColorMapping.colorIDKey)
             }
 
@@ -690,6 +743,27 @@ struct RichTextEditor: UIViewRepresentable {
             }
 
             return attrs
+        }
+
+        private func matchesAutomaticColor(_ color: UIColor, in textView: UITextView?) -> Bool {
+            let trait = textView?.traitCollection ?? UIScreen.main.traitCollection
+            let resolvedCandidate = color.resolvedColor(with: trait)
+            let resolvedAutomatic = UIColor.label.resolvedColor(with: trait)
+            return colorsEqual(resolvedCandidate, resolvedAutomatic)
+        }
+
+        private func colorsEqual(_ lhs: UIColor, _ rhs: UIColor) -> Bool {
+            var lr: CGFloat = 0, lg: CGFloat = 0, lb: CGFloat = 0, la: CGFloat = 0
+            var rr: CGFloat = 0, rg: CGFloat = 0, rb: CGFloat = 0, ra: CGFloat = 0
+            guard lhs.getRed(&lr, green: &lg, blue: &lb, alpha: &la),
+                  rhs.getRed(&rr, green: &rg, blue: &rb, alpha: &ra) else {
+                return lhs == rhs
+            }
+            let tolerance: CGFloat = 0.002
+            return abs(lr - rr) < tolerance &&
+                abs(lg - rg) < tolerance &&
+                abs(lb - rb) < tolerance &&
+                abs(la - ra) < tolerance
         }
 
         func applyTypingAttributes(to textView: UITextView) {
@@ -849,7 +923,11 @@ struct RichTextEditor: UIViewRepresentable {
 
             let fallback = effectiveColorComponents()
             if attributes[NSAttributedString.Key.foregroundColor] == nil {
-                attributes[NSAttributedString.Key.foregroundColor] = fallback.color
+                if let color = fallback.color {
+                    attributes[NSAttributedString.Key.foregroundColor] = color
+                } else {
+                    attributes.removeValue(forKey: NSAttributedString.Key.foregroundColor)
+                }
             }
             if attributes[ColorMapping.colorIDKey] == nil {
                 if let id = fallback.id {
