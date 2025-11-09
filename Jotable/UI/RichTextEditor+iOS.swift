@@ -171,6 +171,8 @@ struct RichTextEditor: UIViewRepresentable {
         var pendingActiveColorFeedback: RichTextColor?
         private var caretColorLockID: String?
         private var releaseColorLockOnTextChange = false
+        private var automaticColorCache: (style: UIUserInterfaceStyle, color: UIColor)?
+        private var lastAutomaticFixLocation: Int = NSNotFound
         private var fixTextTimer: Timer?
         private var pendingReplacementAttributes: (range: NSRange, newLength: Int, color: UIColor?, colorID: String?)?
         private var isProcessingExternalAttributes = false
@@ -214,6 +216,7 @@ struct RichTextEditor: UIViewRepresentable {
                 releaseColorLockOnTextChange = false
                 caretColorLockID = nil
             }
+            lastAutomaticFixLocation = textView.selectedRange.location
 
             // Apply attribute fixes BEFORE updating binding (so fixes are included in the binding update)
             _ = applyPendingReplacementAttributesIfNeeded(to: textView)
@@ -421,7 +424,6 @@ struct RichTextEditor: UIViewRepresentable {
                     if storedColorID == nil && hasExplicitColor != nil {
                         if let color = hasExplicitColor,
                            matchesAutomaticColor(color, in: textView) {
-                            mutableText.removeAttribute(NSAttributedString.Key.foregroundColor, range: effectiveRange)
                             mutableText.addAttribute(ColorMapping.colorIDKey, value: RichTextColor.automatic.id, range: effectiveRange)
                             textChanged = true
                         }
@@ -503,7 +505,10 @@ struct RichTextEditor: UIViewRepresentable {
         }
 
         func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorage.EditActions, range editedRange: NSRange, changeInLength delta: Int) {
-            guard editedMask.contains(.editedAttributes),
+            let isCharacterEdit = editedMask.contains(.editedCharacters) || delta != 0
+            let canHandleAutomaticFix = isCharacterEdit
+            let canHandleAttributeChange = editedMask.contains(.editedAttributes)
+            guard (canHandleAutomaticFix || canHandleAttributeChange),
                   !isProgrammaticUpdate,
                   !isProcessingExternalAttributes else { return }
 
@@ -519,23 +524,30 @@ struct RichTextEditor: UIViewRepresentable {
                 textStorage.endEditing()
                 isProcessingExternalAttributes = false
             }
+            var textChanged = false
             textStorage.enumerateAttributes(in: intersection, options: []) { attrs, range, _ in
                 if let color = attrs[NSAttributedString.Key.foregroundColor] as? UIColor {
                     if matchesAutomaticColor(color, in: textView) {
-                        textStorage.removeAttribute(NSAttributedString.Key.foregroundColor, range: range)
                         textStorage.addAttribute(ColorMapping.colorIDKey, value: RichTextColor.automatic.id, range: range)
-                    } else {
+                        if canHandleAutomaticFix {
+                            lastAutomaticFixLocation = range.location
+                        }
+                        textChanged = true
+                    } else if canHandleAttributeChange {
                         let identifier = ColorMapping.identifier(for: color, preferPaletteMatch: false)
                         if attrs[ColorMapping.colorIDKey] as? String != identifier {
                             textStorage.addAttribute(ColorMapping.colorIDKey, value: identifier, range: range)
+                            textChanged = true
                         }
                     }
-                } else if attrs[ColorMapping.colorIDKey] as? String == RichTextColor.automatic.id {
-                    textStorage.removeAttribute(NSAttributedString.Key.foregroundColor, range: range)
-                } else {
+                } else if canHandleAttributeChange,
+                          attrs[ColorMapping.colorIDKey] == nil {
                     textStorage.removeAttribute(ColorMapping.colorIDKey, range: range)
+                    textChanged = true
                 }
             }
+
+            guard textChanged else { return }
 
             if let textView = textView {
                 caretColorLockID = nil
@@ -747,9 +759,13 @@ struct RichTextEditor: UIViewRepresentable {
 
         private func matchesAutomaticColor(_ color: UIColor, in textView: UITextView?) -> Bool {
             let trait = textView?.traitCollection ?? UIScreen.main.traitCollection
+            let style = trait.userInterfaceStyle
+            if automaticColorCache?.style != style {
+                automaticColorCache = (style: style, color: UIColor.label.resolvedColor(with: trait))
+            }
+            guard let reference = automaticColorCache?.color else { return false }
             let resolvedCandidate = color.resolvedColor(with: trait)
-            let resolvedAutomatic = UIColor.label.resolvedColor(with: trait)
-            return colorsEqual(resolvedCandidate, resolvedAutomatic)
+            return colorsEqual(resolvedCandidate, reference)
         }
 
         private func colorsEqual(_ lhs: UIColor, _ rhs: UIColor) -> Bool {
