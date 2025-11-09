@@ -17,6 +17,7 @@ struct RichTextEditor: UIViewRepresentable {
     @Binding var insertTimeTrigger: UUID?
     @Binding var insertURLTrigger: (UUID, String, String)?
     @Binding var presentFormatMenuTrigger: UUID?
+    @Binding var resetColorTrigger: UUID?
     @Environment(\.colorScheme) var colorScheme
 
     func makeCoordinator() -> Coordinator {
@@ -35,6 +36,7 @@ struct RichTextEditor: UIViewRepresentable {
         textView.textColor = UIColor.label  // Set default to dynamic label color
         textView.textContainerInset = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         textView.attributedText = text
+        textView.textStorage.delegate = context.coordinator
         context.coordinator.textView = textView
         context.coordinator.applyTypingAttributes(to: textView)
 
@@ -51,6 +53,7 @@ struct RichTextEditor: UIViewRepresentable {
                 // Save cursor position before updating text
                 let cursorPosition = uiView.selectedRange
                 uiView.attributedText = text
+                uiView.textStorage.delegate = context.coordinator
                 // Restore cursor position after updating text, with bounds validation
                 context.coordinator.setCursorPosition(cursorPosition, in: uiView)
                 context.coordinator.isProgrammaticUpdate = false
@@ -137,12 +140,17 @@ struct RichTextEditor: UIViewRepresentable {
             context.coordinator.presentNativeFormatMenu()
         }
 
+        if resetColorTrigger != context.coordinator.lastResetColorTrigger {
+            context.coordinator.lastResetColorTrigger = resetColorTrigger
+            context.coordinator.handleColorReset(in: uiView)
+        }
+
         // Handle appearance changes (dark/light mode)
         context.coordinator.handleAppearanceChange(to: uiView)
     }
 
     @MainActor
-    final class Coordinator: NSObject, UITextViewDelegate {
+    final class Coordinator: NSObject, UITextViewDelegate, NSTextStorageDelegate {
         var parent: RichTextEditor
         var activeColor: RichTextColor
         var activeHighlighter: HighlighterColor
@@ -158,10 +166,14 @@ struct RichTextEditor: UIViewRepresentable {
         var lastTimeTrigger: UUID?
         var lastURLTrigger: (UUID, String, String)?
         var lastFormatMenuTrigger: UUID?
+        var lastResetColorTrigger: UUID?
         weak var textView: UITextView?
         var pendingActiveColorFeedback: RichTextColor?
+        private var caretColorLockID: String?
+        private var releaseColorLockOnTextChange = false
         private var fixTextTimer: Timer?
         private var pendingReplacementAttributes: (range: NSRange, newLength: Int, color: UIColor?, colorID: String?)?
+        private var isProcessingExternalAttributes = false
         var customTypingColor: UIColor?
         var hasCustomTypingColor: Bool { customTypingColor != nil }
         @available(iOS 16.0, *)
@@ -195,6 +207,10 @@ struct RichTextEditor: UIViewRepresentable {
         func textViewDidChange(_ textView: UITextView) {
             guard !isProgrammaticUpdate else { return }
             syncColorState(with: textView, sampleFromText: true)
+            if releaseColorLockOnTextChange {
+                releaseColorLockOnTextChange = false
+                caretColorLockID = nil
+            }
 
             // Apply attribute fixes BEFORE updating binding (so fixes are included in the binding update)
             _ = applyPendingReplacementAttributesIfNeeded(to: textView)
@@ -410,9 +426,14 @@ struct RichTextEditor: UIViewRepresentable {
                         mutableText.addAttributes(colorAttrs, range: effectiveRange)
                         textChanged = true
                     } else if let storedColorID = storedColorID {
-                        let expectedColor = RichTextColor.from(id: storedColorID).uiColor
                         let currentColor = attrs[NSAttributedString.Key.foregroundColor] as? UIColor
-                        if currentColor == nil || !(currentColor?.isEqual(expectedColor) ?? false) {
+                        if let currentColor {
+                            let identifier = ColorMapping.identifier(for: currentColor, preferPaletteMatch: false)
+                            if identifier != storedColorID {
+                                mutableText.addAttribute(ColorMapping.colorIDKey, value: identifier, range: effectiveRange)
+                                textChanged = true
+                            }
+                        } else if let expectedColor = ColorMapping.color(from: storedColorID) {
                             mutableText.addAttribute(NSAttributedString.Key.foregroundColor, value: expectedColor, range: effectiveRange)
                             textChanged = true
                         }
@@ -441,15 +462,80 @@ struct RichTextEditor: UIViewRepresentable {
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
+            if textView.selectedRange.length > 0 {
+                caretColorLockID = nil
+                releaseColorLockOnTextChange = false
+            }
             syncColorState(with: textView, sampleFromText: true)
             applyTypingAttributes(to: textView)
         }
 
+        func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorage.EditActions, range editedRange: NSRange, changeInLength delta: Int) {
+            guard editedMask.contains(.editedAttributes),
+                  !isProgrammaticUpdate,
+                  !isProcessingExternalAttributes else { return }
+
+            let storageLength = textStorage.length
+            guard storageLength > 0 else { return }
+
+            let intersection = NSIntersectionRange(editedRange, NSRange(location: 0, length: storageLength))
+            guard intersection.length > 0 else { return }
+
+            isProcessingExternalAttributes = true
+            textStorage.beginEditing()
+            defer {
+                textStorage.endEditing()
+                isProcessingExternalAttributes = false
+            }
+            textStorage.enumerateAttributes(in: intersection, options: []) { attrs, range, _ in
+                if let color = attrs[NSAttributedString.Key.foregroundColor] as? UIColor {
+                    let identifier = ColorMapping.identifier(for: color, preferPaletteMatch: false)
+                    if attrs[ColorMapping.colorIDKey] as? String != identifier {
+                        textStorage.addAttribute(ColorMapping.colorIDKey, value: identifier, range: range)
+                    }
+                } else {
+                    textStorage.removeAttribute(ColorMapping.colorIDKey, range: range)
+                }
+            }
+
+            if let textView = textView {
+                caretColorLockID = nil
+                releaseColorLockOnTextChange = false
+                syncColorState(with: textView, sampleFromText: true)
+            }
+            let snapshot = NSAttributedString(attributedString: textStorage)
+            pushTextToParent(snapshot)
+        }
+
         func syncColorState(with textView: UITextView, sampleFromText: Bool) {
+            var shouldSampleFromText = sampleFromText
             var colorID = textView.typingAttributes[ColorMapping.colorIDKey] as? String
             var color = textView.typingAttributes[NSAttributedString.Key.foregroundColor] as? UIColor
 
-            if sampleFromText,
+            if let directColor = color {
+                let identifier = ColorMapping.identifier(for: directColor, preferPaletteMatch: false)
+                if colorID != identifier {
+                    colorID = identifier
+                    textView.typingAttributes[ColorMapping.colorIDKey] = identifier
+                }
+                if textView.selectedRange.length == 0 {
+                    caretColorLockID = identifier
+                    releaseColorLockOnTextChange = true
+                }
+            }
+
+            if let lockID = caretColorLockID,
+               textView.selectedRange.length == 0 {
+                colorID = lockID
+                if ColorMapping.isCustomColorID(lockID) {
+                    color = ColorMapping.color(from: lockID)
+                } else if color == nil {
+                    color = ColorMapping.color(from: lockID)
+                }
+                shouldSampleFromText = false
+            }
+
+            if shouldSampleFromText,
                (colorID == nil || color == nil),
                let attributed = textView.attributedText,
                attributed.length > 0 {
@@ -488,6 +574,13 @@ struct RichTextEditor: UIViewRepresentable {
             } else {
                 customTypingColor = nil
             }
+
+            if textView.selectedRange.length == 0 {
+                caretColorLockID = colorID
+            } else {
+                caretColorLockID = nil
+                releaseColorLockOnTextChange = false
+            }
         }
 
         func apply(color: RichTextColor, to textView: UITextView) {
@@ -507,6 +600,8 @@ struct RichTextEditor: UIViewRepresentable {
             }
 
             customTypingColor = nil
+            caretColorLockID = color.id
+            releaseColorLockOnTextChange = selectedRange.length == 0
             textView.typingAttributes[NSAttributedString.Key.foregroundColor] = color.uiColor
             textView.typingAttributes[ColorMapping.colorIDKey] = color.id
             applyTypingAttributes(to: textView)
@@ -656,6 +751,15 @@ struct RichTextEditor: UIViewRepresentable {
         func handleAppearanceChange(to textView: UITextView) {
             applyTypingAttributes(to: textView)
             updateTypingAttributesHighlight(textView)
+        }
+
+        func handleColorReset(in textView: UITextView) {
+            customTypingColor = nil
+            caretColorLockID = nil
+            releaseColorLockOnTextChange = false
+            pendingActiveColorFeedback = nil
+            activeColor = .automatic
+            apply(color: .automatic, to: textView)
         }
 
         func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
@@ -1143,6 +1247,15 @@ struct RichTextEditor: UIViewRepresentable {
 }
 
 @available(iOS 16.0, *)
-extension RichTextEditor.Coordinator: UIEditMenuInteractionDelegate {}
+extension RichTextEditor.Coordinator: UIEditMenuInteractionDelegate {
+    func editMenuInteraction(_ interaction: UIEditMenuInteraction, willDismissMenuWith configuration: UIEditMenuConfiguration, animator: UIEditMenuInteractionAnimating?) {
+        animator?.addCompletion { [weak self] in
+            guard let self = self,
+                  let textView = self.textView else { return }
+            self.syncColorState(with: textView, sampleFromText: false)
+            self.applyTypingAttributes(to: textView)
+        }
+    }
+}
 
 #endif

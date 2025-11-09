@@ -8,6 +8,7 @@ struct FontToolbar: View {
     @Binding var isUnderlined: Bool
     @Binding var isStrikethrough: Bool
     @Binding var presentFormatMenuTrigger: UUID?
+    @Binding var resetColorTrigger: UUID?
 
     var body: some View {
         Menu {
@@ -41,6 +42,7 @@ struct FontToolbar: View {
 
             Button {
                 activeColor = .automatic
+                resetColorTrigger = UUID()
             } label: {
                 Label("Reset Text Color", systemImage: "arrow.uturn.backward")
             }

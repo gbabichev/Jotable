@@ -75,6 +75,7 @@ struct RichTextEditor: NSViewRepresentable {
     @Binding var insertTimeTrigger: UUID?
     @Binding var insertURLTrigger: (UUID, String, String)?
     @Binding var presentFormatMenuTrigger: UUID?
+    @Binding var resetColorTrigger: UUID?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -216,6 +217,11 @@ struct RichTextEditor: NSViewRepresentable {
             context.coordinator.presentNativeFormatPanel()
         }
 
+        if resetColorTrigger != context.coordinator.lastResetColorTrigger {
+            context.coordinator.lastResetColorTrigger = resetColorTrigger
+            context.coordinator.handleColorReset()
+        }
+
         context.coordinator.handleAppearanceChange()
     }
 
@@ -236,6 +242,7 @@ struct RichTextEditor: NSViewRepresentable {
         var lastTimeTrigger: UUID?
         var lastURLTrigger: (UUID, String, String)?
         var lastFormatMenuTrigger: UUID?
+        var lastResetColorTrigger: UUID?
         weak var textView: NSTextView?
         var pendingActiveColorFeedback: RichTextColor?
         var customTypingColor: NSColor?
@@ -543,6 +550,14 @@ struct RichTextEditor: NSViewRepresentable {
         func handleAppearanceChange() {
             guard let textView = textView else { return }
             applyTypingAttributes(to: textView)
+        }
+
+        func handleColorReset() {
+            guard let textView = textView else { return }
+            customTypingColor = nil
+            pendingActiveColorFeedback = nil
+            activeColor = .automatic
+            apply(color: .automatic, to: textView)
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
