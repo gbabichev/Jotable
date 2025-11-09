@@ -172,7 +172,8 @@ struct RichTextEditor: UIViewRepresentable {
 
         private func effectiveColorComponents() -> (color: UIColor, id: String?) {
             if let customTypingColor {
-                return (customTypingColor, nil)
+                let identifier = ColorMapping.identifier(for: customTypingColor)
+                return (customTypingColor, identifier)
             }
             return (activeColor.uiColor, activeColor.id)
         }
@@ -440,7 +441,7 @@ struct RichTextEditor: UIViewRepresentable {
             applyTypingAttributes(to: textView)
         }
 
-        private func syncColorState(with textView: UITextView, sampleFromText: Bool) {
+        func syncColorState(with textView: UITextView, sampleFromText: Bool) {
             var colorID = textView.typingAttributes[ColorMapping.colorIDKey] as? String
             var color = textView.typingAttributes[NSAttributedString.Key.foregroundColor] as? UIColor
 
@@ -449,11 +450,11 @@ struct RichTextEditor: UIViewRepresentable {
                let attributed = textView.attributedText,
                attributed.length > 0 {
                 var sampleIndex = textView.selectedRange.location
-                if sampleIndex >= attributed.length {
-                    sampleIndex = attributed.length - 1
-                }
-                if sampleIndex >= 0 && sampleIndex < attributed.length {
-                    let attrs = attributed.attributes(at: sampleIndex, effectiveRange: nil)
+            if sampleIndex >= attributed.length {
+                sampleIndex = attributed.length - 1
+            }
+            if sampleIndex >= 0 && sampleIndex < attributed.length {
+                let attrs = attributed.attributes(at: sampleIndex, effectiveRange: nil)
                     if colorID == nil {
                         colorID = attrs[ColorMapping.colorIDKey] as? String
                     }
@@ -464,12 +465,17 @@ struct RichTextEditor: UIViewRepresentable {
             }
 
             if let colorID {
-                let paletteColor = RichTextColor.from(id: colorID)
-                customTypingColor = nil
-                if paletteColor != activeColor {
-                    activeColor = paletteColor
-                    DispatchQueue.main.async { [weak self] in
-                        self?.parent.activeColor = paletteColor
+                if ColorMapping.isCustomColorID(colorID),
+                   let resolvedColor = ColorMapping.color(from: colorID) {
+                    customTypingColor = resolvedColor
+                } else {
+                    let paletteColor = RichTextColor.from(id: colorID)
+                    customTypingColor = nil
+                    if paletteColor != activeColor {
+                        activeColor = paletteColor
+                        DispatchQueue.main.async { [weak self] in
+                            self?.parent.activeColor = paletteColor
+                        }
                     }
                 }
             } else if let color {

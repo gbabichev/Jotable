@@ -7,9 +7,16 @@ import UIKit
 
 /// Utility for mapping colors across platforms while preserving "automatic" theme-aware behavior
 struct ColorMapping {
+#if os(macOS)
+    typealias PlatformColor = NSColor
+#else
+    typealias PlatformColor = UIColor
+#endif
+    
     /// Custom attribute key to store the color ID (e.g., "red", "automatic")
     /// This allows us to distinguish between explicit colors and automatic colors
     static let colorIDKey = NSAttributedString.Key("com.betternotes.colorID")
+    private static let customPrefix = "custom:"
 
     /// Custom attribute key to store the font size
     static let fontSizeKey = NSAttributedString.Key("com.betternotes.fontSize")
@@ -59,19 +66,10 @@ struct ColorMapping {
             let attrs = mutableString.attributes(at: currentPos, longestEffectiveRange: &range, in: NSRange(location: currentPos, length: mutableString.length - currentPos))
 
             // If there's a foreground color but no color ID, infer it
-            #if os(macOS)
-            if let foregroundColor = attrs[NSAttributedString.Key.foregroundColor] as? NSColor,
-               attrs[colorIDKey] == nil,
-               let inferredID = matchingColorID(for: foregroundColor) {
-                mutableString.addAttribute(colorIDKey, value: inferredID, range: range)
+            if let foregroundColor = attrs[NSAttributedString.Key.foregroundColor] as? PlatformColor,
+               attrs[colorIDKey] == nil {
+                mutableString.addAttribute(colorIDKey, value: identifier(for: foregroundColor), range: range)
             }
-            #else
-            if let foregroundColor = attrs[NSAttributedString.Key.foregroundColor] as? UIColor,
-               attrs[colorIDKey] == nil,
-               let inferredID = matchingColorID(for: foregroundColor) {
-                mutableString.addAttribute(colorIDKey, value: inferredID, range: range)
-            }
-            #endif
 
             #if os(macOS)
             if let backgroundColor = attrs[NSAttributedString.Key.backgroundColor] as? NSColor,
@@ -104,15 +102,8 @@ struct ColorMapping {
             var range = NSRange()
             let attrs = mutableString.attributes(at: currentPos, longestEffectiveRange: &range, in: NSRange(location: currentPos, length: mutableString.length - currentPos))
 
-            if let colorID = attrs[colorIDKey] as? String {
-                let color = RichTextColor.from(id: colorID)
-
-                #if os(macOS)
-                let platformColor = color.nsColor
-                #else
-                let platformColor = color.uiColor
-                #endif
-
+            if let colorID = attrs[colorIDKey] as? String,
+               let platformColor = color(from: colorID) {
                 mutableString.addAttribute(NSAttributedString.Key.foregroundColor, value: platformColor, range: range)
             } else if attrs[NSAttributedString.Key.foregroundColor] == nil {
                 // If there's no color at all, apply the default automatic color
@@ -170,6 +161,29 @@ struct ColorMapping {
         }
         return nil
     }
+
+    private static func customColorID(for color: NSColor) -> String {
+        guard let converted = color.usingColorSpace(.deviceRGB) else {
+            return "\(customPrefix)automatic"
+        }
+        let r = Int(round(converted.redComponent * 255))
+        let g = Int(round(converted.greenComponent * 255))
+        let b = Int(round(converted.blueComponent * 255))
+        let a = Int(round(converted.alphaComponent * 255))
+        return String(format: "\(customPrefix)%02X%02X%02X%02X", r, g, b, a)
+    }
+
+    private static func colorFromCustomID(_ id: String) -> NSColor? {
+        guard id.hasPrefix(customPrefix) else { return nil }
+        let hex = String(id.dropFirst(customPrefix.count))
+        guard hex.count == 8,
+              let value = UInt32(hex, radix: 16) else { return nil }
+        let r = CGFloat((value >> 24) & 0xFF) / 255.0
+        let g = CGFloat((value >> 16) & 0xFF) / 255.0
+        let b = CGFloat((value >> 8) & 0xFF) / 255.0
+        let a = CGFloat(value & 0xFF) / 255.0
+        return NSColor(calibratedRed: r, green: g, blue: b, alpha: a)
+    }
 #else
     private static func matchingHighlight(for color: UIColor) -> HighlighterColor? {
         for highlight in HighlighterColor.allCases where highlight != .none {
@@ -190,6 +204,30 @@ struct ColorMapping {
         return nil
     }
 
+    private static func customColorID(for color: UIColor) -> String {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard color.getRed(&r, green: &g, blue: &b, alpha: &a) else {
+            return "\(customPrefix)automatic"
+        }
+        let ir = Int(round(r * 255))
+        let ig = Int(round(g * 255))
+        let ib = Int(round(b * 255))
+        let ia = Int(round(a * 255))
+        return String(format: "\(customPrefix)%02X%02X%02X%02X", ir, ig, ib, ia)
+    }
+
+    private static func colorFromCustomID(_ id: String) -> UIColor? {
+        guard id.hasPrefix(customPrefix) else { return nil }
+        let hex = String(id.dropFirst(customPrefix.count))
+        guard hex.count == 8,
+              let value = UInt32(hex, radix: 16) else { return nil }
+        let r = CGFloat((value >> 24) & 0xFF) / 255.0
+        let g = CGFloat((value >> 16) & 0xFF) / 255.0
+        let b = CGFloat((value >> 8) & 0xFF) / 255.0
+        let a = CGFloat(value & 0xFF) / 255.0
+        return UIColor(red: r, green: g, blue: b, alpha: a)
+    }
+
     private static func colorsEqual(_ lhs: UIColor, _ rhs: UIColor) -> Bool {
         var lr: CGFloat = 0, lg: CGFloat = 0, lb: CGFloat = 0, la: CGFloat = 0
         var rr: CGFloat = 0, rg: CGFloat = 0, rb: CGFloat = 0, ra: CGFloat = 0
@@ -203,5 +241,34 @@ struct ColorMapping {
             abs(lb - rb) < tolerance &&
             abs(la - ra) < tolerance
     }
-    #endif
+#endif
+
+    /// Public helpers used outside this file
+    static func identifier(for color: PlatformColor) -> String {
+        #if os(macOS)
+        return matchingColorID(for: color) ?? customColorID(for: color)
+        #else
+        return matchingColorID(for: color) ?? customColorID(for: color)
+        #endif
+    }
+
+    static func color(from identifier: String) -> PlatformColor? {
+        if identifier.hasPrefix(customPrefix) {
+            #if os(macOS)
+            return colorFromCustomID(identifier)
+            #else
+            return colorFromCustomID(identifier)
+            #endif
+        }
+        let palette = RichTextColor.from(id: identifier)
+        #if os(macOS)
+        return palette.nsColor
+        #else
+        return palette.uiColor
+        #endif
+    }
+
+    static func isCustomColorID(_ identifier: String) -> Bool {
+        identifier.hasPrefix(customPrefix)
+    }
 }

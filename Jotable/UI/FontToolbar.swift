@@ -11,7 +11,7 @@ struct FontToolbar: View {
 
     var body: some View {
         Menu {
-            // MARK: - Colors Section
+            // MARK: - Colors / Format Section
             #if os(iOS)
             Button {
                 DispatchQueue.main.async {
@@ -22,53 +22,11 @@ struct FontToolbar: View {
             }
 
             Divider()
-            #else
-            Menu {
-                Button {
-                    activeColor = .automatic
-                } label: {
-                    Text("\(RichTextColor.automatic.emoji) Default")
-                }
-
-                Divider()
-
-                Button {
-                    activeColor = .red
-                } label: {
-                    Text("\(RichTextColor.red.emoji) Red")
-                }
-
-                Button {
-                    activeColor = .green
-                } label: {
-                    Text("\(RichTextColor.green.emoji) Green")
-                }
-
-                Button {
-                    activeColor = .orange
-                } label: {
-                    Text("\(RichTextColor.orange.emoji) Orange")
-                }
-
-                Button {
-                    activeColor = .yellow
-                } label: {
-                    Text("\(RichTextColor.yellow.emoji) Yellow")
-                }
-
-                Button {
-                    activeColor = .purple
-                } label: {
-                    Text("\(RichTextColor.purple.emoji) Purple")
-                }
-
-                Button {
-                    activeColor = .blue
-                } label: {
-                    Text("\(RichTextColor.blue.emoji) Blue")
-                }
+            #elseif os(macOS)
+            Button {
+                presentFormatMenuTrigger = UUID()
             } label: {
-                Label("Text Color", systemImage: "paintbrush")
+                Label("Show Format Panel", systemImage: "paintpalette")
             }
 
             Divider()

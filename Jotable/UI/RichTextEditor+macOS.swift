@@ -5,6 +5,7 @@ import AppKit
 private final class DynamicColorTextView: NSTextView {
     var onAppearanceChange: (() -> Void)?
     var onCheckboxTap: ((Int) -> Void)?
+    var onColorChange: (() -> Void)?
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -25,6 +26,11 @@ private final class DynamicColorTextView: NSTextView {
         }
 
         super.mouseDown(with: event)
+    }
+
+    override func changeColor(_ sender: Any?) {
+        super.changeColor(sender)
+        onColorChange?()
     }
 
     private func checkboxCharacterIndex(at point: NSPoint) -> Int? {
@@ -106,6 +112,9 @@ struct RichTextEditor: NSViewRepresentable {
         textView.onCheckboxTap = { [weak coordinator = context.coordinator] charIndex in
             coordinator?.handleCheckboxTap(at: charIndex)
         }
+        textView.onColorChange = { [weak coordinator = context.coordinator] in
+            coordinator?.handleColorPanelChange()
+        }
 
         return scrollView
     }
@@ -129,7 +138,9 @@ struct RichTextEditor: NSViewRepresentable {
 
         if context.coordinator.activeColor != activeColor {
             context.coordinator.activeColor = activeColor
-            context.coordinator.apply(color: activeColor, to: textView)
+            if !context.coordinator.hasCustomTypingColor {
+                context.coordinator.apply(color: activeColor, to: textView)
+            }
         }
 
         if context.coordinator.activeHighlighter != activeHighlighter {
@@ -156,6 +167,8 @@ struct RichTextEditor: NSViewRepresentable {
             context.coordinator.isStrikethrough = isStrikethrough
             context.coordinator.toggleStrikethrough(textView)
         }
+
+        context.coordinator.syncColorState(with: textView, sampleFromText: true)
 
         // Handle unchecked checkbox insertion trigger
         if insertUncheckedCheckboxTrigger != context.coordinator.lastUncheckedCheckboxTrigger {
@@ -195,6 +208,11 @@ struct RichTextEditor: NSViewRepresentable {
             }
         }
 
+        if presentFormatMenuTrigger != context.coordinator.lastFormatMenuTrigger {
+            context.coordinator.lastFormatMenuTrigger = presentFormatMenuTrigger
+            context.coordinator.presentNativeFormatPanel()
+        }
+
         context.coordinator.handleAppearanceChange()
     }
 
@@ -214,7 +232,60 @@ struct RichTextEditor: NSViewRepresentable {
         var lastDateTrigger: UUID?
         var lastTimeTrigger: UUID?
         var lastURLTrigger: (UUID, String, String)?
+        var lastFormatMenuTrigger: UUID?
         weak var textView: NSTextView?
+        private var customTypingColor: NSColor?
+        var hasCustomTypingColor: Bool { customTypingColor != nil }
+
+        private func effectiveColorComponents() -> (color: NSColor, id: String?) {
+            if let customTypingColor {
+                let identifier = ColorMapping.identifier(for: customTypingColor)
+                return (customTypingColor, identifier)
+            }
+            return (activeColor.nsColor, activeColor.id)
+        }
+
+        func syncColorState(with textView: NSTextView, sampleFromText: Bool) {
+            var colorID = textView.typingAttributes[ColorMapping.colorIDKey] as? String
+            var color = textView.typingAttributes[NSAttributedString.Key.foregroundColor] as? NSColor
+
+            if sampleFromText,
+               (colorID == nil || color == nil),
+               let storage = textView.textStorage,
+               storage.length > 0 {
+                var sampleIndex = textView.selectedRange.location
+                if sampleIndex >= storage.length {
+                    sampleIndex = max(storage.length - 1, 0)
+                }
+                if sampleIndex >= 0 && sampleIndex < storage.length {
+                    let attrs = storage.attributes(at: sampleIndex, effectiveRange: nil)
+                    if colorID == nil {
+                        colorID = attrs[ColorMapping.colorIDKey] as? String
+                    }
+                    if color == nil {
+                        color = attrs[NSAttributedString.Key.foregroundColor] as? NSColor
+                    }
+                }
+            }
+
+            if let colorID {
+                if ColorMapping.isCustomColorID(colorID),
+                   let resolved = ColorMapping.color(from: colorID) {
+                    customTypingColor = resolved
+                } else {
+                    let paletteColor = RichTextColor.from(id: colorID)
+                    customTypingColor = nil
+                    if paletteColor != activeColor {
+                        activeColor = paletteColor
+                        parent.activeColor = paletteColor
+                    }
+                }
+            } else if let color {
+                customTypingColor = color
+            } else {
+                customTypingColor = nil
+            }
+        }
 
         init(_ parent: RichTextEditor) {
             self.parent = parent
@@ -230,6 +301,7 @@ struct RichTextEditor: NSViewRepresentable {
             guard !isProgrammaticUpdate,
                   let textView = notification.object as? NSTextView,
                   textView === self.textView else { return }
+            syncColorState(with: textView, sampleFromText: true)
 
             // Convert checkbox patterns to attachments
             if let storage = textView.textStorage {
@@ -246,7 +318,9 @@ struct RichTextEditor: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView,
                   textView === self.textView else { return }
+            syncColorState(with: textView, sampleFromText: true)
             applyTypingAttributes(to: textView)
+            syncColorState(with: textView, sampleFromText: false)
 
             // Force update the parent binding to ensure color changes are captured
             if !isProgrammaticUpdate {
@@ -271,6 +345,7 @@ struct RichTextEditor: NSViewRepresentable {
                 }
             }
 
+            customTypingColor = nil
             applyTypingAttributes(to: textView)
         }
 
@@ -315,6 +390,37 @@ struct RichTextEditor: NSViewRepresentable {
             applyTypingAttributes(to: textView, highlightOverride: highlighter)
         }
 
+        func presentNativeFormatPanel() {
+            guard let textView = textView else { return }
+            textView.window?.makeFirstResponder(textView)
+            NSApp.sendAction(#selector(NSApplication.orderFrontColorPanel(_:)), to: nil, from: textView)
+            NSFontManager.shared.orderFrontFontPanel(textView)
+        }
+
+        func handleColorPanelChange() {
+            guard let textView = textView else { return }
+
+            if let storage = textView.textStorage {
+                let targetRange = textView.selectedRange.length > 0
+                    ? textView.selectedRange
+                    : NSRange(location: max(textView.selectedRange.location - 1, 0), length: 1)
+
+                if storage.length >= targetRange.location,
+                   targetRange.length > 0,
+                   targetRange.location < storage.length {
+                    let attrs = storage.attributes(at: targetRange.location, effectiveRange: nil)
+                    if let color = attrs[NSAttributedString.Key.foregroundColor] as? NSColor {
+                        let identifier = ColorMapping.identifier(for: color)
+                        storage.addAttribute(ColorMapping.colorIDKey, value: identifier, range: targetRange)
+                    }
+                }
+            }
+
+            syncColorState(with: textView, sampleFromText: false)
+            applyTypingAttributes(to: textView)
+            parent.text = textView.attributedString()
+        }
+
         private func updateTypingAttributesHighlight(_ textView: NSTextView, using highlight: HighlighterColor? = nil) {
             applyTypingAttributes(to: textView, highlightOverride: highlight)
         }
@@ -325,8 +431,13 @@ struct RichTextEditor: NSViewRepresentable {
             let font = NSFont.systemFont(ofSize: activeFontSize.rawValue, weight: isBold ? .bold : .regular)
             attrs[NSAttributedString.Key.font] = font
             attrs[ColorMapping.fontSizeKey] = activeFontSize.rawValue
-            attrs[NSAttributedString.Key.foregroundColor] = activeColor.nsColor
-            attrs[ColorMapping.colorIDKey] = activeColor.id
+            let components = effectiveColorComponents()
+            attrs[NSAttributedString.Key.foregroundColor] = components.color
+            if let id = components.id {
+                attrs[ColorMapping.colorIDKey] = id
+            } else {
+                attrs.removeValue(forKey: ColorMapping.colorIDKey)
+            }
 
             let underlineValue = isUnderlined ? NSUnderlineStyle.single.rawValue : 0
             attrs[NSAttributedString.Key.underlineStyle] = underlineValue
