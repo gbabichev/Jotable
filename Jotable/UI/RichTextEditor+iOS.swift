@@ -172,7 +172,7 @@ struct RichTextEditor: UIViewRepresentable {
 
         private func effectiveColorComponents() -> (color: UIColor, id: String?) {
             if let customTypingColor {
-                let identifier = ColorMapping.identifier(for: customTypingColor)
+                let identifier = ColorMapping.identifier(for: customTypingColor, preferPaletteMatch: false)
                 return (customTypingColor, identifier)
             }
             return (activeColor.uiColor, activeColor.id)

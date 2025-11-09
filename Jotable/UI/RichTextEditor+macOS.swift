@@ -239,7 +239,7 @@ struct RichTextEditor: NSViewRepresentable {
 
         private func effectiveColorComponents() -> (color: NSColor, id: String?) {
             if let customTypingColor {
-                let identifier = ColorMapping.identifier(for: customTypingColor)
+                let identifier = ColorMapping.identifier(for: customTypingColor, preferPaletteMatch: false)
                 return (customTypingColor, identifier)
             }
             return (activeColor.nsColor, activeColor.id)
@@ -400,25 +400,41 @@ struct RichTextEditor: NSViewRepresentable {
         func handleColorPanelChange() {
             guard let textView = textView else { return }
 
-            if let storage = textView.textStorage {
-                let targetRange = textView.selectedRange.length > 0
-                    ? textView.selectedRange
-                    : NSRange(location: max(textView.selectedRange.location - 1, 0), length: 1)
+            let selectedRange = textView.selectedRange
+            var resolvedColor: NSColor?
 
-                if storage.length >= targetRange.location,
-                   targetRange.length > 0,
-                   targetRange.location < storage.length {
-                    let attrs = storage.attributes(at: targetRange.location, effectiveRange: nil)
-                    if let color = attrs[NSAttributedString.Key.foregroundColor] as? NSColor {
-                        let identifier = ColorMapping.identifier(for: color)
-                        storage.addAttribute(ColorMapping.colorIDKey, value: identifier, range: targetRange)
-                    }
+            if selectedRange.length > 0,
+               let storage = textView.textStorage,
+               selectedRange.location < storage.length,
+               NSMaxRange(selectedRange) <= storage.length {
+                let attrs = storage.attributes(at: selectedRange.location, effectiveRange: nil)
+                if let color = attrs[NSAttributedString.Key.foregroundColor] as? NSColor {
+                    resolvedColor = color
+                    let identifier = ColorMapping.identifier(for: color, preferPaletteMatch: false)
+                    storage.addAttribute(ColorMapping.colorIDKey, value: identifier, range: selectedRange)
                 }
+                parent.text = NSAttributedString(attributedString: storage)
             }
 
-            syncColorState(with: textView, sampleFromText: false)
+            if resolvedColor == nil {
+                resolvedColor = textView.typingAttributes[NSAttributedString.Key.foregroundColor] as? NSColor
+            }
+
+            if resolvedColor == nil {
+                resolvedColor = NSColorPanel.shared.color
+            }
+
+            let color = resolvedColor ?? NSColorPanel.shared.color
+
+            customTypingColor = color
+
+            if let paletteMatch = ColorMapping.matchingRichTextColor(for: color),
+               paletteMatch != activeColor {
+                activeColor = paletteMatch
+                parent.activeColor = paletteMatch
+            }
+
             applyTypingAttributes(to: textView)
-            parent.text = textView.attributedString()
         }
 
         private func updateTypingAttributesHighlight(_ textView: NSTextView, using highlight: HighlighterColor? = nil) {

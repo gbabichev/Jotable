@@ -141,9 +141,9 @@ struct ColorMapping {
 
 #if os(macOS)
     private static func matchingHighlight(for color: NSColor) -> HighlighterColor? {
-        guard let converted = color.usingColorSpace(.deviceRGB) else { return nil }
+        guard let converted = color.usingColorSpace(.sRGB) else { return nil }
         for highlight in HighlighterColor.allCases where highlight != .none {
-            guard let highlightColor = highlight.nsColor?.usingColorSpace(.deviceRGB) else { continue }
+            guard let highlightColor = highlight.nsColor?.usingColorSpace(.sRGB) else { continue }
             if converted.isEqual(highlightColor) {
                 return highlight
             }
@@ -152,9 +152,9 @@ struct ColorMapping {
     }
 
     private static func matchingColorID(for color: NSColor) -> String? {
-        guard let converted = color.usingColorSpace(.deviceRGB) else { return nil }
+        guard let converted = color.usingColorSpace(.sRGB) else { return nil }
         for candidate in RichTextColor.allCases {
-            guard let candidateColor = candidate.nsColor.usingColorSpace(.deviceRGB) else { continue }
+            guard let candidateColor = candidate.nsColor.usingColorSpace(.sRGB) else { continue }
             if converted.isEqual(candidateColor) {
                 return candidate.id
             }
@@ -163,7 +163,7 @@ struct ColorMapping {
     }
 
     private static func customColorID(for color: NSColor) -> String {
-        guard let converted = color.usingColorSpace(.deviceRGB) else {
+        guard let converted = color.usingColorSpace(.sRGB) else {
             return "\(customPrefix)automatic"
         }
         let r = Int(round(converted.redComponent * 255))
@@ -182,7 +182,7 @@ struct ColorMapping {
         let g = CGFloat((value >> 16) & 0xFF) / 255.0
         let b = CGFloat((value >> 8) & 0xFF) / 255.0
         let a = CGFloat(value & 0xFF) / 255.0
-        return NSColor(calibratedRed: r, green: g, blue: b, alpha: a)
+        return NSColor(srgbRed: r, green: g, blue: b, alpha: a)
     }
 #else
     private static func matchingHighlight(for color: UIColor) -> HighlighterColor? {
@@ -244,12 +244,23 @@ struct ColorMapping {
 #endif
 
     /// Public helpers used outside this file
-    static func identifier(for color: PlatformColor) -> String {
-        #if os(macOS)
-        return matchingColorID(for: color) ?? customColorID(for: color)
-        #else
-        return matchingColorID(for: color) ?? customColorID(for: color)
-        #endif
+    static func identifier(for color: PlatformColor, preferPaletteMatch: Bool = true) -> String {
+        if preferPaletteMatch {
+            #if os(macOS)
+            if let match = matchingColorID(for: color) {
+                return match
+            }
+            #else
+            if let match = matchingColorID(for: color) {
+                return match
+            }
+            #endif
+        }
+#if os(macOS)
+        return customColorID(for: color)
+#else
+        return customColorID(for: color)
+#endif
     }
 
     static func color(from identifier: String) -> PlatformColor? {
@@ -270,5 +281,14 @@ struct ColorMapping {
 
     static func isCustomColorID(_ identifier: String) -> Bool {
         identifier.hasPrefix(customPrefix)
+    }
+
+    static func matchingRichTextColor(for color: PlatformColor) -> RichTextColor? {
+#if os(macOS)
+        guard let match = matchingColorID(for: color) else { return nil }
+#else
+        guard let match = matchingColorID(for: color) else { return nil }
+#endif
+        return RichTextColor.from(id: match)
     }
 }
