@@ -172,8 +172,6 @@ struct RichTextEditor: NSViewRepresentable {
             context.coordinator.toggleStrikethrough(textView)
         }
 
-        context.coordinator.syncColorState(with: textView, sampleFromText: true)
-
         // Handle unchecked checkbox insertion trigger
         if insertUncheckedCheckboxTrigger != context.coordinator.lastUncheckedCheckboxTrigger {
             context.coordinator.lastUncheckedCheckboxTrigger = insertUncheckedCheckboxTrigger
@@ -217,10 +215,14 @@ struct RichTextEditor: NSViewRepresentable {
             context.coordinator.presentNativeFormatPanel()
         }
 
+        // Handle reset trigger BEFORE syncing color state, so reset takes priority
         if resetColorTrigger != context.coordinator.lastResetColorTrigger {
             context.coordinator.lastResetColorTrigger = resetColorTrigger
             context.coordinator.handleColorReset()
         }
+
+        // Sync color state AFTER reset, so the reset isn't overwritten by sampling
+        context.coordinator.syncColorState(with: textView, sampleFromText: true)
 
         context.coordinator.handleAppearanceChange()
     }
@@ -463,7 +465,9 @@ struct RichTextEditor: NSViewRepresentable {
             let components = effectiveColorComponents()
             let usingAutomatic = customTypingColor == nil && activeColor == .automatic
             if usingAutomatic {
-                attrs.removeValue(forKey: NSAttributedString.Key.foregroundColor)
+                // Set NSColor.labelColor which is theme-aware (black in light mode, white in dark mode)
+                // This prevents text from inheriting color from previous text, while staying dynamic
+                attrs[NSAttributedString.Key.foregroundColor] = NSColor.labelColor
                 attrs[ColorMapping.colorIDKey] = RichTextColor.automatic.id
             } else {
                 attrs[NSAttributedString.Key.foregroundColor] = components.color
@@ -555,6 +559,23 @@ struct RichTextEditor: NSViewRepresentable {
 
         func handleAppearanceChange() {
             guard let textView = textView else { return }
+
+            // Refresh automatic colors in the text storage when theme changes
+            if let storage = textView.textStorage {
+                var currentPos = 0
+                while currentPos < storage.length {
+                    var range = NSRange()
+                    let attrs = storage.attributes(at: currentPos, longestEffectiveRange: &range, in: NSRange(location: currentPos, length: storage.length - currentPos))
+
+                    // If this text has automatic color ID, refresh it with the current theme-aware labelColor
+                    if let colorID = attrs[ColorMapping.colorIDKey] as? String, colorID == "automatic" {
+                        storage.addAttribute(NSAttributedString.Key.foregroundColor, value: NSColor.labelColor, range: range)
+                    }
+
+                    currentPos = range.location + range.length
+                }
+            }
+
             applyTypingAttributes(to: textView)
         }
 
