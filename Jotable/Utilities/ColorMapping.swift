@@ -251,6 +251,18 @@ struct ColorMapping {
 
     /// Public helpers used outside this file
     static func identifier(for color: PlatformColor, preferPaletteMatch: Bool = true) -> String {
+        #if os(macOS)
+        // Special case: NSColor.labelColor is the theme-aware automatic color
+        if color.isEqual(NSColor.labelColor) {
+            return "automatic"
+        }
+        #else
+        // Special case: UIColor.label is the theme-aware automatic color
+        if color == UIColor.label {
+            return "automatic"
+        }
+        #endif
+
         if preferPaletteMatch {
             #if os(macOS)
             if let match = matchingColorID(for: color) {

@@ -217,12 +217,17 @@ struct RichTextEditor: NSViewRepresentable {
 
         // Handle reset trigger BEFORE syncing color state, so reset takes priority
         if resetColorTrigger != context.coordinator.lastResetColorTrigger {
+            print("DEBUG updateNSView: Reset trigger detected, calling handleColorReset()")
             context.coordinator.lastResetColorTrigger = resetColorTrigger
             context.coordinator.handleColorReset()
+            print("DEBUG updateNSView: After handleColorReset, skipNextColorSampling=\(context.coordinator.skipNextColorSampling)")
+        } else {
+            print("DEBUG updateNSView: No reset trigger, skipNextColorSampling=\(context.coordinator.skipNextColorSampling)")
+            // Only sync color state if we didn't just reset
+            context.coordinator.syncColorState(with: textView, sampleFromText: true)
         }
 
-        // Sync color state AFTER reset, so the reset isn't overwritten by sampling
-        context.coordinator.syncColorState(with: textView, sampleFromText: true)
+        context.coordinator.skipNextColorSampling = false  // Reset the flag after syncing
 
         context.coordinator.handleAppearanceChange()
     }
@@ -249,12 +254,15 @@ struct RichTextEditor: NSViewRepresentable {
         var pendingActiveColorFeedback: RichTextColor?
         var customTypingColor: NSColor?
         var hasCustomTypingColor: Bool { customTypingColor != nil }
+        var skipNextColorSampling = false
 
         private func effectiveColorComponents() -> (color: NSColor, id: String?) {
             if let customTypingColor {
                 let identifier = ColorMapping.identifier(for: customTypingColor, preferPaletteMatch: false)
+                print("DEBUG effectiveColorComponents: returning customTypingColor \(customTypingColor)")
                 return (customTypingColor, identifier)
             }
+            print("DEBUG effectiveColorComponents: returning activeColor \(activeColor.id)")
             return (activeColor.nsColor, activeColor.id)
         }
 
@@ -262,7 +270,11 @@ struct RichTextEditor: NSViewRepresentable {
             var colorID = textView.typingAttributes[ColorMapping.colorIDKey] as? String
             var color = textView.typingAttributes[NSAttributedString.Key.foregroundColor] as? NSColor
 
-            if sampleFromText,
+            print("DEBUG syncColorState: sampleFromText=\(sampleFromText), skipNextColorSampling=\(skipNextColorSampling)")
+            let shouldSample = sampleFromText && !skipNextColorSampling
+            print("DEBUG syncColorState: shouldSample=\(shouldSample), colorID=\(colorID ?? "nil"), color=\(color?.description ?? "nil")")
+
+            if shouldSample,
                (colorID == nil || color == nil),
                let storage = textView.textStorage,
                storage.length > 0 {
@@ -274,9 +286,11 @@ struct RichTextEditor: NSViewRepresentable {
                     let attrs = storage.attributes(at: sampleIndex, effectiveRange: nil)
                     if colorID == nil {
                         colorID = attrs[ColorMapping.colorIDKey] as? String
+                        print("DEBUG syncColorState: sampled colorID=\(colorID ?? "nil")")
                     }
                     if color == nil {
                         color = attrs[NSAttributedString.Key.foregroundColor] as? NSColor
+                        print("DEBUG syncColorState: sampled color=\(color?.description ?? "nil")")
                     }
                 }
             }
@@ -464,11 +478,13 @@ struct RichTextEditor: NSViewRepresentable {
             attrs[ColorMapping.fontSizeKey] = activeFontSize.rawValue
             let components = effectiveColorComponents()
             let usingAutomatic = customTypingColor == nil && activeColor == .automatic
+            print("DEBUG currentTypingAttributes: customTypingColor=\(customTypingColor?.description ?? "nil"), activeColor=\(activeColor.id), usingAutomatic=\(usingAutomatic)")
             if usingAutomatic {
                 // Set NSColor.labelColor which is theme-aware (black in light mode, white in dark mode)
                 // This prevents text from inheriting color from previous text, while staying dynamic
                 attrs[NSAttributedString.Key.foregroundColor] = NSColor.labelColor
                 attrs[ColorMapping.colorIDKey] = RichTextColor.automatic.id
+                print("DEBUG currentTypingAttributes: Set labelColor and automatic ID")
             } else {
                 attrs[NSAttributedString.Key.foregroundColor] = components.color
                 if let id = components.id {
@@ -476,6 +492,7 @@ struct RichTextEditor: NSViewRepresentable {
                 } else {
                     attrs.removeValue(forKey: ColorMapping.colorIDKey)
                 }
+                print("DEBUG currentTypingAttributes: Set custom color \(components.color)")
             }
 
             let underlineValue = isUnderlined ? NSUnderlineStyle.single.rawValue : 0
@@ -581,10 +598,63 @@ struct RichTextEditor: NSViewRepresentable {
 
         func handleColorReset() {
             guard let textView = textView else { return }
+
+            print("DEBUG: handleColorReset called")
+            print("DEBUG: customTypingColor before: \(customTypingColor?.description ?? "nil")")
+
+            // Clear custom color state FIRST
             customTypingColor = nil
             pendingActiveColorFeedback = nil
             activeColor = .automatic
-            apply(color: .automatic, to: textView)
+            skipNextColorSampling = true  // Prevent syncColorState from re-sampling the color
+
+            print("DEBUG: customTypingColor after: \(customTypingColor?.description ?? "nil")")
+            print("DEBUG: activeColor set to: \(activeColor.id)")
+            print("DEBUG: skipNextColorSampling = true")
+
+            // Apply automatic color to selected text AND update storage
+            let selectedRange = textView.selectedRange
+            if selectedRange.length > 0, let storage = textView.textStorage {
+                isProgrammaticUpdate = true
+                ColorMapping.applyColor(.automatic, to: storage, range: selectedRange)
+
+                // Ensure the storage actually reflects automatic color (remove foreground color)
+                // so that syncColorState won't sample a custom color back
+                storage.removeAttribute(NSAttributedString.Key.foregroundColor, range: selectedRange)
+                storage.addAttribute(ColorMapping.colorIDKey, value: RichTextColor.automatic.id, range: selectedRange)
+
+                textView.setSelectedRange(selectedRange)
+
+                // Defer the parent text update to avoid triggering updateNSView during reset
+                DispatchQueue.main.async { [weak self] in
+                    self?.isProgrammaticUpdate = false
+                    self?.parent.text = NSAttributedString(attributedString: storage)
+                }
+            }
+
+            // IMPORTANT: Build fresh typing attributes with automatic color
+            // Since customTypingColor is now nil and activeColor is .automatic,
+            // currentTypingAttributes will return the proper automatic color
+            applyTypingAttributes(to: textView)
+
+            print("DEBUG: typing attributes set. foregroundColor: \(textView.typingAttributes[NSAttributedString.Key.foregroundColor] ?? "nil"), colorID: \(textView.typingAttributes[ColorMapping.colorIDKey] ?? "nil")")
+
+            // Refresh all existing automatic colors with theme-aware color
+            if let storage = textView.textStorage {
+                var currentPos = 0
+                while currentPos < storage.length {
+                    var range = NSRange()
+                    let attrs = storage.attributes(at: currentPos, longestEffectiveRange: &range, in: NSRange(location: currentPos, length: storage.length - currentPos))
+
+                    if let colorID = attrs[ColorMapping.colorIDKey] as? String, colorID == "automatic" {
+                        storage.addAttribute(NSAttributedString.Key.foregroundColor, value: NSColor.labelColor, range: range)
+                    }
+
+                    currentPos = range.location + range.length
+                }
+            }
+
+            print("DEBUG: handleColorReset completed")
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {

@@ -41,8 +41,11 @@ struct FontToolbar: View {
             }
 
             Button {
+                print("DEBUG FontToolbar: Reset button clicked")
                 activeColor = .automatic
-                resetColorTrigger = UUID()
+                let newTrigger = UUID()
+                print("DEBUG FontToolbar: Setting resetColorTrigger to \(newTrigger)")
+                resetColorTrigger = newTrigger
             } label: {
                 Label("Reset Text Color", systemImage: "arrow.uturn.backward")
             }
