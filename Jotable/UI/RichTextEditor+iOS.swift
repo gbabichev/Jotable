@@ -918,7 +918,7 @@ struct RichTextEditor: UIViewRepresentable {
             var contentStartsAfter = lineRange.location
 
             // Look for attachment at the start of the line
-            if attributedString.attribute(NSAttributedString.Key.attachment, at: lineRange.location, longestEffectiveRange: nil, in: lineRange) != nil {
+            if attributedString.attribute(NSAttributedString.Key.attachment, at: lineRange.location, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
                 hasCheckboxAtStart = true
                 contentStartsAfter = lineRange.location + 1
             }
@@ -937,7 +937,10 @@ struct RichTextEditor: UIViewRepresentable {
                 let newlineWithAttrs = NSAttributedString(string: "\n", attributes: fontAttrs)
                 textView.textStorage.replaceCharacters(in: lineRange, with: newlineWithAttrs)
             } else {
-                // Content after checkbox - add newline and new checkbox
+                // Content after checkbox - insert newline and new checkbox at cursor position
+                // We need to replace from cursor to end of line to prevent double newlines
+                let endOfLineRange = NSRange(location: cursorRange.location, length: lineRange.location + lineRange.length - cursorRange.location)
+
                 let newCheckbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
                 let newCheckboxString = NSAttributedString(attachment: newCheckbox)
 
@@ -947,9 +950,13 @@ struct RichTextEditor: UIViewRepresentable {
                 let newLine = NSMutableAttributedString(string: "\n", attributes: fontAttrs)
                 newLine.append(newCheckboxString)
 
-                // Add space after checkbox with proper font attributes
-                newLine.append(NSAttributedString(string: " ", attributes: fontAttrs))
-                textView.textStorage.replaceCharacters(in: cursorRange, with: newLine)
+                // Add space after checkbox with minimal attributes (just font) to avoid rendering issues
+                let baseFont = UIFont.systemFont(ofSize: activeFontSize.rawValue)
+                let spaceAttrs: [NSAttributedString.Key: Any] = [.font: baseFont]
+                newLine.append(NSAttributedString(string: " ", attributes: spaceAttrs))
+
+                // Replace from cursor to end of line with the newline + checkbox + space
+                textView.textStorage.replaceCharacters(in: endOfLineRange, with: newLine)
             }
 
             // Position cursor after the inserted content
@@ -1008,12 +1015,16 @@ struct RichTextEditor: UIViewRepresentable {
                 let nextCharRange = NSRange(location: spaceInsertionPos, length: 1)
                 let nextChar = attributedText.attributedSubstring(from: nextCharRange).string
                 if nextChar != " " {
-                    let spaceAttrs = currentTypingAttributes(from: textView)
+                    // Space after attachment should have minimal attributes to avoid rendering issues
+                    // Only include font to ensure proper baseline alignment
+                    let baseFont = UIFont.systemFont(ofSize: activeFontSize.rawValue)
+                    let spaceAttrs: [NSAttributedString.Key: Any] = [.font: baseFont]
                     attributedText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
                 }
             } else {
-                // End of text, just add space
-                let spaceAttrs = currentTypingAttributes(from: textView)
+                // End of text, just add space with minimal attributes
+                let baseFont = UIFont.systemFont(ofSize: activeFontSize.rawValue)
+                let spaceAttrs: [NSAttributedString.Key: Any] = [.font: baseFont]
                 attributedText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
             }
 

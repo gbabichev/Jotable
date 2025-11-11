@@ -109,10 +109,9 @@ class CheckboxTextAttachment: NSTextAttachment {
 
     // Override attachmentBounds to control the size and vertical alignment
     nonisolated override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: CGRect, glyphPosition position: CGPoint, characterIndex charIndex: Int) -> CGRect {
-        // Scale checkbox size based on line height (which reflects font size)
-        // Use a minimum of 16 to ensure consistent sizing even if line height is small initially
-        let lineHeight = max(16, lineFrag.height)
-        let checkboxSize = min(lineHeight - 2, lineHeight * 0.85)  // Scale with line height but cap it
+        // Use a fixed checkbox size that's consistent and visible
+        let checkboxSize: CGFloat = 20
+        let lineHeight = max(checkboxSize, lineFrag.height)
         let verticalOffset = (lineHeight - checkboxSize) / 2  // Center vertically
 
         return CGRect(x: 0, y: -verticalOffset, width: checkboxSize, height: checkboxSize)
@@ -255,10 +254,9 @@ class CheckboxTextAttachment: NSTextAttachment {
 
     // Override attachmentBounds to control the size and vertical alignment
     nonisolated override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: NSRect, glyphPosition position: NSPoint, characterIndex charIndex: Int) -> NSRect {
-        // Scale checkbox size based on line height (which reflects font size)
-        // Use a minimum of 16 to ensure consistent sizing even if line height is small initially
-        let lineHeight = max(16, lineFrag.height)
-        let checkboxSize = min(lineHeight - 2, lineHeight * 0.85)  // Scale with line height but cap it
+        // Use a fixed checkbox size that's consistent and visible
+        let checkboxSize: CGFloat = 15
+        let lineHeight = max(checkboxSize, lineFrag.height)
         let verticalOffset = (lineHeight - checkboxSize) / 2  // Center vertically
 
         return NSRect(x: 0, y: -verticalOffset, width: checkboxSize, height: checkboxSize)

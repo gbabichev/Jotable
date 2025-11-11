@@ -925,8 +925,10 @@ struct RichTextEditor: NSViewRepresentable {
                 let newLine = NSMutableAttributedString(string: "\n", attributes: fontAttrs)
                 newLine.append(newCheckboxString)
 
-                // Add space after checkbox with proper font attributes
-                newLine.append(NSAttributedString(string: " ", attributes: fontAttrs))
+                // Add space after checkbox with minimal attributes (just font) to avoid rendering issues
+                let baseFont = NSFont.systemFont(ofSize: activeFontSize.rawValue)
+                let spaceAttrs: [NSAttributedString.Key: Any] = [.font: baseFont]
+                newLine.append(NSAttributedString(string: " ", attributes: spaceAttrs))
                 storage.replaceCharacters(in: cursorRange, with: newLine)
             }
 
@@ -987,12 +989,16 @@ struct RichTextEditor: NSViewRepresentable {
                 let nextCharRange = NSRange(location: spaceInsertionPos, length: 1)
                 let nextChar = storage.attributedSubstring(from: nextCharRange).string
                 if nextChar != " " {
-                    let spaceAttrs = currentTypingAttributes(from: textView)
+                    // Space after attachment should have minimal attributes to avoid rendering issues
+                    // Only include font to ensure proper baseline alignment
+                    let baseFont = NSFont.systemFont(ofSize: activeFontSize.rawValue)
+                    let spaceAttrs: [NSAttributedString.Key: Any] = [.font: baseFont]
                     storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
                 }
             } else {
-                // End of text, just add space
-                let spaceAttrs = currentTypingAttributes(from: textView)
+                // End of text, just add space with minimal attributes
+                let baseFont = NSFont.systemFont(ofSize: activeFontSize.rawValue)
+                let spaceAttrs: [NSAttributedString.Key: Any] = [.font: baseFont]
                 storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
             }
 

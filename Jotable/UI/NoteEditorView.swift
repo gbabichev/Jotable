@@ -61,7 +61,8 @@ struct NoteEditorView: View {
                             set: { newValue in
                                 // Only update if the content actually changed
                                 // This prevents attribute changes from triggering unnecessary updates
-                                if !newValue.isEqual(to: lastSyncedRichText) {
+                                let hasChanged = lastSyncedRichText == nil || !newValue.isEqual(to: lastSyncedRichText!)
+                                if hasChanged {
                                     let snapshot = NSAttributedString(attributedString: newValue)
                                     richText = AttributedTextWrapper(value: snapshot)
                                     lastSyncedRichText = snapshot
