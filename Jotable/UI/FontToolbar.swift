@@ -5,6 +5,7 @@ struct FontToolbar: View {
     @Binding var activeHighlighter: HighlighterColor
     @Binding var activeFontSize: FontSize
     @Binding var isBold: Bool
+    @Binding var isItalic: Bool
     @Binding var isUnderlined: Bool
     @Binding var isStrikethrough: Bool
     @Binding var presentFormatMenuTrigger: UUID?
@@ -100,6 +101,15 @@ struct FontToolbar: View {
                 HStack {
                     Image(systemName: isBold ? "checkmark" : "bold")
                     Text("Bold")
+                }
+            }
+
+            Button {
+                isItalic.toggle()
+            } label: {
+                HStack {
+                    Image(systemName: isItalic ? "checkmark" : "italic")
+                    Text("Italic")
                 }
             }
 

@@ -16,6 +16,7 @@ struct NoteEditorView: View {
     @State private var activeHighlighter: HighlighterColor = .none
     @State private var activeFontSize: FontSize = .normal
     @State private var isBold: Bool = false
+    @State private var isItalic: Bool = false
     @State private var isUnderlined: Bool = false
     @State private var isStrikethrough: Bool = false
     @State private var insertUncheckedCheckboxTrigger: UUID?
@@ -64,6 +65,7 @@ struct NoteEditorView: View {
                         activeHighlighter: $activeHighlighter,
                         activeFontSize: $activeFontSize,
                         isBold: $isBold,
+                        isItalic: $isItalic,
                         isUnderlined: $isUnderlined,
                         isStrikethrough: $isStrikethrough,
                         insertUncheckedCheckboxTrigger: $insertUncheckedCheckboxTrigger,
@@ -126,6 +128,7 @@ struct NoteEditorView: View {
                     activeHighlighter: $activeHighlighter,
                     activeFontSize: $activeFontSize,
                     isBold: $isBold,
+                    isItalic: $isItalic,
                     isUnderlined: $isUnderlined,
                     isStrikethrough: $isStrikethrough,
                     presentFormatMenuTrigger: $presentFormatMenuTrigger,

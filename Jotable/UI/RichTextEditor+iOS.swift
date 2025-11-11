@@ -8,6 +8,7 @@ struct RichTextEditor: UIViewRepresentable {
     @Binding var activeHighlighter: HighlighterColor
     @Binding var activeFontSize: FontSize
     @Binding var isBold: Bool
+    @Binding var isItalic: Bool
     @Binding var isUnderlined: Bool
     @Binding var isStrikethrough: Bool
     @Binding var insertUncheckedCheckboxTrigger: UUID?
@@ -103,6 +104,11 @@ struct RichTextEditor: UIViewRepresentable {
             context.coordinator.toggleBold(uiView)
         }
 
+        if context.coordinator.isItalic != isItalic {
+            context.coordinator.isItalic = isItalic
+            context.coordinator.toggleItalic(uiView)
+        }
+
         if context.coordinator.isUnderlined != isUnderlined {
             context.coordinator.isUnderlined = isUnderlined
             context.coordinator.toggleUnderline(uiView)
@@ -167,6 +173,7 @@ struct RichTextEditor: UIViewRepresentable {
         var activeHighlighter: HighlighterColor
         var activeFontSize: FontSize
         var isBold: Bool
+        var isItalic: Bool
         var isUnderlined: Bool
         var isStrikethrough: Bool
         var isProgrammaticUpdate = false
@@ -206,12 +213,70 @@ struct RichTextEditor: UIViewRepresentable {
             return (activeColor.uiColor, activeColor.id)
         }
 
+        func syncFormattingState(with textView: UITextView) {
+            let selectedRange = textView.selectedRange
+
+            var attrs: [NSAttributedString.Key: Any]? = nil
+
+            // First try to get attributes from selected text
+            if selectedRange.length > 0,
+               let attributed = textView.attributedText,
+               selectedRange.location < attributed.length {
+                attrs = attributed.attributes(at: selectedRange.location, effectiveRange: nil)
+            } else {
+                // If no selection, use typing attributes (which will have been updated by the native menu)
+                attrs = textView.typingAttributes
+            }
+
+            guard let attrs = attrs else { return }
+
+            let font = attrs[NSAttributedString.Key.font] as? UIFont
+            let sampledBold = font?.fontDescriptor.symbolicTraits.contains(.traitBold) ?? false
+            let sampledItalic = font?.fontDescriptor.symbolicTraits.contains(.traitItalic) ?? false
+
+            let underlineValue = attrs[NSAttributedString.Key.underlineStyle] as? Int ?? 0
+            let sampledUnderline = underlineValue != 0
+
+            let strikethroughValue = attrs[NSAttributedString.Key.strikethroughStyle] as? Int ?? 0
+            let sampledStrikethrough = strikethroughValue != 0
+
+            // Update state if different
+            if sampledBold != isBold {
+                isBold = sampledBold
+                DispatchQueue.main.async { [weak self] in
+                    self?.parent.isBold = sampledBold
+                }
+            }
+
+            if sampledItalic != isItalic {
+                isItalic = sampledItalic
+                DispatchQueue.main.async { [weak self] in
+                    self?.parent.isItalic = sampledItalic
+                }
+            }
+
+            if sampledUnderline != isUnderlined {
+                isUnderlined = sampledUnderline
+                DispatchQueue.main.async { [weak self] in
+                    self?.parent.isUnderlined = sampledUnderline
+                }
+            }
+
+            if sampledStrikethrough != isStrikethrough {
+                isStrikethrough = sampledStrikethrough
+                DispatchQueue.main.async { [weak self] in
+                    self?.parent.isStrikethrough = sampledStrikethrough
+                }
+            }
+        }
+
         init(_ parent: RichTextEditor) {
             self.parent = parent
             self.activeColor = parent.activeColor
             self.activeHighlighter = parent.activeHighlighter
             self.activeFontSize = parent.activeFontSize
             self.isBold = parent.isBold
+            self.isItalic = parent.isItalic
             self.isUnderlined = parent.isUnderlined
             self.isStrikethrough = parent.isStrikethrough
         }
@@ -221,6 +286,7 @@ struct RichTextEditor: UIViewRepresentable {
             lastTextViewDidChangeTime = Date().timeIntervalSinceReferenceDate
 
             syncColorState(with: textView, sampleFromText: true)
+            syncFormattingState(with: textView)
             if releaseColorLockOnTextChange {
                 releaseColorLockOnTextChange = false
                 caretColorLockID = nil
@@ -263,6 +329,7 @@ struct RichTextEditor: UIViewRepresentable {
                 releaseColorLockOnTextChange = false
             }
             syncColorState(with: textView, sampleFromText: true)
+            syncFormattingState(with: textView)
             applyTypingAttributes(to: textView)
         }
 
@@ -321,6 +388,9 @@ struct RichTextEditor: UIViewRepresentable {
             var shouldSampleFromText = sampleFromText
             var colorID = textView.typingAttributes[ColorMapping.colorIDKey] as? String
             var color = textView.typingAttributes[NSAttributedString.Key.foregroundColor] as? UIColor
+            var sampledBold: Bool?
+            var sampledUnderline: Bool?
+            var sampledStrikethrough: Bool?
 
             if let directColor = color {
                 let identifier = ColorMapping.identifier(for: directColor, preferPaletteMatch: false)
@@ -361,6 +431,19 @@ struct RichTextEditor: UIViewRepresentable {
                     if color == nil {
                         color = attrs[NSAttributedString.Key.foregroundColor] as? UIColor
                     }
+
+                    // Only sample bold, underline, and strikethrough if there's a selection
+                    // When no text is selected, we should use typing attributes, not sample from cursor position
+                    if textView.selectedRange.length > 0 {
+                        let font = attrs[NSAttributedString.Key.font] as? UIFont
+                        sampledBold = font?.fontDescriptor.symbolicTraits.contains(.traitBold) ?? false
+
+                        let underlineValue = attrs[NSAttributedString.Key.underlineStyle] as? Int ?? 0
+                        sampledUnderline = underlineValue != 0
+
+                        let strikethroughValue = attrs[NSAttributedString.Key.strikethroughStyle] as? Int ?? 0
+                        sampledStrikethrough = strikethroughValue != 0
+                    }
                 }
             }
 
@@ -383,6 +466,28 @@ struct RichTextEditor: UIViewRepresentable {
                 customTypingColor = color
             } else {
                 customTypingColor = nil
+            }
+
+            // Update bold, underline, and strikethrough state if sampled
+            if let sampledBold, sampledBold != isBold {
+                isBold = sampledBold
+                DispatchQueue.main.async { [weak self] in
+                    self?.parent.isBold = sampledBold
+                }
+            }
+
+            if let sampledUnderline, sampledUnderline != isUnderlined {
+                isUnderlined = sampledUnderline
+                DispatchQueue.main.async { [weak self] in
+                    self?.parent.isUnderlined = sampledUnderline
+                }
+            }
+
+            if let sampledStrikethrough, sampledStrikethrough != isStrikethrough {
+                isStrikethrough = sampledStrikethrough
+                DispatchQueue.main.async { [weak self] in
+                    self?.parent.isStrikethrough = sampledStrikethrough
+                }
             }
 
             if textView.selectedRange.length == 0 {
@@ -481,7 +586,21 @@ struct RichTextEditor: UIViewRepresentable {
         private func currentTypingAttributes(from textView: UITextView?) -> [NSAttributedString.Key: Any] {
             var attrs = textView?.typingAttributes ?? [:]
 
-            let font = UIFont.systemFont(ofSize: activeFontSize.rawValue, weight: isBold ? .bold : .regular)
+            let weight: UIFont.Weight = isBold ? .bold : .regular
+            var font = UIFont.systemFont(ofSize: activeFontSize.rawValue, weight: weight)
+
+            // Combine bold and italic traits
+            var traits: UIFontDescriptor.SymbolicTraits = isBold ? .traitBold : []
+            if isItalic {
+                traits.insert(.traitItalic)
+            }
+
+            if !traits.isEmpty {
+                if let descriptor = font.fontDescriptor.withSymbolicTraits(traits) {
+                    font = UIFont(descriptor: descriptor, size: activeFontSize.rawValue)
+                }
+            }
+
             attrs[NSAttributedString.Key.font] = font
             attrs[ColorMapping.fontSizeKey] = activeFontSize.rawValue
 
@@ -558,7 +677,52 @@ struct RichTextEditor: UIViewRepresentable {
                let currentText = textView.attributedText?.mutableCopy() as? NSMutableAttributedString {
                 isProgrammaticUpdate = true
 
-                let font = UIFont.systemFont(ofSize: activeFontSize.rawValue, weight: isBold ? .bold : .regular)
+                let weight: UIFont.Weight = isBold ? .bold : .regular
+                var font = UIFont.systemFont(ofSize: activeFontSize.rawValue, weight: weight)
+
+                // Combine bold and italic traits
+                var traits: UIFontDescriptor.SymbolicTraits = isBold ? .traitBold : []
+                if isItalic {
+                    traits.insert(.traitItalic)
+                }
+
+                if !traits.isEmpty {
+                    if let descriptor = font.fontDescriptor.withSymbolicTraits(traits) {
+                        font = UIFont(descriptor: descriptor, size: activeFontSize.rawValue)
+                    }
+                }
+
+                currentText.addAttribute(NSAttributedString.Key.font, value: font, range: selectedRange)
+                textView.attributedText = currentText
+                textView.selectedRange = selectedRange
+                pushTextToParent(currentText)
+                isProgrammaticUpdate = false
+            }
+
+            applyTypingAttributes(to: textView)
+        }
+
+        func toggleItalic(_ textView: UITextView) {
+            let selectedRange = textView.selectedRange
+            if selectedRange.length > 0,
+               let currentText = textView.attributedText?.mutableCopy() as? NSMutableAttributedString {
+                isProgrammaticUpdate = true
+
+                let weight: UIFont.Weight = isBold ? .bold : .regular
+                var font = UIFont.systemFont(ofSize: activeFontSize.rawValue, weight: weight)
+
+                // Combine bold and italic traits
+                var traits: UIFontDescriptor.SymbolicTraits = isBold ? .traitBold : []
+                if isItalic {
+                    traits.insert(.traitItalic)
+                }
+
+                if !traits.isEmpty {
+                    if let descriptor = font.fontDescriptor.withSymbolicTraits(traits) {
+                        font = UIFont(descriptor: descriptor, size: activeFontSize.rawValue)
+                    }
+                }
+
                 currentText.addAttribute(NSAttributedString.Key.font, value: font, range: selectedRange)
                 textView.attributedText = currentText
                 textView.selectedRange = selectedRange

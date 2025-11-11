@@ -6,6 +6,7 @@ private final class DynamicColorTextView: NSTextView {
     var onAppearanceChange: (() -> Void)?
     var onCheckboxTap: ((Int) -> Void)?
     var onColorChange: (() -> Void)?
+    var onFormatChange: (() -> Void)?
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -31,6 +32,16 @@ private final class DynamicColorTextView: NSTextView {
     override func changeColor(_ sender: Any?) {
         super.changeColor(sender)
         onColorChange?()
+    }
+
+    override func changeFont(_ sender: Any?) {
+        super.changeFont(sender)
+        onFormatChange?()
+    }
+
+    override func underline(_ sender: Any?) {
+        super.underline(sender)
+        onFormatChange?()
     }
 
     private func checkboxCharacterIndex(at point: NSPoint) -> Int? {
@@ -66,6 +77,7 @@ struct RichTextEditor: NSViewRepresentable {
     @Binding var activeHighlighter: HighlighterColor
     @Binding var activeFontSize: FontSize
     @Binding var isBold: Bool
+    @Binding var isItalic: Bool
     @Binding var isUnderlined: Bool
     @Binding var isStrikethrough: Bool
     @Binding var insertUncheckedCheckboxTrigger: UUID?
@@ -116,6 +128,9 @@ struct RichTextEditor: NSViewRepresentable {
         textView.onColorChange = { [weak coordinator = context.coordinator] in
             coordinator?.handleColorPanelChange()
         }
+        textView.onFormatChange = { [weak coordinator = context.coordinator] in
+            coordinator?.handleFormatChange()
+        }
 
         return scrollView
     }
@@ -160,6 +175,11 @@ struct RichTextEditor: NSViewRepresentable {
         if context.coordinator.isBold != isBold {
             context.coordinator.isBold = isBold
             context.coordinator.toggleBold(textView)
+        }
+
+        if context.coordinator.isItalic != isItalic {
+            context.coordinator.isItalic = isItalic
+            context.coordinator.toggleItalic(textView)
         }
 
         if context.coordinator.isUnderlined != isUnderlined {
@@ -217,12 +237,9 @@ struct RichTextEditor: NSViewRepresentable {
 
         // Handle reset trigger BEFORE syncing color state, so reset takes priority
         if resetColorTrigger != context.coordinator.lastResetColorTrigger {
-            print("DEBUG updateNSView: Reset trigger detected, calling handleColorReset()")
             context.coordinator.lastResetColorTrigger = resetColorTrigger
             context.coordinator.handleColorReset()
-            print("DEBUG updateNSView: After handleColorReset, skipNextColorSampling=\(context.coordinator.skipNextColorSampling)")
         } else {
-            print("DEBUG updateNSView: No reset trigger, skipNextColorSampling=\(context.coordinator.skipNextColorSampling)")
             // Only sync color state if we didn't just reset
             context.coordinator.syncColorState(with: textView, sampleFromText: true)
         }
@@ -239,6 +256,7 @@ struct RichTextEditor: NSViewRepresentable {
         var activeHighlighter: HighlighterColor
         var activeFontSize: FontSize
         var isBold: Bool
+        var isItalic: Bool
         var isUnderlined: Bool
         var isStrikethrough: Bool
         var isProgrammaticUpdate = false
@@ -259,23 +277,70 @@ struct RichTextEditor: NSViewRepresentable {
         private func effectiveColorComponents() -> (color: NSColor, id: String?) {
             if let customTypingColor {
                 let identifier = ColorMapping.identifier(for: customTypingColor, preferPaletteMatch: false)
-                print("DEBUG effectiveColorComponents: returning customTypingColor \(customTypingColor)")
                 return (customTypingColor, identifier)
             }
-            print("DEBUG effectiveColorComponents: returning activeColor \(activeColor.id)")
             return (activeColor.nsColor, activeColor.id)
+        }
+
+        func syncFormattingState(with textView: NSTextView) {
+            let selectedRange = textView.selectedRange
+
+            var attrs: [NSAttributedString.Key: Any]? = nil
+
+            // First try to get attributes from selected text
+            if selectedRange.length > 0,
+               let storage = textView.textStorage,
+               selectedRange.location < storage.length {
+                attrs = storage.attributes(at: selectedRange.location, effectiveRange: nil)
+            } else {
+                // If no selection, use typing attributes (which will have been updated by the native menu)
+                attrs = textView.typingAttributes
+            }
+
+            guard let attrs = attrs else { return }
+
+            let font = attrs[NSAttributedString.Key.font] as? NSFont
+            let sampledBold = font?.fontDescriptor.symbolicTraits.contains(.bold) ?? false
+            let sampledItalic = font?.fontDescriptor.symbolicTraits.contains(.italic) ?? false
+
+            let underlineValue = attrs[NSAttributedString.Key.underlineStyle] as? Int ?? 0
+            let sampledUnderline = underlineValue != 0
+
+            let strikethroughValue = attrs[NSAttributedString.Key.strikethroughStyle] as? Int ?? 0
+            let sampledStrikethrough = strikethroughValue != 0
+
+            // Update state if different
+            if sampledBold != isBold {
+                isBold = sampledBold
+                parent.isBold = sampledBold
+            }
+
+            if sampledItalic != isItalic {
+                isItalic = sampledItalic
+                parent.isItalic = sampledItalic
+            }
+
+            if sampledUnderline != isUnderlined {
+                isUnderlined = sampledUnderline
+                parent.isUnderlined = sampledUnderline
+            }
+
+            if sampledStrikethrough != isStrikethrough {
+                isStrikethrough = sampledStrikethrough
+                parent.isStrikethrough = sampledStrikethrough
+            }
         }
 
         func syncColorState(with textView: NSTextView, sampleFromText: Bool) {
             var colorID = textView.typingAttributes[ColorMapping.colorIDKey] as? String
             var color = textView.typingAttributes[NSAttributedString.Key.foregroundColor] as? NSColor
+            var sampledBold: Bool?
+            var sampledUnderline: Bool?
+            var sampledStrikethrough: Bool?
 
-            print("DEBUG syncColorState: sampleFromText=\(sampleFromText), skipNextColorSampling=\(skipNextColorSampling)")
             let shouldSample = sampleFromText && !skipNextColorSampling
-            print("DEBUG syncColorState: shouldSample=\(shouldSample), colorID=\(colorID ?? "nil"), color=\(color?.description ?? "nil")")
 
             if shouldSample,
-               (colorID == nil || color == nil),
                let storage = textView.textStorage,
                storage.length > 0 {
                 var sampleIndex = textView.selectedRange.location
@@ -286,11 +351,22 @@ struct RichTextEditor: NSViewRepresentable {
                     let attrs = storage.attributes(at: sampleIndex, effectiveRange: nil)
                     if colorID == nil {
                         colorID = attrs[ColorMapping.colorIDKey] as? String
-                        print("DEBUG syncColorState: sampled colorID=\(colorID ?? "nil")")
                     }
                     if color == nil {
                         color = attrs[NSAttributedString.Key.foregroundColor] as? NSColor
-                        print("DEBUG syncColorState: sampled color=\(color?.description ?? "nil")")
+                    }
+
+                    // Only sample bold, underline, and strikethrough if there's a selection
+                    // When no text is selected, we should use typing attributes, not sample from cursor position
+                    if textView.selectedRange.length > 0 {
+                        let font = attrs[NSAttributedString.Key.font] as? NSFont
+                        sampledBold = font?.fontDescriptor.symbolicTraits.contains(.bold) ?? false
+
+                        let underlineValue = attrs[NSAttributedString.Key.underlineStyle] as? Int ?? 0
+                        sampledUnderline = underlineValue != 0
+
+                        let strikethroughValue = attrs[NSAttributedString.Key.strikethroughStyle] as? Int ?? 0
+                        sampledStrikethrough = strikethroughValue != 0
                     }
                 }
             }
@@ -313,6 +389,22 @@ struct RichTextEditor: NSViewRepresentable {
             } else {
                 customTypingColor = nil
             }
+
+            // Update bold, underline, and strikethrough state if sampled
+            if let sampledBold, sampledBold != isBold {
+                isBold = sampledBold
+                parent.isBold = sampledBold
+            }
+
+            if let sampledUnderline, sampledUnderline != isUnderlined {
+                isUnderlined = sampledUnderline
+                parent.isUnderlined = sampledUnderline
+            }
+
+            if let sampledStrikethrough, sampledStrikethrough != isStrikethrough {
+                isStrikethrough = sampledStrikethrough
+                parent.isStrikethrough = sampledStrikethrough
+            }
         }
 
         init(_ parent: RichTextEditor) {
@@ -321,6 +413,7 @@ struct RichTextEditor: NSViewRepresentable {
             self.activeHighlighter = parent.activeHighlighter
             self.activeFontSize = parent.activeFontSize
             self.isBold = parent.isBold
+            self.isItalic = parent.isItalic
             self.isUnderlined = parent.isUnderlined
             self.isStrikethrough = parent.isStrikethrough
         }
@@ -330,6 +423,7 @@ struct RichTextEditor: NSViewRepresentable {
                   let textView = notification.object as? NSTextView,
                   textView === self.textView else { return }
             syncColorState(with: textView, sampleFromText: true)
+            syncFormattingState(with: textView)
 
             // Convert checkbox patterns to attachments
             if let storage = textView.textStorage {
@@ -347,6 +441,7 @@ struct RichTextEditor: NSViewRepresentable {
             guard let textView = notification.object as? NSTextView,
                   textView === self.textView else { return }
             syncColorState(with: textView, sampleFromText: true)
+            syncFormattingState(with: textView)
             applyTypingAttributes(to: textView)
             syncColorState(with: textView, sampleFromText: false)
 
@@ -466,6 +561,19 @@ struct RichTextEditor: NSViewRepresentable {
             applyTypingAttributes(to: textView)
         }
 
+        func handleFormatChange() {
+            guard let textView = textView else { return }
+
+            // Sync the formatting state after native menu changes
+            syncFormattingState(with: textView)
+
+            // Update text binding to persist the changes
+            if !isProgrammaticUpdate {
+                let currentText = textView.attributedString()
+                parent.text = currentText
+            }
+        }
+
         private func updateTypingAttributesHighlight(_ textView: NSTextView, using highlight: HighlighterColor? = nil) {
             applyTypingAttributes(to: textView, highlightOverride: highlight)
         }
@@ -473,18 +581,29 @@ struct RichTextEditor: NSViewRepresentable {
         private func currentTypingAttributes(from textView: NSTextView?, highlightOverride: HighlighterColor? = nil) -> [NSAttributedString.Key: Any] {
             var attrs = textView?.typingAttributes ?? [:]
 
-            let font = NSFont.systemFont(ofSize: activeFontSize.rawValue, weight: isBold ? .bold : .regular)
+            let weight: NSFont.Weight = isBold ? .bold : .regular
+            var font = NSFont.systemFont(ofSize: activeFontSize.rawValue, weight: weight)
+
+            // Combine bold and italic traits
+            var traits: NSFontDescriptor.SymbolicTraits = isBold ? .bold : []
+            if isItalic {
+                traits.insert(.italic)
+            }
+
+            if !traits.isEmpty {
+                let descriptor = font.fontDescriptor.withSymbolicTraits(traits)
+                font = NSFont(descriptor: descriptor, size: activeFontSize.rawValue) ?? font
+            }
+
             attrs[NSAttributedString.Key.font] = font
             attrs[ColorMapping.fontSizeKey] = activeFontSize.rawValue
             let components = effectiveColorComponents()
             let usingAutomatic = customTypingColor == nil && activeColor == .automatic
-            print("DEBUG currentTypingAttributes: customTypingColor=\(customTypingColor?.description ?? "nil"), activeColor=\(activeColor.id), usingAutomatic=\(usingAutomatic)")
             if usingAutomatic {
                 // Set NSColor.labelColor which is theme-aware (black in light mode, white in dark mode)
                 // This prevents text from inheriting color from previous text, while staying dynamic
                 attrs[NSAttributedString.Key.foregroundColor] = NSColor.labelColor
                 attrs[ColorMapping.colorIDKey] = RichTextColor.automatic.id
-                print("DEBUG currentTypingAttributes: Set labelColor and automatic ID")
             } else {
                 attrs[NSAttributedString.Key.foregroundColor] = components.color
                 if let id = components.id {
@@ -492,7 +611,6 @@ struct RichTextEditor: NSViewRepresentable {
                 } else {
                     attrs.removeValue(forKey: ColorMapping.colorIDKey)
                 }
-                print("DEBUG currentTypingAttributes: Set custom color \(components.color)")
             }
 
             let underlineValue = isUnderlined ? NSUnderlineStyle.single.rawValue : 0
@@ -523,7 +641,52 @@ struct RichTextEditor: NSViewRepresentable {
                let storage = textView.textStorage {
                 isProgrammaticUpdate = true
 
-                let font = NSFont.systemFont(ofSize: activeFontSize.rawValue, weight: isBold ? .bold : .regular)
+                let weight: NSFont.Weight = isBold ? .bold : .regular
+                var font = NSFont.systemFont(ofSize: activeFontSize.rawValue, weight: weight)
+
+                // Combine bold and italic traits
+                var traits: NSFontDescriptor.SymbolicTraits = isBold ? .bold : []
+                if isItalic {
+                    traits.insert(.italic)
+                }
+
+                if !traits.isEmpty {
+                    let descriptor = font.fontDescriptor.withSymbolicTraits(traits)
+                    font = NSFont(descriptor: descriptor, size: activeFontSize.rawValue) ?? font
+                }
+
+                storage.addAttribute(NSAttributedString.Key.font, value: font, range: selectedRange)
+                textView.setSelectedRange(selectedRange)
+
+                DispatchQueue.main.async { [weak self] in
+                    self?.isProgrammaticUpdate = false
+                    self?.parent.text = NSAttributedString(attributedString: storage)
+                }
+            }
+
+            applyTypingAttributes(to: textView)
+        }
+
+        func toggleItalic(_ textView: NSTextView) {
+            let selectedRange = textView.selectedRange
+            if selectedRange.length > 0,
+               let storage = textView.textStorage {
+                isProgrammaticUpdate = true
+
+                let weight: NSFont.Weight = isBold ? .bold : .regular
+                var font = NSFont.systemFont(ofSize: activeFontSize.rawValue, weight: weight)
+
+                // Combine bold and italic traits
+                var traits: NSFontDescriptor.SymbolicTraits = isBold ? .bold : []
+                if isItalic {
+                    traits.insert(.italic)
+                }
+
+                if !traits.isEmpty {
+                    let descriptor = font.fontDescriptor.withSymbolicTraits(traits)
+                    font = NSFont(descriptor: descriptor, size: activeFontSize.rawValue) ?? font
+                }
+
                 storage.addAttribute(NSAttributedString.Key.font, value: font, range: selectedRange)
                 textView.setSelectedRange(selectedRange)
 
@@ -599,18 +762,11 @@ struct RichTextEditor: NSViewRepresentable {
         func handleColorReset() {
             guard let textView = textView else { return }
 
-            print("DEBUG: handleColorReset called")
-            print("DEBUG: customTypingColor before: \(customTypingColor?.description ?? "nil")")
-
             // Clear custom color state FIRST
             customTypingColor = nil
             pendingActiveColorFeedback = nil
             activeColor = .automatic
             skipNextColorSampling = true  // Prevent syncColorState from re-sampling the color
-
-            print("DEBUG: customTypingColor after: \(customTypingColor?.description ?? "nil")")
-            print("DEBUG: activeColor set to: \(activeColor.id)")
-            print("DEBUG: skipNextColorSampling = true")
 
             // Apply automatic color to selected text AND update storage
             let selectedRange = textView.selectedRange
@@ -637,8 +793,6 @@ struct RichTextEditor: NSViewRepresentable {
             // currentTypingAttributes will return the proper automatic color
             applyTypingAttributes(to: textView)
 
-            print("DEBUG: typing attributes set. foregroundColor: \(textView.typingAttributes[NSAttributedString.Key.foregroundColor] ?? "nil"), colorID: \(textView.typingAttributes[ColorMapping.colorIDKey] ?? "nil")")
-
             // Refresh all existing automatic colors with theme-aware color
             if let storage = textView.textStorage {
                 var currentPos = 0
@@ -653,8 +807,6 @@ struct RichTextEditor: NSViewRepresentable {
                     currentPos = range.location + range.length
                 }
             }
-
-            print("DEBUG: handleColorReset completed")
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {

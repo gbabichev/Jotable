@@ -550,13 +550,13 @@ struct ContentView: View {
             queue: .main
         ) { notification in
             if let event = notification.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey] as? NSPersistentCloudKitContainer.Event {
-                print("📱 CloudKit Event: \(event.type)")
+                //print("📱 CloudKit Event: \(event.type)")
 
                 switch event.type {
                 case .setup:
                     print("   ☁️ CloudKit setup completed")
                 case .import:
-                    print("   ⬇️ CloudKit import completed")
+                    print("   ⬇️ CloudKit import completed - Data imported from iCloud")
                 case .export:
                     print("   ⬆️ CloudKit export completed - Data saved to iCloud")
                 @unknown default:
