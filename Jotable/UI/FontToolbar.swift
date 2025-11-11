@@ -13,38 +13,26 @@ struct FontToolbar: View {
     var body: some View {
         Menu {
             // MARK: - Colors / Format Section
-            #if os(iOS)
-            Button {
-                DispatchQueue.main.async {
-                    presentFormatMenuTrigger = UUID()
+            Menu {
+                ForEach(RichTextColor.allCases, id: \.id) { color in
+                    Button {
+                        activeColor = color
+                    } label: {
+                        HStack {
+                            Text("\(color.emoji) \(color.id.capitalized)")
+                            if activeColor == color {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
                 }
             } label: {
-                Label("Format & Color", systemImage: "textformat")
-            }
-
-            Divider()
-            #elseif os(macOS)
-            Button {
-                presentFormatMenuTrigger = UUID()
-            } label: {
-                Label("Show Format Panel", systemImage: "paintpalette")
-            }
-
-            Divider()
-            #endif
-
-            Button {
-                activeColor = .red
-            } label: {
-                Label("Text Color: Red", systemImage: "circle.fill")
-                    .foregroundStyle(Color.red)
+                Label("Text Color", systemImage: "paintpalette")
             }
 
             Button {
-                print("DEBUG FontToolbar: Reset button clicked")
                 activeColor = .automatic
                 let newTrigger = UUID()
-                print("DEBUG FontToolbar: Setting resetColorTrigger to \(newTrigger)")
                 resetColorTrigger = newTrigger
             } label: {
                 Label("Reset Text Color", systemImage: "arrow.uturn.backward")

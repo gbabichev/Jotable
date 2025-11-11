@@ -518,7 +518,12 @@ struct RichTextEditor: UIViewRepresentable {
         }
 
         private func matchesAutomaticColor(_ color: UIColor, in textView: UITextView?) -> Bool {
-            let trait = textView?.traitCollection ?? UIScreen.main.traitCollection
+            let trait: UITraitCollection
+            if let textView = textView {
+                trait = textView.traitCollection
+            } else {
+                trait = UITraitCollection(userInterfaceStyle: .unspecified)
+            }
             let style = trait.userInterfaceStyle
             if automaticColorCache?.style != style {
                 automaticColorCache = (style: style, color: UIColor.label.resolvedColor(with: trait))
