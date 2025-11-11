@@ -30,6 +30,8 @@ struct NoteEditorView: View {
     @State private var tempURLData: (String, String)? = nil
     @State private var showingAddURLDialog: Bool = false
     @State private var headerHeight: CGFloat = 0
+    @State private var lastSyncedRichText: NSAttributedString?
+    @State private var skipNextAttributedContentChange = false
 
     var body: some View {
         editorContent
@@ -57,8 +59,13 @@ struct NoteEditorView: View {
                         text: Binding(
                             get: { richText.value },
                             set: { newValue in
-                                let snapshot = NSAttributedString(attributedString: newValue)
-                                richText = AttributedTextWrapper(value: snapshot)
+                                // Only update if the content actually changed
+                                // This prevents attribute changes from triggering unnecessary updates
+                                if !newValue.isEqual(to: lastSyncedRichText) {
+                                    let snapshot = NSAttributedString(attributedString: newValue)
+                                    richText = AttributedTextWrapper(value: snapshot)
+                                    lastSyncedRichText = snapshot
+                                }
                             }
                         ),
                         activeColor: $activeColor,
@@ -89,6 +96,7 @@ struct NoteEditorView: View {
         }
         .onAppear {
             loadContentIfNeeded()
+            lastSyncedRichText = richText.value
             if item.title.isEmpty && item.content.isEmpty {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     isTitleFocused = true
@@ -96,12 +104,18 @@ struct NoteEditorView: View {
             }
         }
         .onChange(of: item.attributedContent) { _, _ in
+            // Skip if we just saved this content ourselves
+            if skipNextAttributedContentChange {
+                skipNextAttributedContentChange = false
+                return
+            }
             loadContentIfNeeded()
         }
-        .onChange(of: richText) { _, wrapper in
-            item.content = wrapper.value.string
-            item.attributedContent = archiveAttributedString(wrapper.value)
+        .onChange(of: richText) { _, newWrapper in
+            item.content = newWrapper.value.string
+            item.attributedContent = archiveAttributedString(newWrapper.value)
             item.timestamp = Date()
+            skipNextAttributedContentChange = true
             saveChanges()
         }
         .onChange(of: item.title) { _, _ in

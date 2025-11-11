@@ -132,6 +132,11 @@ struct RichTextEditor: NSViewRepresentable {
             coordinator?.handleFormatChange()
         }
 
+        // Mark initialization as complete after the textView is fully set up
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            context.coordinator.isInitializing = false
+        }
+
         return scrollView
     }
 
@@ -239,10 +244,10 @@ struct RichTextEditor: NSViewRepresentable {
         if resetColorTrigger != context.coordinator.lastResetColorTrigger {
             context.coordinator.lastResetColorTrigger = resetColorTrigger
             context.coordinator.handleColorReset()
-        } else {
-            // Only sync color state if we didn't just reset
-            context.coordinator.syncColorState(with: textView, sampleFromText: true)
         }
+        // Note: Don't sync color state here during updateNSView - it gets called constantly
+        // during the view render cycle and causes feedback loops. Only sync in textDidChange
+        // and textViewDidChangeSelection which are user-triggered events.
 
         context.coordinator.skipNextColorSampling = false  // Reset the flag after syncing
 
@@ -260,6 +265,7 @@ struct RichTextEditor: NSViewRepresentable {
         var isUnderlined: Bool
         var isStrikethrough: Bool
         var isProgrammaticUpdate = false
+        var isInitializing = true
         var lastUncheckedCheckboxTrigger: UUID?
         var lastBulletTrigger: UUID?
         var lastNumberingTrigger: UUID?
@@ -422,6 +428,10 @@ struct RichTextEditor: NSViewRepresentable {
             guard !isProgrammaticUpdate,
                   let textView = notification.object as? NSTextView,
                   textView === self.textView else { return }
+
+            // Skip textDidChange during initialization to prevent feedback loops
+            guard !isInitializing else { return }
+
             syncColorState(with: textView, sampleFromText: true)
             syncFormattingState(with: textView)
 
@@ -440,15 +450,22 @@ struct RichTextEditor: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView,
                   textView === self.textView else { return }
+
+            // Skip selection updates during initialization to prevent feedback loops
+            guard !isInitializing else { return }
+
             syncColorState(with: textView, sampleFromText: true)
             syncFormattingState(with: textView)
             applyTypingAttributes(to: textView)
             syncColorState(with: textView, sampleFromText: false)
 
-            // Force update the parent binding to ensure color changes are captured
+            // Only update parent.text if the content has actually changed
+            // Selection changes alone should not trigger a binding update
             if !isProgrammaticUpdate {
                 let currentText = textView.attributedString()
-                parent.text = currentText
+                if !currentText.isEqual(to: parent.text) {
+                    parent.text = currentText
+                }
             }
         }
 
