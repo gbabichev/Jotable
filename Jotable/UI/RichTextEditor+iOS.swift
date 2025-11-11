@@ -48,7 +48,23 @@ struct RichTextEditor: UIViewRepresentable {
 
         if !context.coordinator.isProgrammaticUpdate {
             let currentText = uiView.attributedText ?? NSAttributedString()
-            if !text.isEqual(to: currentText) {
+
+            // Always ensure the textStorage delegate is set
+            uiView.textStorage.delegate = context.coordinator
+
+            // Skip update if textViewDidChange was just called (within 10ms)
+            // This prevents cursor jumping from the rapid round-trip cycle:
+            // textViewDidChange -> pushTextToParent -> updateUIView
+            let timeSinceLastChange = Date().timeIntervalSinceReferenceDate - context.coordinator.lastTextViewDidChangeTime
+            let isRapidFeedback = timeSinceLastChange < 0.01
+
+            if isRapidFeedback && text.string == currentText.string {
+                // Text content is the same and this is a rapid feedback cycle
+                // Skip the update to avoid cursor repositioning
+                context.coordinator.syncColorState(with: uiView, sampleFromText: false)
+                context.coordinator.applyTypingAttributes(to: uiView)
+            } else if text.string != currentText.string {
+                // String content actually changed, must update
                 context.coordinator.isProgrammaticUpdate = true
                 // Save cursor position before updating text
                 let cursorPosition = uiView.selectedRange
@@ -59,6 +75,7 @@ struct RichTextEditor: UIViewRepresentable {
                 context.coordinator.isProgrammaticUpdate = false
                 context.coordinator.applyTypingAttributes(to: uiView)
             }
+            // If only attributes differ and it's a different text object, skip to avoid cursor jumping
         }
 
         if context.coordinator.activeColor != activeColor {
@@ -134,12 +151,6 @@ struct RichTextEditor: UIViewRepresentable {
             }
         }
 
-        if #available(iOS 16.0, *),
-           presentFormatMenuTrigger != context.coordinator.lastFormatMenuTrigger {
-            context.coordinator.lastFormatMenuTrigger = presentFormatMenuTrigger
-            context.coordinator.presentNativeFormatMenu()
-        }
-
         if resetColorTrigger != context.coordinator.lastResetColorTrigger {
             context.coordinator.lastResetColorTrigger = resetColorTrigger
             context.coordinator.handleColorReset(in: uiView)
@@ -165,22 +176,18 @@ struct RichTextEditor: UIViewRepresentable {
         var lastDateTrigger: UUID?
         var lastTimeTrigger: UUID?
         var lastURLTrigger: (UUID, String, String)?
-        var lastFormatMenuTrigger: UUID?
         var lastResetColorTrigger: UUID?
         weak var textView: UITextView?
         var pendingActiveColorFeedback: RichTextColor?
         private var caretColorLockID: String?
         private var releaseColorLockOnTextChange = false
         private var automaticColorCache: (style: UIUserInterfaceStyle, color: UIColor)?
-        private var lastAutomaticFixLocation: Int = NSNotFound
         private var fixTextTimer: Timer?
-        private var pendingReplacementAttributes: (range: NSRange, newLength: Int, color: UIColor?, colorID: String?)?
         private var isProcessingExternalAttributes = false
         var customTypingColor: UIColor?
-        var hasCustomTypingColor: Bool { customTypingColor != nil }
-        @available(iOS 16.0, *)
-        private weak var manualEditMenuInteraction: UIEditMenuInteraction?
-
+        var lastTextViewDidChangeTime: TimeInterval = 0
+        private var hadMarkedTextInLastChange = false
+        
         private func pushTextToParent(_ text: NSAttributedString) {
             let snapshot = NSAttributedString(attributedString: text)
             DispatchQueue.main.async { [weak self] in
@@ -211,23 +218,21 @@ struct RichTextEditor: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             guard !isProgrammaticUpdate else { return }
+            lastTextViewDidChangeTime = Date().timeIntervalSinceReferenceDate
+
             syncColorState(with: textView, sampleFromText: true)
             if releaseColorLockOnTextChange {
                 releaseColorLockOnTextChange = false
                 caretColorLockID = nil
             }
-            lastAutomaticFixLocation = textView.selectedRange.location
-
-            // Apply attribute fixes BEFORE updating binding (so fixes are included in the binding update)
-            _ = applyPendingReplacementAttributesIfNeeded(to: textView)
-            fixAutoPeriodColorIfNeeded(in: textView)
 
             // CRITICAL: Don't update the binding while iOS is managing marked text (autocorrect in progress)
             // When attachments (checkboxes) are present, premature binding updates can cause iOS to
             // misalculate text ranges and insert multiple words or corrupt the text
+            hadMarkedTextInLastChange = textView.markedTextRange != nil
+
             if textView.markedTextRange == nil {
                 // Push latest text to the SwiftUI binding only after autocorrect is complete
-                // This is done AFTER the attribute fixes above so the binding includes fixed attributes
                 let updatedText = textView.attributedText ?? NSAttributedString()
                 pushTextToParent(updatedText)
             }
@@ -235,156 +240,6 @@ struct RichTextEditor: UIViewRepresentable {
             // Cancel any pending timer to debounce rapid text changes (like holding delete key)
             fixTextTimer?.invalidate()
             fixTextTimer = nil
-
-            // Debounce fixUncoloredText to execute AFTER rapid changes stop
-            // This prevents interference with word/line deletion on iOS when holding delete key
-            scheduleDeferredTextFix(for: textView)
-        }
-
-        private func scheduleDeferredTextFix(for textView: UITextView, delay: TimeInterval = 0.15) {
-            fixTextTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self, weak textView] _ in
-                Task { @MainActor [weak self, weak textView] in
-                    guard let self = self else { return }
-                    self.fixTextTimer = nil
-
-                    guard let textView = textView else { return }
-
-                    // If iOS is still managing marked text (autocorrect/composition), postpone the fix again
-                    if textView.markedTextRange != nil {
-                        self.scheduleDeferredTextFix(for: textView, delay: delay)
-                        return
-                    }
-
-                    self.fixUncoloredText(in: textView)
-                }
-            }
-        }
-
-        @discardableResult
-        private func applyPendingReplacementAttributesIfNeeded(to textView: UITextView) -> Bool {
-            guard textView.markedTextRange == nil,
-                  let pending = pendingReplacementAttributes else {
-                return false
-            }
-            pendingReplacementAttributes = nil
-
-            guard pending.newLength > 0 else { return false }
-            let maxLength = textView.attributedText?.length ?? 0
-            guard pending.range.location <= maxLength else { return false }
-            let availableLength = max(0, maxLength - pending.range.location)
-            guard availableLength > 0 else { return false }
-
-            var effectiveLength = min(pending.newLength, availableLength)
-
-            if pending.range.length == 0,
-               pending.newLength == 1,
-               availableLength >= 2,
-               let attributedText = textView.attributedText {
-                let checkRange = NSRange(location: pending.range.location, length: 2)
-                if checkRange.upperBound <= attributedText.length {
-                    let substring = attributedText.attributedSubstring(from: checkRange).string
-                    if substring == ". " {
-                        effectiveLength = 2
-                    }
-                }
-            }
-
-            var resolvedColorID: String?
-            var resolvedColor: UIColor?
-
-            if let colorID = pending.colorID {
-                resolvedColorID = colorID
-                resolvedColor = RichTextColor.from(id: colorID).uiColor
-            } else if let color = pending.color {
-                resolvedColor = color
-                resolvedColorID = nil
-            } else {
-                let components = effectiveColorComponents()
-                resolvedColor = components.color
-                resolvedColorID = components.id
-            }
-
-            var attrs: [NSAttributedString.Key: Any] = [:]
-            if let resolvedColorID = resolvedColorID {
-                attrs[ColorMapping.colorIDKey] = resolvedColorID
-            }
-
-            let currentSelection = textView.selectedRange
-            let targetRange = NSRange(location: pending.range.location, length: effectiveLength)
-            isProgrammaticUpdate = true
-            if resolvedColor == nil {
-                textView.textStorage.removeAttribute(NSAttributedString.Key.foregroundColor, range: targetRange)
-            } else if let resolvedColor {
-                textView.textStorage.addAttribute(NSAttributedString.Key.foregroundColor, value: resolvedColor, range: targetRange)
-            }
-            textView.textStorage.addAttributes(attrs, range: targetRange)
-            isProgrammaticUpdate = false
-            textView.selectedRange = currentSelection
-
-            if let updated = textView.attributedText {
-                pushTextToParent(updated)
-            }
-
-            return true
-        }
-
-        private func fixAutoPeriodColorIfNeeded(in textView: UITextView) {
-            guard pendingReplacementAttributes == nil else { return }
-            guard textView.markedTextRange == nil else { return }
-            let selection = textView.selectedRange
-            guard selection.length == 0 else { return }
-            guard let attributed = textView.attributedText else { return }
-            let cursorLocation = selection.location
-            guard cursorLocation >= 2, cursorLocation <= attributed.length else { return }
-            let rangeStart = cursorLocation - 2
-            let autoPeriodRange = NSRange(location: rangeStart, length: min(2, attributed.length - rangeStart))
-            guard autoPeriodRange.length == 2 else { return }
-
-            let substring = attributed.attributedSubstring(from: autoPeriodRange).string
-            guard substring == ". " else { return }
-
-            // Check if we need to fix the colors
-            // Sample the character right before the period to get expected colors
-            let sampleIndex = max(0, autoPeriodRange.location - 1)
-            let sampleAttrs = attributed.attributes(at: sampleIndex, effectiveRange: nil)
-            let expectedColorID = sampleAttrs[ColorMapping.colorIDKey] as? String
-            let expectedColor = sampleAttrs[NSAttributedString.Key.foregroundColor] as? UIColor
-
-            var needsFix = false
-            for offset in 0..<autoPeriodRange.length {
-                let index = autoPeriodRange.location + offset
-                let color = attributed.attribute(NSAttributedString.Key.foregroundColor, at: index, effectiveRange: nil) as? UIColor
-                let colorID = attributed.attribute(ColorMapping.colorIDKey, at: index, effectiveRange: nil) as? String
-
-                // Fix if: missing attributes OR has different colorID than expected
-                if colorID != expectedColorID || (color == nil && expectedColor != nil) {
-                    needsFix = true
-                    break
-                }
-            }
-            guard needsFix else { return }
-
-            // Use the expected colors we already sampled
-            let fallback = effectiveColorComponents()
-            let resolvedColor = expectedColor ?? fallback.color
-            let resolvedColorID = expectedColorID ?? fallback.id
-
-            var attrs: [NSAttributedString.Key: Any] = [:]
-            if let resolvedColorID {
-                attrs[ColorMapping.colorIDKey] = resolvedColorID
-            }
-
-            isProgrammaticUpdate = true
-            if let resolvedColor {
-                textView.textStorage.addAttribute(NSAttributedString.Key.foregroundColor, value: resolvedColor, range: autoPeriodRange)
-            } else {
-                textView.textStorage.removeAttribute(NSAttributedString.Key.foregroundColor, range: autoPeriodRange)
-            }
-            textView.textStorage.addAttributes(attrs, range: autoPeriodRange)
-            isProgrammaticUpdate = false
-            if let updated = textView.attributedText {
-                pushTextToParent(updated)
-            }
         }
 
         /// Validates and constrains a cursor position to valid bounds
@@ -400,99 +255,6 @@ struct RichTextEditor: UIViewRepresentable {
         func setCursorPosition(_ position: NSRange, in textView: UITextView) {
             let validPosition = validateCursorPosition(position, for: textView)
             textView.selectedRange = validPosition
-        }
-
-
-        private func fixUncoloredText(in textView: UITextView) {
-            // Save the current cursor position to restore it after modifications
-            let cursorPosition = textView.selectedRange
-
-            // Scan for text missing the colorIDKey (what autocorrect strips) and apply the active color
-            if let mutableText = textView.attributedText?.mutableCopy() as? NSMutableAttributedString {
-                var textChanged = false
-                let length = mutableText.length
-                var i = 0
-
-                while i < length {
-                    var effectiveRange = NSRange()
-                    let attrs = mutableText.attributes(at: i, effectiveRange: &effectiveRange)
-
-                    let storedColorID = attrs[ColorMapping.colorIDKey] as? String
-                    let hasExplicitColor = attrs[NSAttributedString.Key.foregroundColor] as? UIColor
-
-                    // Only repair runs that truly lack a color and color ID
-                    if storedColorID == nil && hasExplicitColor != nil {
-                        if let color = hasExplicitColor,
-                           matchesAutomaticColor(color, in: textView) {
-                            mutableText.addAttribute(ColorMapping.colorIDKey, value: RichTextColor.automatic.id, range: effectiveRange)
-                            textChanged = true
-                        }
-                        i = effectiveRange.location + effectiveRange.length
-                        continue
-                    }
-
-                    if storedColorID == nil && hasExplicitColor == nil {
-                        let usingAutomatic = customTypingColor == nil && activeColor == .automatic
-                        if usingAutomatic {
-                            i = effectiveRange.location + effectiveRange.length
-                            continue
-                        }
-                        var colorAttrs: [NSAttributedString.Key: Any] = [:]
-                        let fallback = effectiveColorComponents()
-                        if let color = fallback.color {
-                            colorAttrs[NSAttributedString.Key.foregroundColor] = color
-                        } else {
-                            mutableText.removeAttribute(NSAttributedString.Key.foregroundColor, range: effectiveRange)
-                        }
-                        if let id = fallback.id {
-                            colorAttrs[ColorMapping.colorIDKey] = id
-                        } else {
-                            colorAttrs.removeValue(forKey: ColorMapping.colorIDKey)
-                        }
-                        mutableText.addAttributes(colorAttrs, range: effectiveRange)
-                        textChanged = true
-                    } else if let storedColorID = storedColorID {
-                        if storedColorID == RichTextColor.automatic.id {
-                            if hasExplicitColor != nil {
-                                mutableText.removeAttribute(NSAttributedString.Key.foregroundColor, range: effectiveRange)
-                                textChanged = true
-                            }
-                            i = effectiveRange.location + effectiveRange.length
-                            continue
-                        }
-                        let currentColor = attrs[NSAttributedString.Key.foregroundColor] as? UIColor
-                        if let currentColor {
-                            let identifier = ColorMapping.identifier(for: currentColor, preferPaletteMatch: false)
-                            if identifier != storedColorID {
-                                mutableText.addAttribute(ColorMapping.colorIDKey, value: identifier, range: effectiveRange)
-                                textChanged = true
-                            }
-                        } else if let expectedColor = ColorMapping.color(from: storedColorID) {
-                            mutableText.addAttribute(NSAttributedString.Key.foregroundColor, value: expectedColor, range: effectiveRange)
-                            textChanged = true
-                        }
-                    }
-                    i = effectiveRange.location + effectiveRange.length
-                }
-
-                // Convert checkbox patterns to attachments
-                let spaceAttrs = currentTypingAttributes(from: textView)
-                if AutoFormatting.convertCheckboxPatterns(in: mutableText, spaceAttributes: spaceAttrs) {
-                    textChanged = true
-                }
-
-                // Only update UI and binding if we actually changed something
-                if textChanged {
-                    isProgrammaticUpdate = true
-                    textView.attributedText = mutableText
-                    setCursorPosition(cursorPosition, in: textView)
-                    isProgrammaticUpdate = false
-                    applyTypingAttributes(to: textView)
-
-                    // Defer binding update to next runloop to avoid SwiftUI state updates during view rendering
-                pushTextToParent(mutableText)
-            }
-            }
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
@@ -529,9 +291,6 @@ struct RichTextEditor: UIViewRepresentable {
                 if let color = attrs[NSAttributedString.Key.foregroundColor] as? UIColor {
                     if matchesAutomaticColor(color, in: textView) {
                         textStorage.addAttribute(ColorMapping.colorIDKey, value: RichTextColor.automatic.id, range: range)
-                        if canHandleAutomaticFix {
-                            lastAutomaticFixLocation = range.location
-                        }
                         textChanged = true
                     } else if canHandleAttributeChange {
                         let identifier = ColorMapping.identifier(for: color, preferPaletteMatch: false)
@@ -729,7 +488,8 @@ struct RichTextEditor: UIViewRepresentable {
             let components = effectiveColorComponents()
             let usingAutomatic = customTypingColor == nil && activeColor == .automatic
             if usingAutomatic {
-                attrs.removeValue(forKey: NSAttributedString.Key.foregroundColor)
+                // For automatic color, explicitly set UIColor.label for theme-aware text
+                attrs[NSAttributedString.Key.foregroundColor] = UIColor.label
                 attrs[ColorMapping.colorIDKey] = RichTextColor.automatic.id
             } else if let color = components.color {
                 attrs[NSAttributedString.Key.foregroundColor] = color
@@ -862,35 +622,6 @@ struct RichTextEditor: UIViewRepresentable {
                 return handleReturnKey(textView: textView, range: range)
             }
 
-            if !text.isEmpty {
-                let isAutoPeriod = (range.length == 0 && text == ". " && range.location > 0)
-                let shouldCapture = range.length > 0 || isAutoPeriod
-
-                if shouldCapture {
-                    let attributedLength = textView.attributedText?.length ?? 0
-                    var attributeLocation = range.location
-                    if isAutoPeriod {
-                        attributeLocation = max(0, range.location - 1)
-                    }
-                    attributeLocation = min(attributeLocation, max(0, attributedLength - 1))
-
-                    var existingColor: UIColor?
-                    var existingColorID: String?
-
-                    if attributedLength > 0 && attributeLocation < attributedLength {
-                        let attrs = textView.attributedText?.attributes(at: attributeLocation, effectiveRange: nil)
-                        existingColor = attrs?[NSAttributedString.Key.foregroundColor] as? UIColor
-                        existingColorID = attrs?[ColorMapping.colorIDKey] as? String
-                    }
-
-                    let newLength = (text as NSString).length
-                    pendingReplacementAttributes = (range: range, newLength: newLength, color: existingColor, colorID: existingColorID)
-                } else {
-                    pendingReplacementAttributes = nil
-                }
-            } else {
-                pendingReplacementAttributes = nil
-            }
             return true
         }
 
@@ -976,7 +707,6 @@ struct RichTextEditor: UIViewRepresentable {
             pushTextToParent(mutableText)
             isProgrammaticUpdate = false
 
-            pendingReplacementAttributes = nil
             return true
         }
 
@@ -1123,11 +853,9 @@ struct RichTextEditor: UIViewRepresentable {
             textView.selectedRange = NSRange(location: newCursorPosition, length: 0)
             applyTypingAttributes(to: textView)
 
-            // Defer binding update to next runloop to avoid state modification during view update
-            DispatchQueue.main.async { [weak self] in
-                self?.pushTextToParent(attributedText)
-                self?.isProgrammaticUpdate = false
-            }
+            // Push update to parent synchronously to ensure binding is updated before isProgrammaticUpdate is reset
+            pushTextToParent(attributedText)
+            isProgrammaticUpdate = false
         }
 
         func insertBullet() {
@@ -1291,64 +1019,6 @@ struct RichTextEditor: UIViewRepresentable {
             isProgrammaticUpdate = false
         }
 
-        @available(iOS 16.0, *)
-        func presentNativeFormatMenu() {
-            guard let textView = textView,
-                  textView.window != nil else { return }
-
-            if !textView.isFirstResponder {
-                textView.becomeFirstResponder()
-            }
-
-            let interaction = ensureEditMenuInteraction(for: textView)
-            let targetRect = menuTargetRect(for: textView)
-            let sourcePoint = CGPoint(x: targetRect.midX, y: targetRect.midY)
-            let configuration = UIEditMenuConfiguration(identifier: nil, sourcePoint: sourcePoint)
-            interaction.presentEditMenu(with: configuration)
-        }
-
-        @available(iOS 16.0, *)
-        private func ensureEditMenuInteraction(for textView: UITextView) -> UIEditMenuInteraction {
-            if let interaction = manualEditMenuInteraction,
-               textView.interactions.contains(where: { $0 === interaction }) {
-                return interaction
-            }
-
-            let interaction = UIEditMenuInteraction(delegate: self)
-            textView.addInteraction(interaction)
-            manualEditMenuInteraction = interaction
-            return interaction
-        }
-
-        @available(iOS 16.0, *)
-        private func menuTargetRect(for textView: UITextView) -> CGRect {
-            guard let selectedRange = textView.selectedTextRange else {
-                return CGRect(x: textView.bounds.midX, y: textView.bounds.midY, width: 0, height: 0)
-            }
-
-            var targetRect = textView.firstRect(for: selectedRange)
-            if targetRect.isNull || targetRect.isInfinite || targetRect == .zero {
-                targetRect = textView.caretRect(for: selectedRange.end)
-            }
-
-            if targetRect.isNull || targetRect.isInfinite {
-                return CGRect(x: textView.bounds.midX, y: textView.bounds.midY, width: 0, height: 0)
-            }
-
-            return targetRect
-        }
-    }
-}
-
-@available(iOS 16.0, *)
-extension RichTextEditor.Coordinator: UIEditMenuInteractionDelegate {
-    func editMenuInteraction(_ interaction: UIEditMenuInteraction, willDismissMenuWith configuration: UIEditMenuConfiguration, animator: UIEditMenuInteractionAnimating?) {
-        animator?.addCompletion { [weak self] in
-            guard let self = self,
-                  let textView = self.textView else { return }
-            self.syncColorState(with: textView, sampleFromText: false)
-            self.applyTypingAttributes(to: textView)
-        }
     }
 }
 
