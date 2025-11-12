@@ -111,10 +111,11 @@ class CheckboxTextAttachment: NSTextAttachment {
     nonisolated override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: CGRect, glyphPosition position: CGPoint, characterIndex charIndex: Int) -> CGRect {
         // Use a fixed checkbox size that's consistent and visible
         let checkboxSize: CGFloat = 20
-        let lineHeight = max(checkboxSize, lineFrag.height)
-        let verticalOffset = (lineHeight - checkboxSize) / 2  // Center vertically
 
-        return CGRect(x: 0, y: -verticalOffset, width: checkboxSize, height: checkboxSize)
+        // Align to the baseline - negative offset moves it down
+        let verticalOffset: CGFloat = -4
+
+        return CGRect(x: 0, y: verticalOffset, width: checkboxSize, height: checkboxSize)
     }
 }
 
@@ -256,10 +257,11 @@ class CheckboxTextAttachment: NSTextAttachment {
     nonisolated override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: NSRect, glyphPosition position: NSPoint, characterIndex charIndex: Int) -> NSRect {
         // Use a fixed checkbox size that's consistent and visible
         let checkboxSize: CGFloat = 15
-        let lineHeight = max(checkboxSize, lineFrag.height)
-        let verticalOffset = (lineHeight - checkboxSize) / 2  // Center vertically
 
-        return NSRect(x: 0, y: -verticalOffset, width: checkboxSize, height: checkboxSize)
+        // Align to the baseline - negative offset moves it down
+        let verticalOffset: CGFloat = -2
+
+        return NSRect(x: 0, y: verticalOffset, width: checkboxSize, height: checkboxSize)
     }
 }
 
