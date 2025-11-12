@@ -691,6 +691,9 @@ struct RichTextEditor: NSViewRepresentable {
             // Sync the formatting state after native menu changes
             syncFormattingState(with: textView)
 
+            // Apply the updated formatting to typing attributes so next character uses the new format
+            applyTypingAttributes(to: textView)
+
             // Update text binding to persist the changes
             if !isProgrammaticUpdate {
                 let currentText = textView.attributedString()
