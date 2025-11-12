@@ -38,6 +38,7 @@ struct RichTextEditor: UIViewRepresentable {
         textView.textContainerInset = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         textView.attributedText = text
         textView.textStorage.delegate = context.coordinator
+        textView.allowsEditingTextAttributes = false
         context.coordinator.textView = textView
         context.coordinator.applyTypingAttributes(to: textView)
 
