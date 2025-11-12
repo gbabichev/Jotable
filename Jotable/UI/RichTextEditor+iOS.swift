@@ -784,8 +784,10 @@ struct RichTextEditor: UIViewRepresentable {
             isProgrammaticUpdate = true
             checkbox.isChecked.toggle()
 
-            textView.layoutManager.invalidateDisplay(forCharacterRange: range)
+            // Notify the text storage that attributes changed to trigger a layout update
+            textView.textStorage.edited(.editedAttributes, range: range, changeInLength: 0)
 
+            // Sync the updated text to parent state
             let updatedText = textView.attributedText ?? NSAttributedString()
             DispatchQueue.main.async { [weak self] in
                 self?.pushTextToParent(updatedText)
