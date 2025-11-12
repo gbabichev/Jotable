@@ -88,7 +88,7 @@ struct ColorMapping {
             let isBold = font?.fontDescriptor.symbolicTraits.contains(.traitBold) ?? false
             let isItalic = font?.fontDescriptor.symbolicTraits.contains(.traitItalic) ?? false
             #endif
-            let colorID = attrs[colorIDKey] as? String
+            let _ = attrs[colorIDKey] as? String
 
             // Store bold/italic as custom attributes to survive cross-platform archiving
             // NSFont/UIFont encoding is platform-specific, so font traits get lost
@@ -139,7 +139,7 @@ struct ColorMapping {
             var range = NSRange()
             let attrs = mutableString.attributes(at: currentPos, longestEffectiveRange: &range, in: NSRange(location: currentPos, length: mutableString.length - currentPos))
 
-            let colorID = attrs[colorIDKey] as? String
+            let _ = attrs[colorIDKey] as? String
             let storedBold = (attrs[isBoldKey] as? NSNumber)?.boolValue ?? false
             let storedItalic = (attrs[isItalicKey] as? NSNumber)?.boolValue ?? false
 

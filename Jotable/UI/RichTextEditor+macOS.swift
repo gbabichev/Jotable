@@ -36,32 +36,22 @@ private final class DynamicColorTextView: NSTextView {
     }
 
     override func changeFont(_ sender: Any?) {
-        print("[DEBUG] changeFont called, typing attributes before: \(String(describing: typingAttributes[NSAttributedString.Key.font]))")
         let fontManager = NSFontManager.shared
-        print("[DEBUG] Font manager selected font: \(String(describing: fontManager.selectedFont))")
         super.changeFont(sender)
-        print("[DEBUG] changeFont done, typing attributes after super: \(String(describing: typingAttributes[NSAttributedString.Key.font]))")
-        print("[DEBUG] Font manager selected font after super: \(String(describing: fontManager.selectedFont))")
 
         // Manually update typing attributes to match font manager
         // This is necessary because super.changeFont() doesn't always update typingAttributes properly
         if let selectedFont = fontManager.selectedFont {
-            print("[DEBUG] Manually updating typingAttributes with font manager's selected font: \(selectedFont)")
             typingAttributes[NSAttributedString.Key.font] = selectedFont
         }
 
         // The native font panel has updated, so we need to sync
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-            print("[DEBUG] changeFont delayed callback, font manager font: \(String(describing: fontManager.selectedFont))")
-            print("[DEBUG] changeFont delayed callback, typing attributes now: \(String(describing: self?.typingAttributes[NSAttributedString.Key.font]))")
             self?.onFormatChange?()
         }
     }
 
     override func underline(_ sender: Any?) {
-        // Track the state before toggle
-        let beforeUnderline = isUnderlinedManually
-
         // Call super to handle selected text if any
         super.underline(sender)
 
@@ -343,30 +333,23 @@ struct RichTextEditor: NSViewRepresentable {
             if selectedRange.length > 0,
                let storage = textView.textStorage,
                selectedRange.location < storage.length {
-                print("[DEBUG] syncFormattingState: Getting attributes from selected text at location \(selectedRange.location), length \(selectedRange.length)")
                 let attrs = storage.attributes(at: selectedRange.location, effectiveRange: nil)
                 font = attrs[NSAttributedString.Key.font] as? NSFont
             } else {
                 // If no selection, try font manager first (which has the most up-to-date state)
                 // Then fall back to typing attributes
-                print("[DEBUG] syncFormattingState: No selection (range length: \(selectedRange.length)), checking font manager")
                 let fontManager = NSFontManager.shared
                 if let managerFont = fontManager.selectedFont {
-                    print("[DEBUG] syncFormattingState: Using font manager's selected font: \(managerFont)")
                     font = managerFont
                 } else {
-                    print("[DEBUG] syncFormattingState: Font manager has no selected font, using typing attributes")
                     let attrs = textView.typingAttributes
                     font = attrs[NSAttributedString.Key.font] as? NSFont
                 }
             }
 
             guard let font = font else {
-                print("[DEBUG] syncFormattingState: No font found!")
                 return
             }
-
-            print("[DEBUG] syncFormattingState: Font object: \(String(describing: font))")
             let sampledBold = font.fontDescriptor.symbolicTraits.contains(.bold)
             let sampledItalic = font.fontDescriptor.symbolicTraits.contains(.italic)
 
@@ -384,64 +367,48 @@ struct RichTextEditor: NSViewRepresentable {
                 sampledUnderline = underlineValue != 0
                 let strikethroughValue = attrs[NSAttributedString.Key.strikethroughStyle] as? Int ?? 0
                 sampledStrikethrough = strikethroughValue != 0
-                print("[DEBUG] syncFormattingState: Reading underline/strikethrough from selected text: underline=\(sampledUnderline), strikethrough=\(sampledStrikethrough)")
             } else {
                 // No selection - use manual tracking for underline (native menu toggle), but read strikethrough from typing attributes
                 if let dynamicTextView = textView as? DynamicColorTextView {
                     sampledUnderline = dynamicTextView.isUnderlinedManually
-                    print("[DEBUG] syncFormattingState: Using manually tracked underline: \(sampledUnderline)")
                 } else {
                     let underlineValue = textView.typingAttributes[NSAttributedString.Key.underlineStyle] as? Int ?? 0
                     sampledUnderline = underlineValue != 0
-                    print("[DEBUG] syncFormattingState: Using typingAttributes for underline: \(sampledUnderline)")
                 }
 
                 // For strikethrough, read from typing attributes
                 let strikethroughValue = textView.typingAttributes[NSAttributedString.Key.strikethroughStyle] as? Int ?? 0
                 sampledStrikethrough = strikethroughValue != 0
-                print("[DEBUG] syncFormattingState: Reading strikethrough from typingAttributes: \(sampledStrikethrough)")
             }
-
-            print("[DEBUG] syncFormattingState: Sampled values - bold: \(sampledBold), italic: \(sampledItalic), underline: \(sampledUnderline), strikethrough: \(sampledStrikethrough)")
-            print("[DEBUG] syncFormattingState: Current state - isBold: \(isBold), isItalic: \(isItalic), isUnderlined: \(isUnderlined), isStrikethrough: \(isStrikethrough)")
-            print("[DEBUG] syncFormattingState: Parent bindings - isBold: \(parent.isBold), isItalic: \(parent.isItalic), isUnderlined: \(parent.isUnderlined), isStrikethrough: \(parent.isStrikethrough)")
 
             // ALWAYS update state to match what we sampled, regardless of previous state
             // This ensures consistency after native menu changes
             if sampledBold != isBold {
-                print("[DEBUG] syncFormattingState: Bold coordinator changed from \(isBold) to \(sampledBold)")
                 isBold = sampledBold
                 parent.isBold = sampledBold
             } else if sampledBold != parent.isBold {
                 // Ensure parent binding is in sync even if coordinator state matches
-                print("[DEBUG] syncFormattingState: Bold parent binding out of sync: coordinator=\(isBold), sampled=\(sampledBold), parent was \(parent.isBold), syncing to \(sampledBold)")
                 parent.isBold = sampledBold
             }
 
             if sampledItalic != isItalic {
-                print("[DEBUG] syncFormattingState: Italic coordinator changed from \(isItalic) to \(sampledItalic)")
                 isItalic = sampledItalic
                 parent.isItalic = sampledItalic
             } else if sampledItalic != parent.isItalic {
-                print("[DEBUG] syncFormattingState: Italic parent binding out of sync: coordinator=\(isItalic), sampled=\(sampledItalic), parent was \(parent.isItalic), syncing to \(sampledItalic)")
                 parent.isItalic = sampledItalic
             }
 
             if sampledUnderline != isUnderlined {
-                print("[DEBUG] syncFormattingState: Underline coordinator changed from \(isUnderlined) to \(sampledUnderline)")
                 isUnderlined = sampledUnderline
                 parent.isUnderlined = sampledUnderline
             } else if sampledUnderline != parent.isUnderlined {
-                print("[DEBUG] syncFormattingState: Underline parent binding out of sync: coordinator=\(isUnderlined), sampled=\(sampledUnderline), parent was \(parent.isUnderlined), syncing to \(sampledUnderline)")
                 parent.isUnderlined = sampledUnderline
             }
 
             if sampledStrikethrough != isStrikethrough {
-                print("[DEBUG] syncFormattingState: Strikethrough coordinator changed from \(isStrikethrough) to \(sampledStrikethrough)")
                 isStrikethrough = sampledStrikethrough
                 parent.isStrikethrough = sampledStrikethrough
             } else if sampledStrikethrough != parent.isStrikethrough {
-                print("[DEBUG] syncFormattingState: Strikethrough parent binding out of sync: coordinator=\(isStrikethrough), sampled=\(sampledStrikethrough), parent was \(parent.isStrikethrough), syncing to \(sampledStrikethrough)")
                 parent.isStrikethrough = sampledStrikethrough
             }
         }
@@ -547,7 +514,7 @@ struct RichTextEditor: NSViewRepresentable {
             // Convert checkbox patterns to attachments
             if let storage = textView.textStorage {
                 let spaceAttrs = currentTypingAttributes(from: textView)
-                AutoFormatting.convertCheckboxPatterns(in: storage, spaceAttributes: spaceAttrs)
+                _ = AutoFormatting.convertCheckboxPatterns(in: storage, spaceAttributes: spaceAttrs)
             }
 
             let updatedText = textView.attributedString()
