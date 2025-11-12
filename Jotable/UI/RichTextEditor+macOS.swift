@@ -290,10 +290,10 @@ struct RichTextEditor: NSViewRepresentable {
         // Note: Don't sync color state here during updateNSView - it gets called constantly
         // during the view render cycle and causes feedback loops. Only sync in textDidChange
         // and textViewDidChangeSelection which are user-triggered events.
+        // Similarly, don't call handleAppearanceChange() here - it's already triggered by
+        // viewDidChangeEffectiveAppearance() callback when appearance actually changes.
 
         context.coordinator.skipNextColorSampling = false  // Reset the flag after syncing
-
-        context.coordinator.handleAppearanceChange()
     }
 
     @MainActor
@@ -547,9 +547,7 @@ struct RichTextEditor: NSViewRepresentable {
             // Convert checkbox patterns to attachments
             if let storage = textView.textStorage {
                 let spaceAttrs = currentTypingAttributes(from: textView)
-                if AutoFormatting.convertCheckboxPatterns(in: storage, spaceAttributes: spaceAttrs) {
-                    // Layout needs to be invalidated after replacing attachments
-                }
+                AutoFormatting.convertCheckboxPatterns(in: storage, spaceAttributes: spaceAttrs)
             }
 
             let updatedText = textView.attributedString()
