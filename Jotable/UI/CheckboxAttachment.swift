@@ -192,6 +192,22 @@ class CheckboxTextAttachment: NSTextAttachment {
         image = tempImage
     }
 
+    nonisolated override func isEqual(_ object: Any?) -> Bool {
+        guard let other = object as? CheckboxTextAttachment else {
+            return super.isEqual(object)
+        }
+        // Two checkboxes are equal if they have the same ID and checked state
+        return self.checkboxID == other.checkboxID && self.isChecked == other.isChecked
+    }
+
+    nonisolated override var hash: Int {
+        // Hash based on checkboxID and isChecked state
+        var hasher = Hasher()
+        hasher.combine(checkboxID)
+        hasher.combine(isChecked)
+        return hasher.finalize()
+    }
+
     // Compute checkbox image on-demand without storing
     private nonisolated func computeCheckboxImage(size: NSSize) -> NSImage? {
         let systemName = isChecked ? "checkmark.square.fill" : "square"

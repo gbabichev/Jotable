@@ -785,8 +785,22 @@ struct RichTextEditor: UIViewRepresentable {
             isProgrammaticUpdate = true
             checkbox.isChecked.toggle()
 
+            // Update the attachment's internal data representation to ensure proper serialization
+            // This is critical for checkbox state persistence when archiving
+            let stateDict: [String: Any] = ["checkboxID": checkbox.checkboxID, "isChecked": checkbox.isChecked]
+            if let stateData = try? JSONSerialization.data(withJSONObject: stateDict) {
+                checkbox.contents = stateData
+            }
+
             // Notify the text storage that attributes changed to trigger a layout update
             textView.textStorage.edited(.editedAttributes, range: range, changeInLength: 0)
+
+            // Add a marker attribute to force change detection
+            // since NSAttributedString.isEqual won't detect checkbox state changes
+            let textStorage = textView.textStorage
+            if textStorage.length > 0 {
+                textStorage.addAttribute(NSAttributedString.Key(rawValue: "checkboxStateChanged"), value: NSNumber(value: Date().timeIntervalSince1970), range: NSRange(location: 0, length: 1))
+            }
 
             // Sync the updated text to parent state
             let updatedText = textView.attributedText ?? NSAttributedString()

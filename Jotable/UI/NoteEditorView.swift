@@ -59,10 +59,16 @@ struct NoteEditorView: View {
                         text: Binding(
                             get: { richText.value },
                             set: { newValue in
-                                // Only update if the content actually changed
-                                // This prevents attribute changes from triggering unnecessary updates
-                                let hasChanged = lastSyncedRichText == nil || !newValue.isEqual(to: lastSyncedRichText!)
+                                // Check if content actually changed by comparing string content AND attachment states
+                                let stringChanged = richText.value.string != newValue.string
+                                let hasChanged = lastSyncedRichText == nil || stringChanged
+
                                 if hasChanged {
+                                    let snapshot = NSAttributedString(attributedString: newValue)
+                                    richText = AttributedTextWrapper(value: snapshot)
+                                    lastSyncedRichText = snapshot
+                                } else if !newValue.isEqual(to: richText.value) {
+                                    // Even if string is the same, if attachments differ (e.g., checkbox state), update
                                     let snapshot = NSAttributedString(attributedString: newValue)
                                     richText = AttributedTextWrapper(value: snapshot)
                                     lastSyncedRichText = snapshot
@@ -165,41 +171,117 @@ struct NoteEditorView: View {
     }
 
     private func archiveAttributedString(_ attributedString: NSAttributedString) -> Data? {
-        // Preprocess: ensure all colors have color IDs stored for cross-platform sync
-        let stringToArchive = ColorMapping.preprocessForArchiving(attributedString)
+        // First, remove the temporary marker attribute used for change detection
+        let cleanedString = removeCheckboxMarkerAttribute(attributedString)
 
-        let archiver = NSKeyedArchiver(requiringSecureCoding: true)
-        archiver.encode(stringToArchive, forKey: NSKeyedArchiveRootObjectKey)
-        archiver.finishEncoding()
-        let data = archiver.encodedData
-        return data
+        // Extract checkbox states before archiving
+        // because NSKeyedArchiver may not properly serialize CheckboxTextAttachment
+        let stringToArchive = extractAndStoreCheckboxStates(cleanedString)
+
+        // Preprocess: ensure all colors have color IDs stored for cross-platform sync
+        let processedString = ColorMapping.preprocessForArchiving(stringToArchive)
+
+        do {
+            let data = try NSKeyedArchiver.archivedData(
+                withRootObject: processedString,
+                requiringSecureCoding: false  // Disable secure coding for NSTextAttachment compatibility
+            )
+            return data
+        } catch {
+            return nil
+        }
+    }
+
+    private func removeCheckboxMarkerAttribute(_ attributedString: NSAttributedString) -> NSAttributedString {
+        let mutable = NSMutableAttributedString(attributedString: attributedString)
+        let markerKey = NSAttributedString.Key(rawValue: "checkboxStateChanged")
+
+        var pos = 0
+        while pos < mutable.length {
+            var range = NSRange()
+            let attrs = mutable.attributes(at: pos, longestEffectiveRange: &range, in: NSRange(location: pos, length: mutable.length - pos))
+
+            if attrs[markerKey] != nil {
+                mutable.removeAttribute(markerKey, range: range)
+            }
+
+            pos = range.location + range.length
+        }
+
+        return mutable
+    }
+
+    private func extractAndStoreCheckboxStates(_ attributedString: NSAttributedString) -> NSAttributedString {
+        let mutable = NSMutableAttributedString(attributedString: attributedString)
+
+        var pos = 0
+        while pos < mutable.length {
+            var range = NSRange()
+            let attrs = mutable.attributes(at: pos, longestEffectiveRange: &range, in: NSRange(location: pos, length: mutable.length - pos))
+
+            // Check if this position has a checkbox attachment
+            if let checkbox = attrs[NSAttributedString.Key.attachment] as? CheckboxTextAttachment {
+                // Store checkbox state as attributes so they survive archiving
+                let checkboxIDKey = NSAttributedString.Key(rawValue: "checkboxID")
+                let checkboxIsCheckedKey = NSAttributedString.Key(rawValue: "checkboxIsChecked")
+                mutable.addAttribute(checkboxIDKey, value: checkbox.checkboxID, range: range)
+                mutable.addAttribute(checkboxIsCheckedKey, value: NSNumber(value: checkbox.isChecked), range: range)
+            }
+
+            pos = range.location + range.length
+        }
+
+        return mutable
     }
 
     private func unarchiveAttributedString(_ data: Data) -> NSAttributedString? {
         do {
-            let unarchiver = try NSKeyedUnarchiver(forReadingFrom: data)
-            unarchiver.requiresSecureCoding = true
+            // Use the modern decoding API for better NSTextAttachment support
+            let result = try NSKeyedUnarchiver.unarchivedObject(ofClass: NSAttributedString.self, from: data)
 
-            #if !os(macOS)
-            // On iOS, map NSColor to UIColor so macOS colors work on iOS
-            unarchiver.setClass(UIColor.self, forClassName: "NSColor")
-            #endif
-
-            // Register CheckboxTextAttachment so it can be decoded
-            unarchiver.setClass(CheckboxTextAttachment.self, forClassName: "CheckboxTextAttachment")
-
-            defer { unarchiver.finishDecoding() }
-            var result = unarchiver.decodeObject(of: NSAttributedString.self, forKey: NSKeyedArchiveRootObjectKey)
-
-            // Postprocess: restore colors from color IDs for cross-platform compatibility
+            // Postprocess: restore colors and checkbox states
             if let resultValue = result {
-                result = ColorMapping.postprocessAfterUnarchiving(resultValue)
+                let colored = ColorMapping.postprocessAfterUnarchiving(resultValue)
+                return restoreCheckboxStates(colored)
             }
 
             return result
         } catch {
             return nil
         }
+    }
+
+    private func restoreCheckboxStates(_ attributedString: NSAttributedString) -> NSAttributedString {
+        let mutable = NSMutableAttributedString(attributedString: attributedString)
+
+        let checkboxIDKey = NSAttributedString.Key(rawValue: "checkboxID")
+        let checkboxIsCheckedKey = NSAttributedString.Key(rawValue: "checkboxIsChecked")
+
+        var pos = 0
+        while pos < mutable.length {
+            var range = NSRange()
+            let attrs = mutable.attributes(at: pos, longestEffectiveRange: &range, in: NSRange(location: pos, length: mutable.length - pos))
+
+            // Check if this position has checkbox state attributes
+            if let checkboxID = attrs[checkboxIDKey] as? String,
+               let isCheckedNum = attrs[checkboxIsCheckedKey] as? NSNumber {
+                let isChecked = isCheckedNum.boolValue
+
+                // Check if there's an attachment at this position
+                if let checkbox = attrs[NSAttributedString.Key.attachment] as? CheckboxTextAttachment {
+                    // Restore the checkbox state
+                    checkbox.isChecked = isChecked
+                    let stateDict: [String: Any] = ["checkboxID": checkboxID, "isChecked": isChecked]
+                    if let stateData = try? JSONSerialization.data(withJSONObject: stateDict) {
+                        checkbox.contents = stateData
+                    }
+                }
+            }
+
+            pos = range.location + range.length
+        }
+
+        return mutable
     }
 
     private func saveChanges() {
