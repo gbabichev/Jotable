@@ -338,12 +338,10 @@ private struct NoteHeaderView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            TextEditor(text: $item.title)
+            TextField("Note Title", text: $item.title)
                 .font(.title2.weight(.medium))
-                .scrollDisabled(true)
-                .frame(minHeight: 26)
-                //.border(Color.gray, width: 1)
-                //.padding(.horizontal, -4)
+                .textFieldStyle(.plain)
+                //.lineLimit(2)
                 // NO onChange handler - this was the root cause of the freeze
                 // Title changes are saved on app exit only
 
