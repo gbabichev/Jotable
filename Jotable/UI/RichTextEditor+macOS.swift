@@ -7,6 +7,7 @@ private final class DynamicColorTextView: NSTextView {
     var onCheckboxTap: ((Int) -> Void)?
     var onColorChange: (() -> Void)?
     var onFormatChange: (() -> Void)?
+    var isUnderlinedManually = false  // Track underline state for native menu toggles (which don't update typingAttributes)
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -35,12 +36,43 @@ private final class DynamicColorTextView: NSTextView {
     }
 
     override func changeFont(_ sender: Any?) {
+        print("[DEBUG] changeFont called, typing attributes before: \(String(describing: typingAttributes[NSAttributedString.Key.font]))")
+        let fontManager = NSFontManager.shared
+        print("[DEBUG] Font manager selected font: \(String(describing: fontManager.selectedFont))")
         super.changeFont(sender)
-        onFormatChange?()
+        print("[DEBUG] changeFont done, typing attributes after super: \(String(describing: typingAttributes[NSAttributedString.Key.font]))")
+        print("[DEBUG] Font manager selected font after super: \(String(describing: fontManager.selectedFont))")
+
+        // Manually update typing attributes to match font manager
+        // This is necessary because super.changeFont() doesn't always update typingAttributes properly
+        if let selectedFont = fontManager.selectedFont {
+            print("[DEBUG] Manually updating typingAttributes with font manager's selected font: \(selectedFont)")
+            typingAttributes[NSAttributedString.Key.font] = selectedFont
+        }
+
+        // The native font panel has updated, so we need to sync
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            print("[DEBUG] changeFont delayed callback, font manager font: \(String(describing: fontManager.selectedFont))")
+            print("[DEBUG] changeFont delayed callback, typing attributes now: \(String(describing: self?.typingAttributes[NSAttributedString.Key.font]))")
+            self?.onFormatChange?()
+        }
     }
 
     override func underline(_ sender: Any?) {
+        // Track the state before toggle
+        let beforeUnderline = isUnderlinedManually
+
+        // Call super to handle selected text if any
         super.underline(sender)
+
+        // The native underline() only works with selected text
+        // For cursor position (no selection), we need to toggle our manual tracking
+        if selectedRange.length == 0 {
+            // Toggle the manually tracked state
+            isUnderlinedManually = !isUnderlinedManually
+        }
+
+        // Notify the coordinator to sync state
         onFormatChange?()
     }
 
@@ -119,6 +151,11 @@ struct RichTextEditor: NSViewRepresentable {
         scrollView.documentView = textView
         context.coordinator.textView = textView
         context.coordinator.applyTypingAttributes(to: textView)
+
+        // Initialize manual formatting state tracking for underline
+        // (strikethrough is only toggled via toolbar, so it's always read from typingAttributes)
+        let underlineValue = textView.typingAttributes[NSAttributedString.Key.underlineStyle] as? Int ?? 0
+        textView.isUnderlinedManually = underlineValue != 0
         textView.onAppearanceChange = { [weak coordinator = context.coordinator] in
             coordinator?.handleAppearanceChange()
         }
@@ -177,19 +214,24 @@ struct RichTextEditor: NSViewRepresentable {
             context.coordinator.apply(fontSize: activeFontSize, to: textView)
         }
 
-        if context.coordinator.isBold != isBold {
-            context.coordinator.isBold = isBold
-            context.coordinator.toggleBold(textView)
-        }
+        // Skip format state updates if we're currently syncing formatting from the native menu
+        // This prevents a feedback loop where syncFormattingState updates the binding,
+        // which triggers updateNSView, which tries to update the text again
+        if !context.coordinator.isSyncingFormattingState {
+            if context.coordinator.isBold != isBold {
+                context.coordinator.isBold = isBold
+                context.coordinator.toggleBold(textView)
+            }
 
-        if context.coordinator.isItalic != isItalic {
-            context.coordinator.isItalic = isItalic
-            context.coordinator.toggleItalic(textView)
-        }
+            if context.coordinator.isItalic != isItalic {
+                context.coordinator.isItalic = isItalic
+                context.coordinator.toggleItalic(textView)
+            }
 
-        if context.coordinator.isUnderlined != isUnderlined {
-            context.coordinator.isUnderlined = isUnderlined
-            context.coordinator.toggleUnderline(textView)
+            if context.coordinator.isUnderlined != isUnderlined {
+                context.coordinator.isUnderlined = isUnderlined
+                context.coordinator.toggleUnderline(textView)
+            }
         }
 
         if context.coordinator.isStrikethrough != isStrikethrough {
@@ -279,6 +321,7 @@ struct RichTextEditor: NSViewRepresentable {
         var customTypingColor: NSColor?
         var hasCustomTypingColor: Bool { customTypingColor != nil }
         var skipNextColorSampling = false
+        var isSyncingFormattingState = false  // Prevent applyTypingAttributes during format sync
 
         private func effectiveColorComponents() -> (color: NSColor, id: String?) {
             if let customTypingColor {
@@ -289,50 +332,116 @@ struct RichTextEditor: NSViewRepresentable {
         }
 
         func syncFormattingState(with textView: NSTextView) {
+            isSyncingFormattingState = true
+            defer { isSyncingFormattingState = false }
+
             let selectedRange = textView.selectedRange
 
-            var attrs: [NSAttributedString.Key: Any]? = nil
+            var font: NSFont? = nil
 
-            // First try to get attributes from selected text
+            // First try to get font from selected text
             if selectedRange.length > 0,
                let storage = textView.textStorage,
                selectedRange.location < storage.length {
-                attrs = storage.attributes(at: selectedRange.location, effectiveRange: nil)
+                print("[DEBUG] syncFormattingState: Getting attributes from selected text at location \(selectedRange.location), length \(selectedRange.length)")
+                let attrs = storage.attributes(at: selectedRange.location, effectiveRange: nil)
+                font = attrs[NSAttributedString.Key.font] as? NSFont
             } else {
-                // If no selection, use typing attributes (which will have been updated by the native menu)
-                attrs = textView.typingAttributes
+                // If no selection, try font manager first (which has the most up-to-date state)
+                // Then fall back to typing attributes
+                print("[DEBUG] syncFormattingState: No selection (range length: \(selectedRange.length)), checking font manager")
+                let fontManager = NSFontManager.shared
+                if let managerFont = fontManager.selectedFont {
+                    print("[DEBUG] syncFormattingState: Using font manager's selected font: \(managerFont)")
+                    font = managerFont
+                } else {
+                    print("[DEBUG] syncFormattingState: Font manager has no selected font, using typing attributes")
+                    let attrs = textView.typingAttributes
+                    font = attrs[NSAttributedString.Key.font] as? NSFont
+                }
             }
 
-            guard let attrs = attrs else { return }
+            guard let font = font else {
+                print("[DEBUG] syncFormattingState: No font found!")
+                return
+            }
 
-            let font = attrs[NSAttributedString.Key.font] as? NSFont
-            let sampledBold = font?.fontDescriptor.symbolicTraits.contains(.bold) ?? false
-            let sampledItalic = font?.fontDescriptor.symbolicTraits.contains(.italic) ?? false
+            print("[DEBUG] syncFormattingState: Font object: \(String(describing: font))")
+            let sampledBold = font.fontDescriptor.symbolicTraits.contains(.bold)
+            let sampledItalic = font.fontDescriptor.symbolicTraits.contains(.italic)
 
-            let underlineValue = attrs[NSAttributedString.Key.underlineStyle] as? Int ?? 0
-            let sampledUnderline = underlineValue != 0
+            // For underline: use manual tracking when no selection (native menu doesn't update typingAttributes)
+            // For strikethrough: always read from text since it's only toggled via toolbar
+            var sampledUnderline = false
+            var sampledStrikethrough = false
 
-            let strikethroughValue = attrs[NSAttributedString.Key.strikethroughStyle] as? Int ?? 0
-            let sampledStrikethrough = strikethroughValue != 0
+            if selectedRange.length > 0,
+               let storage = textView.textStorage,
+               selectedRange.location < storage.length {
+                // Read from selected text
+                let attrs = storage.attributes(at: selectedRange.location, effectiveRange: nil)
+                let underlineValue = attrs[NSAttributedString.Key.underlineStyle] as? Int ?? 0
+                sampledUnderline = underlineValue != 0
+                let strikethroughValue = attrs[NSAttributedString.Key.strikethroughStyle] as? Int ?? 0
+                sampledStrikethrough = strikethroughValue != 0
+                print("[DEBUG] syncFormattingState: Reading underline/strikethrough from selected text: underline=\(sampledUnderline), strikethrough=\(sampledStrikethrough)")
+            } else {
+                // No selection - use manual tracking for underline (native menu toggle), but read strikethrough from typing attributes
+                if let dynamicTextView = textView as? DynamicColorTextView {
+                    sampledUnderline = dynamicTextView.isUnderlinedManually
+                    print("[DEBUG] syncFormattingState: Using manually tracked underline: \(sampledUnderline)")
+                } else {
+                    let underlineValue = textView.typingAttributes[NSAttributedString.Key.underlineStyle] as? Int ?? 0
+                    sampledUnderline = underlineValue != 0
+                    print("[DEBUG] syncFormattingState: Using typingAttributes for underline: \(sampledUnderline)")
+                }
 
-            // Update state if different
+                // For strikethrough, read from typing attributes
+                let strikethroughValue = textView.typingAttributes[NSAttributedString.Key.strikethroughStyle] as? Int ?? 0
+                sampledStrikethrough = strikethroughValue != 0
+                print("[DEBUG] syncFormattingState: Reading strikethrough from typingAttributes: \(sampledStrikethrough)")
+            }
+
+            print("[DEBUG] syncFormattingState: Sampled values - bold: \(sampledBold), italic: \(sampledItalic), underline: \(sampledUnderline), strikethrough: \(sampledStrikethrough)")
+            print("[DEBUG] syncFormattingState: Current state - isBold: \(isBold), isItalic: \(isItalic), isUnderlined: \(isUnderlined), isStrikethrough: \(isStrikethrough)")
+            print("[DEBUG] syncFormattingState: Parent bindings - isBold: \(parent.isBold), isItalic: \(parent.isItalic), isUnderlined: \(parent.isUnderlined), isStrikethrough: \(parent.isStrikethrough)")
+
+            // ALWAYS update state to match what we sampled, regardless of previous state
+            // This ensures consistency after native menu changes
             if sampledBold != isBold {
+                print("[DEBUG] syncFormattingState: Bold coordinator changed from \(isBold) to \(sampledBold)")
                 isBold = sampledBold
+                parent.isBold = sampledBold
+            } else if sampledBold != parent.isBold {
+                // Ensure parent binding is in sync even if coordinator state matches
+                print("[DEBUG] syncFormattingState: Bold parent binding out of sync: coordinator=\(isBold), sampled=\(sampledBold), parent was \(parent.isBold), syncing to \(sampledBold)")
                 parent.isBold = sampledBold
             }
 
             if sampledItalic != isItalic {
+                print("[DEBUG] syncFormattingState: Italic coordinator changed from \(isItalic) to \(sampledItalic)")
                 isItalic = sampledItalic
+                parent.isItalic = sampledItalic
+            } else if sampledItalic != parent.isItalic {
+                print("[DEBUG] syncFormattingState: Italic parent binding out of sync: coordinator=\(isItalic), sampled=\(sampledItalic), parent was \(parent.isItalic), syncing to \(sampledItalic)")
                 parent.isItalic = sampledItalic
             }
 
             if sampledUnderline != isUnderlined {
+                print("[DEBUG] syncFormattingState: Underline coordinator changed from \(isUnderlined) to \(sampledUnderline)")
                 isUnderlined = sampledUnderline
+                parent.isUnderlined = sampledUnderline
+            } else if sampledUnderline != parent.isUnderlined {
+                print("[DEBUG] syncFormattingState: Underline parent binding out of sync: coordinator=\(isUnderlined), sampled=\(sampledUnderline), parent was \(parent.isUnderlined), syncing to \(sampledUnderline)")
                 parent.isUnderlined = sampledUnderline
             }
 
             if sampledStrikethrough != isStrikethrough {
+                print("[DEBUG] syncFormattingState: Strikethrough coordinator changed from \(isStrikethrough) to \(sampledStrikethrough)")
                 isStrikethrough = sampledStrikethrough
+                parent.isStrikethrough = sampledStrikethrough
+            } else if sampledStrikethrough != parent.isStrikethrough {
+                print("[DEBUG] syncFormattingState: Strikethrough parent binding out of sync: coordinator=\(isStrikethrough), sampled=\(sampledStrikethrough), parent was \(parent.isStrikethrough), syncing to \(sampledStrikethrough)")
                 parent.isStrikethrough = sampledStrikethrough
             }
         }
@@ -596,56 +705,23 @@ struct RichTextEditor: NSViewRepresentable {
         }
 
         private func currentTypingAttributes(from textView: NSTextView?, highlightOverride: HighlighterColor? = nil) -> [NSAttributedString.Key: Any] {
-            var attrs = textView?.typingAttributes ?? [:]
-
-            let weight: NSFont.Weight = isBold ? .bold : .regular
-            var font = NSFont.systemFont(ofSize: activeFontSize.rawValue, weight: weight)
-
-            // Combine bold and italic traits
-            var traits: NSFontDescriptor.SymbolicTraits = isBold ? .bold : []
-            if isItalic {
-                traits.insert(.italic)
-            }
-
-            if !traits.isEmpty {
-                let descriptor = font.fontDescriptor.withSymbolicTraits(traits)
-                font = NSFont(descriptor: descriptor, size: activeFontSize.rawValue) ?? font
-            }
-
-            attrs[NSAttributedString.Key.font] = font
-            attrs[ColorMapping.fontSizeKey] = activeFontSize.rawValue
             let components = effectiveColorComponents()
             let usingAutomatic = customTypingColor == nil && activeColor == .automatic
-            if usingAutomatic {
-                // Set NSColor.labelColor which is theme-aware (black in light mode, white in dark mode)
-                // This prevents text from inheriting color from previous text, while staying dynamic
-                attrs[NSAttributedString.Key.foregroundColor] = NSColor.labelColor
-                attrs[ColorMapping.colorIDKey] = RichTextColor.automatic.id
-            } else {
-                attrs[NSAttributedString.Key.foregroundColor] = components.color
-                if let id = components.id {
-                    attrs[ColorMapping.colorIDKey] = id
-                } else {
-                    attrs.removeValue(forKey: ColorMapping.colorIDKey)
-                }
-            }
-
-            let underlineValue = isUnderlined ? NSUnderlineStyle.single.rawValue : 0
-            attrs[NSAttributedString.Key.underlineStyle] = underlineValue
-
-            let strikethroughValue = isStrikethrough ? NSUnderlineStyle.single.rawValue : 0
-            attrs[NSAttributedString.Key.strikethroughStyle] = strikethroughValue
-
             let targetHighlight = highlightOverride ?? activeHighlighter
-            if targetHighlight == .none {
-                attrs.removeValue(forKey: NSAttributedString.Key.backgroundColor)
-                attrs.removeValue(forKey: ColorMapping.highlightIDKey)
-            } else if let color = targetHighlight.nsColor {
-                attrs[NSAttributedString.Key.backgroundColor] = color
-                attrs[ColorMapping.highlightIDKey] = targetHighlight.id
-            }
 
-            return attrs
+            let styler = TextStyler(
+                isBold: isBold,
+                isItalic: isItalic,
+                fontSize: activeFontSize,
+                colorID: components.id,
+                color: components.color,
+                highlightID: targetHighlight == .none ? nil : targetHighlight.id,
+                highlight: targetHighlight.nsColor,
+                isUnderlined: isUnderlined,
+                isStrikethrough: isStrikethrough
+            )
+
+            return styler.buildAttributes(usingAutomatic: usingAutomatic, customColor: customTypingColor)
         }
 
         func applyTypingAttributes(to textView: NSTextView, highlightOverride: HighlighterColor? = nil) {
@@ -658,19 +734,8 @@ struct RichTextEditor: NSViewRepresentable {
                let storage = textView.textStorage {
                 isProgrammaticUpdate = true
 
-                let weight: NSFont.Weight = isBold ? .bold : .regular
-                var font = NSFont.systemFont(ofSize: activeFontSize.rawValue, weight: weight)
-
-                // Combine bold and italic traits
-                var traits: NSFontDescriptor.SymbolicTraits = isBold ? .bold : []
-                if isItalic {
-                    traits.insert(.italic)
-                }
-
-                if !traits.isEmpty {
-                    let descriptor = font.fontDescriptor.withSymbolicTraits(traits)
-                    font = NSFont(descriptor: descriptor, size: activeFontSize.rawValue) ?? font
-                }
+                let styler = TextStyler(isBold: isBold, isItalic: isItalic, fontSize: activeFontSize)
+                let font = styler.buildFont()
 
                 storage.addAttribute(NSAttributedString.Key.font, value: font, range: selectedRange)
                 textView.setSelectedRange(selectedRange)
@@ -690,19 +755,8 @@ struct RichTextEditor: NSViewRepresentable {
                let storage = textView.textStorage {
                 isProgrammaticUpdate = true
 
-                let weight: NSFont.Weight = isBold ? .bold : .regular
-                var font = NSFont.systemFont(ofSize: activeFontSize.rawValue, weight: weight)
-
-                // Combine bold and italic traits
-                var traits: NSFontDescriptor.SymbolicTraits = isBold ? .bold : []
-                if isItalic {
-                    traits.insert(.italic)
-                }
-
-                if !traits.isEmpty {
-                    let descriptor = font.fontDescriptor.withSymbolicTraits(traits)
-                    font = NSFont(descriptor: descriptor, size: activeFontSize.rawValue) ?? font
-                }
+                let styler = TextStyler(isBold: isBold, isItalic: isItalic, fontSize: activeFontSize)
+                let font = styler.buildFont()
 
                 storage.addAttribute(NSAttributedString.Key.font, value: font, range: selectedRange)
                 textView.setSelectedRange(selectedRange)
@@ -733,6 +787,11 @@ struct RichTextEditor: NSViewRepresentable {
             }
 
             applyTypingAttributes(to: textView)
+
+            // Update manual tracking to match coordinator state
+            if let dynamicTextView = textView as? DynamicColorTextView {
+                dynamicTextView.isUnderlinedManually = isUnderlined
+            }
         }
 
         func toggleStrikethrough(_ textView: NSTextView) {

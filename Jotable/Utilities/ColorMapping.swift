@@ -24,6 +24,11 @@ struct ColorMapping {
     /// Custom attribute key to store the highlight ID (e.g., "yellow")
     static let highlightIDKey = NSAttributedString.Key("com.betternotes.highlightID")
 
+    /// Custom attribute keys to store font traits that don't survive NSArchiver round-trip
+    /// These are necessary because UIFont/NSFont encoding is platform-specific
+    static let isBoldKey = NSAttributedString.Key("com.betternotes.isBold")
+    static let isItalicKey = NSAttributedString.Key("com.betternotes.isItalic")
+
     /// Applies a color to the attributed string with the color ID stored for cross-platform sync
     static func applyColor(_ color: RichTextColor, to attributedString: NSMutableAttributedString, range: NSRange) {
         if color == .automatic {
@@ -60,21 +65,42 @@ struct ColorMapping {
         attributedString.addAttribute(highlightIDKey, value: highlight.id, range: range)
     }
 
-    /// Processes an attributed string for archiving, ensuring color IDs are preserved
+    /// Processes an attributed string for archiving, ensuring color IDs and font traits are preserved
     /// This runs BEFORE NSKeyedArchiver encodes the string
     static func preprocessForArchiving(_ attributedString: NSAttributedString) -> NSAttributedString {
         let mutableString = NSMutableAttributedString(attributedString: attributedString)
 
+            //print("[ColorMapping.preprocess] Starting archiving preprocess on \(attributedString.length) characters")
+
         // Iterate through all attributes and ensure color IDs are present alongside colors
         var currentPos = 0
+        var rangeIndex = 0
         while currentPos < mutableString.length {
             var range = NSRange()
             let attrs = mutableString.attributes(at: currentPos, longestEffectiveRange: &range, in: NSRange(location: currentPos, length: mutableString.length - currentPos))
 
+            #if os(macOS)
+            let font = attrs[NSAttributedString.Key.font] as? NSFont
+            let isBold = font?.fontDescriptor.symbolicTraits.contains(.bold) ?? false
+            let isItalic = font?.fontDescriptor.symbolicTraits.contains(.italic) ?? false
+            #else
+            let font = attrs[NSAttributedString.Key.font] as? UIFont
+            let isBold = font?.fontDescriptor.symbolicTraits.contains(.traitBold) ?? false
+            let isItalic = font?.fontDescriptor.symbolicTraits.contains(.traitItalic) ?? false
+            #endif
+            let colorID = attrs[colorIDKey] as? String
+
+            // Store bold/italic as custom attributes to survive cross-platform archiving
+            // NSFont/UIFont encoding is platform-specific, so font traits get lost
+            mutableString.addAttribute(isBoldKey, value: NSNumber(value: isBold), range: range)
+            mutableString.addAttribute(isItalicKey, value: NSNumber(value: isItalic), range: range)
+
             // If there's a foreground color but no color ID, infer it
             if let foregroundColor = attrs[NSAttributedString.Key.foregroundColor] as? PlatformColor,
                attrs[colorIDKey] == nil {
-                mutableString.addAttribute(colorIDKey, value: identifier(for: foregroundColor), range: range)
+                let newID = identifier(for: foregroundColor)
+                mutableString.addAttribute(colorIDKey, value: newID, range: range)
+                //print("[ColorMapping.preprocess] Range \(rangeIndex): Added color ID '\(newID)' for foreground color")
             }
 
             #if os(macOS)
@@ -91,23 +117,33 @@ struct ColorMapping {
             }
             #endif
 
+            //print("[ColorMapping.preprocess] Range \(rangeIndex): isBold=\(isBold), isItalic=\(isItalic), colorID=\(colorID ?? "nil")")
+
             currentPos = range.location + range.length
+            rangeIndex += 1
         }
 
+        //print("[ColorMapping.preprocess] Completed preprocess with \(rangeIndex) ranges")
         return mutableString
     }
 
-    /// Processes an attributed string for unarchiving, restoring colors from their IDs
+    /// Processes an attributed string for unarchiving, restoring colors and font traits from their IDs
     /// This runs AFTER NSKeyedArchiver decodes the string
     static func postprocessAfterUnarchiving(_ attributedString: NSAttributedString) -> NSAttributedString {
         let mutableString = NSMutableAttributedString(attributedString: attributedString)
 
-        // Iterate through all attributes and restore colors from color IDs
+        // Iterate through all attributes and restore colors from color IDs and rebuild fonts from traits
         var currentPos = 0
+        var rangeIndex = 0
         while currentPos < mutableString.length {
             var range = NSRange()
             let attrs = mutableString.attributes(at: currentPos, longestEffectiveRange: &range, in: NSRange(location: currentPos, length: mutableString.length - currentPos))
 
+            let colorID = attrs[colorIDKey] as? String
+            let storedBold = (attrs[isBoldKey] as? NSNumber)?.boolValue ?? false
+            let storedItalic = (attrs[isItalicKey] as? NSNumber)?.boolValue ?? false
+
+            // Restore color from ID
             if let colorID = attrs[colorIDKey] as? String,
                let platformColor = color(from: colorID) {
                 mutableString.addAttribute(NSAttributedString.Key.foregroundColor, value: platformColor, range: range)
@@ -121,6 +157,30 @@ struct ColorMapping {
                 mutableString.addAttribute(colorIDKey, value: "automatic", range: range)
             }
 
+            // Restore font with bold/italic traits using stored attributes
+            if storedBold || storedItalic {
+                // Extract font size from the archived font or use fontSizeKey attribute
+                let fontSize: FontSize
+                if let sizeValue = attrs[fontSizeKey] as? CGFloat {
+                    fontSize = FontSize(rawValue: sizeValue) ?? .normal
+                } else if let font = attrs[NSAttributedString.Key.font] as? PlatformColor {
+                    // Fall back to extracting from font object if available
+                    #if os(macOS)
+                    let pointSize = (attrs[NSAttributedString.Key.font] as? NSFont)?.pointSize ?? 16.0
+                    #else
+                    let pointSize = (attrs[NSAttributedString.Key.font] as? UIFont)?.pointSize ?? 16.0
+                    #endif
+                    fontSize = FontSize(rawValue: pointSize) ?? .normal
+                } else {
+                    fontSize = .normal
+                }
+
+                let styler = TextStyler(isBold: storedBold, isItalic: storedItalic, fontSize: fontSize)
+                let restoredFont = styler.buildFont()
+                mutableString.addAttribute(NSAttributedString.Key.font, value: restoredFont, range: range)
+            }
+
+            // Restore highlight
             if let highlightID = attrs[highlightIDKey] as? String {
                 let highlight = HighlighterColor.from(id: highlightID)
 
@@ -140,6 +200,7 @@ struct ColorMapping {
             }
 
             currentPos = range.location + range.length
+            rangeIndex += 1
         }
 
         return mutableString

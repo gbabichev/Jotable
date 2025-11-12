@@ -46,14 +46,14 @@ struct NoteEditorView: View {
         GeometryReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    header
+                    NoteHeaderView(
+                        item: item,
+                        onHeaderHeightChange: { height in
+                            headerHeight = height
+                        }
+                    )
                         .padding(.horizontal)
                         .padding(.vertical, 4)
-                        .background(
-                            GeometryReader { geometry in
-                                Color.clear.preference(key: HeaderHeightPreferenceKey.self, value: geometry.size.height)
-                            }
-                        )
 
                     RichTextEditor(
                         text: Binding(
@@ -93,7 +93,6 @@ struct NoteEditorView: View {
                 .frame(minHeight: proxy.size.height, alignment: .top)
             }
             .scrollDismissesKeyboard(.interactively)
-            .onPreferenceChange(HeaderHeightPreferenceKey.self) { headerHeight = $0 }
         }
         .onAppear {
             loadContentIfNeeded()
@@ -117,10 +116,6 @@ struct NoteEditorView: View {
             item.attributedContent = archiveAttributedString(newWrapper.value)
             item.timestamp = Date()
             skipNextAttributedContentChange = true
-            saveChanges()
-        }
-        .onChange(of: item.title) { _, _ in
-            item.timestamp = Date()
             saveChanges()
         }
         .onDisappear {
@@ -158,51 +153,6 @@ struct NoteEditorView: View {
         }
     }
 
-    private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
-            TextEditor(text: $item.title)
-                .font(.title2.weight(.medium))
-                .focused($isTitleFocused)
-                .scrollDisabled(true)
-                .frame(minHeight: 26)
-                .padding(.horizontal, -4)
-                .onChange(of: isTitleFocused) { _, newValue in
-                    if !newValue {
-                        saveChanges()
-                    }
-                }
-
-            Button(action: { showingCategoryPicker = true }) {
-                HStack(spacing: 6) {
-                    if let category = item.category {
-                        Circle()
-                            .fill(Color.fromString(category.color))
-                            .frame(width: 12, height: 12)
-                        Text(category.name)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    } else {
-                        Image(systemName: "folder")
-                            .foregroundColor(.secondary)
-                        Text("No Category")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-                    Image(systemName: "chevron.down")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.1))
-            .cornerRadius(6)
-            .categoryPickerPresenter(isPresented: $showingCategoryPicker, selectedCategory: $item.category)
-        }
-    }
 
     private func loadContentIfNeeded() {
         if let data = item.attributedContent, let attributed = unarchiveAttributedString(data) {
@@ -285,6 +235,76 @@ private struct AttributedTextWrapper: Equatable {
     }
 }
 
+// MARK: - Separate Header View
+// Extracted to a separate view to prevent state cascade from title TextEditor to RichTextEditor
+// This isolation is critical for preventing the native format sheet freeze
+private struct NoteHeaderView: View {
+    @Bindable var item: Item
+    @State private var showingCategoryPicker = false
+    @State private var headerHeight: CGFloat = 0
+
+    var onHeaderHeightChange: (CGFloat) -> Void
+
+    init(
+        item: Item,
+        onHeaderHeightChange: @escaping (CGFloat) -> Void
+    ) {
+        self._item = Bindable(item)
+        self.onHeaderHeightChange = onHeaderHeightChange
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            TextEditor(text: $item.title)
+                .font(.title2.weight(.medium))
+                .scrollDisabled(true)
+                .frame(minHeight: 26)
+                .padding(.horizontal, -4)
+                // NO onChange handler - this was the root cause of the freeze
+                // Title changes are saved on app exit only
+
+            Button(action: { showingCategoryPicker = true }) {
+                HStack(spacing: 6) {
+                    if let category = item.category {
+                        Circle()
+                            .fill(Color.fromString(category.color))
+                            .frame(width: 12, height: 12)
+                        Text(category.name)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    } else {
+                        Image(systemName: "folder")
+                            .foregroundColor(.secondary)
+                        Text("No Category")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.secondary.opacity(0.1))
+            .cornerRadius(6)
+            .categoryPickerPresenter(isPresented: $showingCategoryPicker, selectedCategory: $item.category)
+        }
+        .background(
+            GeometryReader { geometry in
+                Color.clear.preference(key: HeaderHeightPreferenceKey.self, value: geometry.size.height)
+            }
+        )
+        .onPreferenceChange(HeaderHeightPreferenceKey.self) { height in
+            headerHeight = height
+            onHeaderHeightChange(height)
+        }
+    }
+}
+
 #if os(macOS)
 private extension View {
     func addURLSheet(isPresented: Binding<Bool>, tempURLData: Binding<(String, String)?>) -> some View {
@@ -302,6 +322,7 @@ private extension View {
         }
     }
 }
+
 #else
 private extension View {
     func addURLSheet(isPresented: Binding<Bool>, tempURLData: Binding<(String, String)?>) -> some View {
