@@ -903,7 +903,7 @@ struct RichTextEditor: NSViewRepresentable {
 
             // Check if there's content after the checkbox
             let remainingRange = NSRange(location: contentStartsAfter, length: lineRange.location + lineRange.length - contentStartsAfter)
-            let contentAfter = attributedString.attributedSubstring(from: remainingRange).string.trimmingCharacters(in: .whitespaces)
+            let contentAfter = attributedString.attributedSubstring(from: remainingRange).string.trimmingCharacters(in: .whitespacesAndNewlines)
 
             guard let storage = textView.textStorage else { return false }
 
