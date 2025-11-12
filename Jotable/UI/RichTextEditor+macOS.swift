@@ -124,7 +124,7 @@ struct RichTextEditor: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.isEditable = true
         textView.isRichText = true
-        textView.importsGraphics = false
+        textView.importsGraphics = true
         textView.backgroundColor = .clear
         textView.textContainerInset = NSSize(width: 0, height: 0)
         textView.textContainer?.lineFragmentPadding = 0

@@ -2,6 +2,59 @@
 import SwiftUI
 import UIKit
 
+// Custom UITextView subclass to handle image pasting
+private class PastableTextView: UITextView {
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(paste(_:)) {
+            return UIPasteboard.general.image != nil || UIPasteboard.general.hasStrings
+        }
+        return super.canPerformAction(action, withSender: sender)
+    }
+
+    override func paste(_ sender: Any?) {
+        let pasteboard = UIPasteboard.general
+
+        // Handle image paste
+        if let image = pasteboard.image {
+            let attachment = NSTextAttachment()
+            attachment.image = image
+
+            // Scale image to reasonable size
+            let maxWidth: CGFloat = 400
+            let maxHeight: CGFloat = 400
+            var imageSize = image.size
+            if imageSize.width > maxWidth {
+                let scale = maxWidth / imageSize.width
+                imageSize = CGSize(width: maxWidth, height: imageSize.height * scale)
+            }
+            if imageSize.height > maxHeight {
+                let scale = maxHeight / imageSize.height
+                imageSize = CGSize(width: imageSize.width * scale, height: maxHeight)
+            }
+
+            attachment.bounds = CGRect(origin: .zero, size: imageSize)
+
+            let attributedString = NSAttributedString(attachment: attachment)
+            let range = selectedRange
+
+            if let mutableText = attributedText?.mutableCopy() as? NSMutableAttributedString {
+                mutableText.insert(attributedString, at: range.location)
+                attributedText = mutableText
+
+                let newCursorPosition = range.location + 1
+                selectedRange = NSRange(location: newCursorPosition, length: 0)
+
+                // Notify delegates of the change
+                delegate?.textViewDidChange?(self)
+            }
+            return
+        }
+
+        // Fall back to default paste for text
+        super.paste(sender)
+    }
+}
+
 struct RichTextEditor: UIViewRepresentable {
     @Binding var text: NSAttributedString
     @Binding var activeColor: RichTextColor
@@ -26,7 +79,7 @@ struct RichTextEditor: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+        let textView = PastableTextView()
         textView.delegate = context.coordinator
         textView.isEditable = true
         textView.isScrollEnabled = true

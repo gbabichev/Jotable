@@ -52,9 +52,10 @@ struct NoteEditorView: View {
                             headerHeight = height
                         }
                     )
-                        .padding(.horizontal)
-                        .padding(.vertical, 4)
+                    .padding(.horizontal)
 
+                    //Divider()
+                    
                     RichTextEditor(
                         text: Binding(
                             get: { richText.value },
@@ -336,12 +337,13 @@ private struct NoteHeaderView: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             TextEditor(text: $item.title)
                 .font(.title2.weight(.medium))
                 .scrollDisabled(true)
                 .frame(minHeight: 26)
-                .padding(.horizontal, -4)
+                //.border(Color.gray, width: 1)
+                //.padding(.horizontal, -4)
                 // NO onChange handler - this was the root cause of the freeze
                 // Title changes are saved on app exit only
 
@@ -368,10 +370,9 @@ private struct NoteHeaderView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            .buttonStyle(.plain)
+            //.buttonStyle(.plain)
             .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.1))
+            .padding(.vertical, 8)
             .cornerRadius(6)
             .categoryPickerPresenter(isPresented: $showingCategoryPicker, selectedCategory: $item.category)
         }
