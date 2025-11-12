@@ -160,10 +160,12 @@ struct NoteEditorView: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
-            TextField("Title", text: $item.title, axis: .vertical)
+            TextEditor(text: $item.title)
                 .font(.title2.weight(.medium))
-                .textFieldStyle(.plain)
                 .focused($isTitleFocused)
+                .scrollDisabled(true)
+                .frame(minHeight: 26)
+                .padding(.horizontal, -4)
                 .onChange(of: isTitleFocused) { _, newValue in
                     if !newValue {
                         saveChanges()
@@ -179,12 +181,14 @@ struct NoteEditorView: View {
                         Text(category.name)
                             .font(.caption)
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
                     } else {
                         Image(systemName: "folder")
                             .foregroundColor(.secondary)
                         Text("No Category")
                             .font(.caption)
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
                     }
                     Image(systemName: "chevron.down")
                         .font(.caption2)
