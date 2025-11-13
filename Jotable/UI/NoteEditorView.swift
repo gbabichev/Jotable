@@ -11,7 +11,9 @@ struct NoteEditorView: View {
     @Environment(\.modelContext) private var modelContext
     @FocusState private var isTitleFocused: Bool
     @State private var showingCategoryPicker = false
+    #if os(macOS)
     @Binding var pastePlaintextTrigger: UUID?
+    #endif
     @Binding var isEditorActive: Bool
     @State private var richText = AttributedTextWrapper(value: NSAttributedString(string: ""))
     @State private var activeColor: RichTextColor = .automatic
@@ -51,6 +53,71 @@ struct NoteEditorView: View {
             }
     }
 
+    private var richTextEditorView: some View {
+        let textBinding = Binding(
+            get: { richText.value },
+            set: { newValue in
+                // Check if content actually changed by comparing string content AND attachment states
+                let stringChanged = richText.value.string != newValue.string
+                let hasChanged = lastSyncedRichText == nil || stringChanged
+
+                if hasChanged {
+                    let snapshot = NSAttributedString(attributedString: newValue)
+                    richText = AttributedTextWrapper(value: snapshot)
+                    lastSyncedRichText = snapshot
+                } else if !newValue.isEqual(to: richText.value) {
+                    // Even if string is the same, if attachments differ (e.g., checkbox state), update
+                    let snapshot = NSAttributedString(attributedString: newValue)
+                    richText = AttributedTextWrapper(value: snapshot)
+                    lastSyncedRichText = snapshot
+                }
+            }
+        )
+
+        #if os(macOS)
+        return RichTextEditor(
+            text: textBinding,
+            activeColor: $activeColor,
+            activeHighlighter: $activeHighlighter,
+            activeFontSize: $activeFontSize,
+            isBold: $isBold,
+            isItalic: $isItalic,
+            isUnderlined: $isUnderlined,
+            isStrikethrough: $isStrikethrough,
+            insertUncheckedCheckboxTrigger: $insertUncheckedCheckboxTrigger,
+            insertDashTrigger: $insertDashTrigger,
+            insertBulletTrigger: $insertBulletTrigger,
+            insertNumberingTrigger: $insertNumberingTrigger,
+            insertDateTrigger: $insertDateTrigger,
+            insertTimeTrigger: $insertTimeTrigger,
+            insertURLTrigger: $insertURLTrigger,
+            presentFormatMenuTrigger: $presentFormatMenuTrigger,
+            resetColorTrigger: $resetColorTrigger,
+            pastePlaintextTrigger: $pastePlaintextTrigger
+        )
+        #else
+        return RichTextEditor(
+            text: textBinding,
+            activeColor: $activeColor,
+            activeHighlighter: $activeHighlighter,
+            activeFontSize: $activeFontSize,
+            isBold: $isBold,
+            isItalic: $isItalic,
+            isUnderlined: $isUnderlined,
+            isStrikethrough: $isStrikethrough,
+            insertUncheckedCheckboxTrigger: $insertUncheckedCheckboxTrigger,
+            insertDashTrigger: $insertDashTrigger,
+            insertBulletTrigger: $insertBulletTrigger,
+            insertNumberingTrigger: $insertNumberingTrigger,
+            insertDateTrigger: $insertDateTrigger,
+            insertTimeTrigger: $insertTimeTrigger,
+            insertURLTrigger: $insertURLTrigger,
+            presentFormatMenuTrigger: $presentFormatMenuTrigger,
+            resetColorTrigger: $resetColorTrigger
+        )
+        #endif
+    }
+
     private var editorContent: some View {
         GeometryReader { proxy in
             ScrollView {
@@ -65,44 +132,7 @@ struct NoteEditorView: View {
 
                     //Divider()
                     
-                    RichTextEditor(
-                        text: Binding(
-                            get: { richText.value },
-                            set: { newValue in
-                                // Check if content actually changed by comparing string content AND attachment states
-                                let stringChanged = richText.value.string != newValue.string
-                                let hasChanged = lastSyncedRichText == nil || stringChanged
-
-                                if hasChanged {
-                                    let snapshot = NSAttributedString(attributedString: newValue)
-                                    richText = AttributedTextWrapper(value: snapshot)
-                                    lastSyncedRichText = snapshot
-                                } else if !newValue.isEqual(to: richText.value) {
-                                    // Even if string is the same, if attachments differ (e.g., checkbox state), update
-                                    let snapshot = NSAttributedString(attributedString: newValue)
-                                    richText = AttributedTextWrapper(value: snapshot)
-                                    lastSyncedRichText = snapshot
-                                }
-                            }
-                        ),
-                        activeColor: $activeColor,
-                        activeHighlighter: $activeHighlighter,
-                        activeFontSize: $activeFontSize,
-                        isBold: $isBold,
-                        isItalic: $isItalic,
-                        isUnderlined: $isUnderlined,
-                        isStrikethrough: $isStrikethrough,
-                        insertUncheckedCheckboxTrigger: $insertUncheckedCheckboxTrigger,
-                        insertDashTrigger: $insertDashTrigger,
-                        insertBulletTrigger: $insertBulletTrigger,
-                        insertNumberingTrigger: $insertNumberingTrigger,
-                        insertDateTrigger: $insertDateTrigger,
-                        insertTimeTrigger: $insertTimeTrigger,
-                        insertURLTrigger: $insertURLTrigger,
-                        presentFormatMenuTrigger: $presentFormatMenuTrigger,
-                        resetColorTrigger: $resetColorTrigger,
-                        pastePlaintextTrigger: $pastePlaintextTrigger
-                    )
+                    richTextEditorView
                         .frame(maxWidth: .infinity)
                         .frame(minHeight: max(proxy.size.height - headerHeight - 12, 0))
                         .padding(.horizontal)

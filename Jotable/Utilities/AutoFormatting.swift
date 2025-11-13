@@ -39,6 +39,78 @@ struct AutoFormatting {
         return nil
     }
 
+    /// Detects if a line starts with a number pattern and handles renumbering of subsequent lines
+    /// This version has access to the full text to renumber properly
+    static func handleNumberedListWithRenumbering(lineText: String, fullText: String, insertionIndex: Int) -> (newText: String, renumberPositions: [(range: NSRange, newNumber: Int)])? {
+        // Pattern: one or more digits followed by ". "
+        guard let match = lineText.range(of: #"^(\d+)\.\s"#, options: .regularExpression) else {
+            return nil
+        }
+
+        // Get the matched text (e.g., "1. ")
+        let matchedText = String(lineText[match])
+
+        // Extract just the number part by removing the ". " suffix
+        let numberPartWithDot = String(matchedText.dropLast(2))  // Remove ". "
+
+        // Get the text after the number pattern
+        let contentStart = match.upperBound
+        let contentAfterNumber = String(lineText[contentStart...]).trimmingCharacters(in: .whitespaces)
+
+        // If the line is blank after the number, return just newline (removes numbering)
+        if contentAfterNumber.isEmpty {
+            return (newText: "\n", renumberPositions: [])
+        }
+
+        // Convert to Int and increment
+        guard let number = Int(numberPartWithDot) else {
+            return nil
+        }
+
+        let nextNumber = number + 1
+        var renumberPositions: [(range: NSRange, newNumber: Int)] = []
+
+        // Now scan subsequent lines to renumber them
+        var currentNumber = nextNumber + 1
+        var currentPos = insertionIndex
+
+        // Find the start of the next line
+        while currentPos < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: currentPos)] != "\n" {
+            currentPos += 1
+        }
+
+        // Skip the newline
+        if currentPos < fullText.count {
+            currentPos += 1
+        }
+
+        // Scan subsequent lines
+        while currentPos < fullText.count {
+            // Find the end of the current line
+            var lineEnd = currentPos
+            while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
+                lineEnd += 1
+            }
+
+            let lineRange = NSRange(location: currentPos, length: lineEnd - currentPos)
+            let lineContent = (fullText as NSString).substring(with: lineRange)
+
+            // Check if this line starts with a number pattern
+            if let numberMatch = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+                let numberPrefixLength = lineContent.distance(from: lineContent.startIndex, to: numberMatch.upperBound)
+                let oldNumberRange = NSRange(location: currentPos, length: numberPrefixLength)
+                renumberPositions.append((range: oldNumberRange, newNumber: currentNumber))
+                currentNumber += 1
+                currentPos = lineEnd + 1 // +1 for the newline
+            } else {
+                // Line doesn't have a number pattern, stop renumbering
+                break
+            }
+        }
+
+        return (newText: "\n\(nextNumber). ", renumberPositions: renumberPositions)
+    }
+
     /// Detects if a line starts with a dash pattern (e.g., "- ")
     /// Returns a new bullet point if content exists, or nil to remove bullet if blank
     static func handleBulletPoint(lineText: String) -> String? {

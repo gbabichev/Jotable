@@ -20,7 +20,9 @@ struct ContentView: View {
     @Query(sort: \Item.createdAt, order: .reverse) private var allItems: [Item]
     @Query(sort: \Category.sortOrder) private var categories: [Category]
 
+    #if os(macOS)
     @Binding var pastePlaintextTrigger: UUID?
+    #endif
     @Binding var isEditorActive: Bool
 
     @State private var selectedItem: Item?
@@ -157,8 +159,13 @@ struct ContentView: View {
             // Detail view wrapped in NavigationStack for proper navigation
             NavigationStack {
                 if let selectedItem {
+                    #if os(macOS)
                     NoteEditorView(item: selectedItem, pastePlaintextTrigger: $pastePlaintextTrigger, isEditorActive: $isEditorActive)
-                    .id(selectedItem.id) // Force view recreation when switching notes
+                        .id(selectedItem.id) // Force view recreation when switching notes
+                    #else
+                    NoteEditorView(item: selectedItem, isEditorActive: $isEditorActive)
+                        .id(selectedItem.id) // Force view recreation when switching notes
+                    #endif
                 } else {
                     ContentUnavailableView {
                         Label("Select a Note", systemImage: "note.text")

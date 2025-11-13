@@ -931,9 +931,40 @@ struct RichTextEditor: NSViewRepresentable {
                 return true
             }
 
-            // Check for numbered list pattern
-            if let newText = AutoFormatting.handleNumberedList(lineText: lineInfo.text) {
-                return applyAutoFormat(newText, to: textView, at: range, lineRange: lineInfo.range)
+            // Check for numbered list pattern with renumbering
+            if let result = AutoFormatting.handleNumberedListWithRenumbering(lineText: lineInfo.text, fullText: plainText, insertionIndex: range.location) {
+                guard let storage = textView.textStorage else {
+                    return false
+                }
+
+                isProgrammaticUpdate = true
+
+                // If newText is just "\n", replace the entire line (removes formatting)
+                let replacementRange = result.newText == "\n" ? lineInfo.range : range
+                storage.replaceCharacters(in: replacementRange, with: result.newText)
+
+                // Then renumber subsequent lines if needed
+                if !result.renumberPositions.isEmpty {
+                    // Adjust positions based on how much text was inserted
+                    let textInserted = result.newText.count
+                    for (range, newNumber) in result.renumberPositions.reversed() {
+                        let adjustedRange = NSRange(location: range.location + textInserted, length: range.length)
+                        let newNumberText = "\(newNumber). "
+                        let fontAttrs = currentTypingAttributes(from: textView)
+                        let newNumberString = NSAttributedString(string: newNumberText, attributes: fontAttrs)
+                        storage.replaceCharacters(in: adjustedRange, with: newNumberString)
+                    }
+                }
+
+                // Position cursor after the inserted text
+                let newCursorPosition = replacementRange.location + result.newText.count
+                textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+                applyTypingAttributes(to: textView)
+
+                parent.text = NSAttributedString(attributedString: storage)
+                isProgrammaticUpdate = false
+
+                return true
             }
 
             // Check for bullet point pattern
@@ -1024,6 +1055,25 @@ struct RichTextEditor: NSViewRepresentable {
             isProgrammaticUpdate = false
 
             return true
+        }
+
+        private func renumberLinesInTextView(_ textView: NSTextView, positions: [(range: NSRange, newNumber: Int)]) {
+            guard let storage = textView.textStorage else {
+                return
+            }
+
+            isProgrammaticUpdate = true
+
+            // Process renumbering in reverse order to avoid position shifting
+            for (range, newNumber) in positions.reversed() {
+                let newNumberText = "\(newNumber). "
+                let fontAttrs = currentTypingAttributes(from: textView)
+                let newNumberString = NSAttributedString(string: newNumberText, attributes: fontAttrs)
+                storage.replaceCharacters(in: range, with: newNumberString)
+            }
+
+            parent.text = NSAttributedString(attributedString: storage)
+            isProgrammaticUpdate = false
         }
 
         func insertUncheckedCheckbox() {
@@ -1412,8 +1462,63 @@ struct RichTextEditor: NSViewRepresentable {
             let numberString = NSAttributedString(string: numberText, attributes: fontAttrs)
             storage.insert(numberString, at: insertionRange.location)
 
+            // Find the start of the current line to renumber from the next line
+            let fullText = storage.string
+            var lineStartPos = insertionRange.location
+            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+                lineStartPos -= 1
+            }
+
+            // Find the end of the current line
+            var lineEndPos = insertionRange.location + numberText.count
+            while lineEndPos < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEndPos)] != "\n" {
+                lineEndPos += 1
+            }
+
+            // Renumber any subsequent numbered lines starting from the next line
+            if lineEndPos < fullText.count {
+                renumberSubsequentLines(in: storage, startingAfter: lineEndPos + 1, fontAttrs: fontAttrs)
+            }
+
             let newCursorPosition = insertionRange.location + numberText.count
             textView?.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+        }
+
+        private func renumberSubsequentLines(in storage: NSTextStorage, startingAfter position: Int, fontAttrs: [NSAttributedString.Key: Any]) {
+            var currentPosition = position
+            var currentNumber = 2
+
+            // Process subsequent lines
+            while currentPosition < storage.length {
+                let fullText = storage.string
+
+                // Find the end of the current line
+                var lineEnd = currentPosition
+                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
+                    lineEnd += 1
+                }
+
+                let lineContent = storage.attributedSubstring(from: NSRange(location: currentPosition, length: lineEnd - currentPosition)).string
+
+                // Check if this line starts with a number pattern
+                if let match = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+                    let numberPrefixLength = lineContent.distance(from: lineContent.startIndex, to: match.upperBound)
+                    let oldNumberRange = NSRange(location: currentPosition, length: numberPrefixLength)
+
+                    // Replace with the new number
+                    let newNumberText = "\(currentNumber). "
+                    let newNumberString = NSAttributedString(string: newNumberText, attributes: fontAttrs)
+                    storage.replaceCharacters(in: oldNumberRange, with: newNumberString)
+
+                    // Adjust currentPosition based on the difference in length
+                    let lengthDifference = newNumberText.count - numberPrefixLength
+                    currentNumber += 1
+                    currentPosition = lineEnd + lengthDifference + 1 // +1 for the newline
+                } else {
+                    // Line doesn't have a number pattern, stop renumbering
+                    break
+                }
+            }
         }
 
         private func insertNumberingForMultipleLines(in storage: NSTextStorage, range: NSRange, lines: [String]) {

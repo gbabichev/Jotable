@@ -44,15 +44,16 @@ struct JotableApp: App {
         }
     }()
 
+    #if os(macOS)
     @State private var pastePlaintextTrigger: UUID?
+    #endif
     @State private var isEditorActive = false
 
     var body: some Scene {
         WindowGroup {
-            ContentView(pastePlaintextTrigger: $pastePlaintextTrigger, isEditorActive: $isEditorActive)
             #if os(macOS)
+            ContentView(pastePlaintextTrigger: $pastePlaintextTrigger, isEditorActive: $isEditorActive)
                 .frame(minWidth: 800, minHeight: 400)
-            #endif
                 .onAppear {
                     // Debug: Print items on app launch
                     let context = Self.sharedModelContainer.mainContext
@@ -64,6 +65,20 @@ struct JotableApp: App {
                         print("❌ Failed to fetch items on launch: \(error)")
                     }
                 }
+            #else
+            ContentView(isEditorActive: $isEditorActive)
+                .onAppear {
+                    // Debug: Print items on app launch
+                    let context = Self.sharedModelContainer.mainContext
+                    do {
+                        let descriptor = FetchDescriptor<Item>()
+                        let items = try context.fetch(descriptor)
+                        print("🚀 App launched - Found \(items.count) existing items")
+                    } catch {
+                        print("❌ Failed to fetch items on launch: \(error)")
+                    }
+                }
+            #endif
         }
         .modelContainer(Self.sharedModelContainer)
         #if os(macOS)
