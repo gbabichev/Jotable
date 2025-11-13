@@ -65,13 +65,6 @@ struct CategoryPickerView: View {
                 }
             }
             .navigationTitle("Choose Category")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-            }
         }
     }
 }

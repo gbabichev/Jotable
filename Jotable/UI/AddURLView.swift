@@ -50,6 +50,54 @@ struct AddURLView: View {
     }
 
     var body: some View {
+#if os(macOS)
+        macContent
+#else
+        iosForm
+#endif
+    }
+
+#if os(macOS)
+    private var macContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(isEditing ? "Edit Link" : "Add Link")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Display Text")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                TextField("Link text (e.g., Visit our website)", text: $displayText)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("URL")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                TextField("https://example.com", text: $urlString)
+                    .textFieldStyle(.roundedBorder)
+                    .autocorrectionDisabled()
+                Text("Include https:// for best results.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+
+            HStack {
+                Spacer()
+                Button(action: submitURL) {
+                    Text(isEditing ? "Update Link" : "Add Link")
+                        .frame(minWidth: 100)
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!isValid)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 320, maxWidth: 360)
+    }
+#else
+    private var iosForm: some View {
         Form {
             Section(header: Text("Display Text")) {
                 TextField("Link text (e.g., Visit our website)", text: $displayText)
@@ -58,9 +106,7 @@ struct AddURLView: View {
             Section(header: Text("URL")) {
                 TextField("https://example.com", text: $urlString)
                     .autocorrectionDisabled()
-#if os(iOS)
                     .keyboardType(.URL)
-#endif
             }
 
             Section {
@@ -73,10 +119,9 @@ struct AddURLView: View {
         }
         .formStyle(.grouped)
         .navigationTitle(isEditing ? "Edit Link" : "Add Link")
-#if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
-#endif
     }
+#endif
 
     private func submitURL() {
         let display = displayText.trimmingCharacters(in: .whitespaces)
