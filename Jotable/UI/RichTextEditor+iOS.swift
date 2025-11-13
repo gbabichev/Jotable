@@ -1050,9 +1050,34 @@ struct RichTextEditor: UIViewRepresentable {
 
             isProgrammaticUpdate = true
 
+            let selectedRange = textView.selectedRange
+
+            // Check if multiple lines are selected
+            if selectedRange.length > 0 {
+                // Multiple lines selected - add checkbox to start of each line
+                let selectedText = attributedText.attributedSubstring(from: selectedRange).string
+                let lines = selectedText.components(separatedBy: .newlines)
+
+                if lines.count > 1 {
+                    // We have multiple lines - process each one
+                    insertCheckboxForMultipleLines(in: attributedText, range: selectedRange, lines: lines)
+                } else {
+                    // Single line selected - use original behavior
+                    insertCheckboxAtPosition(attributedText, insertionRange: selectedRange)
+                }
+            } else {
+                // No selection - insert at cursor position
+                insertCheckboxAtPosition(attributedText, insertionRange: selectedRange)
+            }
+
+            applyTypingAttributes(to: textView)
+            pushTextToParent(attributedText)
+            isProgrammaticUpdate = false
+        }
+
+        private func insertCheckboxAtPosition(_ attributedText: NSMutableAttributedString, insertionRange: NSRange) {
             let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
             let checkboxString = NSAttributedString(attachment: checkbox)
-            let insertionRange = textView.selectedRange
 
             // Insert checkbox
             attributedText.insert(checkboxString, at: insertionRange.location)
@@ -1077,63 +1102,289 @@ struct RichTextEditor: UIViewRepresentable {
             }
 
             let newCursorPosition = spaceInsertionPos + 1
-            textView.attributedText = attributedText
-            textView.selectedRange = NSRange(location: newCursorPosition, length: 0)
-            applyTypingAttributes(to: textView)
+            textView?.attributedText = attributedText
+            textView?.selectedRange = NSRange(location: newCursorPosition, length: 0)
+        }
 
-            // Push update to parent synchronously to ensure binding is updated before isProgrammaticUpdate is reset
+        private func insertCheckboxForMultipleLines(in attributedText: NSMutableAttributedString, range: NSRange, lines: [String]) {
+            let baseFont = UIFont.systemFont(ofSize: activeFontSize.rawValue)
+            let spaceAttrs: [NSAttributedString.Key: Any] = [.font: baseFont]
+            let fullText = attributedText.string
+
+            // Find the start and end positions in the original text
+            let selectedStart = range.location
+            let selectedEnd = range.location + range.length
+
+            // Find line boundaries in the selected range
+            // First, find the start of the line containing selectedStart
+            var lineStartPos = selectedStart
+            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+                lineStartPos -= 1
+            }
+
+            // Find all line starts in the selected range
+            var lineBoundaries: [Int] = [lineStartPos]
+            var currentPos = lineStartPos
+
+            while currentPos < selectedEnd {
+                let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
+                if currentPos < fullText.count && fullText[charIndex] == "\n" && currentPos + 1 < selectedEnd {
+                    lineBoundaries.append(currentPos + 1)
+                }
+                currentPos += 1
+            }
+
+            // Process lines in reverse to avoid position shifting issues
+            for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
+                let lineStart = lineBoundaries[i]
+
+                // Find line end (newline or end of string)
+                var lineEnd = lineStart
+                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
+                    lineEnd += 1
+                }
+
+                // Get the line content (without newline)
+                let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
+                let lineContent = attributedText.attributedSubstring(from: lineRange).string
+
+                // Skip empty lines
+                if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
+                    continue
+                }
+
+                // Insert checkbox at the beginning of this line
+                let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
+                let checkboxString = NSAttributedString(attachment: checkbox)
+
+                guard lineStart <= attributedText.length else { continue }
+                attributedText.insert(checkboxString, at: lineStart)
+
+                // Check what character comes after the checkbox
+                let charAfterCheckbox = lineStart + 1
+                if charAfterCheckbox < attributedText.length {
+                    let nextCharRange = NSRange(location: charAfterCheckbox, length: 1)
+                    let nextChar = attributedText.attributedSubstring(from: nextCharRange).string
+                    if nextChar != " " && nextChar != "\n" {
+                        attributedText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: charAfterCheckbox)
+                    }
+                }
+            }
+
+            // Update text view
+            textView?.attributedText = attributedText
+            // Set cursor after the last modified content
+            let newCursorPos = min(selectedEnd + 10, attributedText.length) // rough estimate
+            textView?.selectedRange = NSRange(location: newCursorPos, length: 0)
+        }
+
+        func insertBullet() {
+            guard let textView = textView,
+                  let attributedText = textView.attributedText?.mutableCopy() as? NSMutableAttributedString else {
+                return
+            }
+
+            isProgrammaticUpdate = true
+
+            let selectedRange = textView.selectedRange
+
+            // Check if multiple lines are selected
+            if selectedRange.length > 0 {
+                let selectedText = attributedText.attributedSubstring(from: selectedRange).string
+                let lines = selectedText.components(separatedBy: .newlines)
+
+                if lines.count > 1 {
+                    // Multiple lines selected
+                    insertBulletForMultipleLines(in: attributedText, range: selectedRange, lines: lines)
+                } else {
+                    // Single line selected - use original behavior
+                    insertBulletAtPosition(attributedText, insertionRange: selectedRange)
+                }
+            } else {
+                // No selection - insert at cursor position
+                insertBulletAtPosition(attributedText, insertionRange: selectedRange)
+            }
+
+            applyTypingAttributes(to: textView)
             pushTextToParent(attributedText)
             isProgrammaticUpdate = false
         }
 
-        func insertBullet() {
-            guard let textView = textView else { return }
-
-            isProgrammaticUpdate = true
-
-            let insertionRange = textView.selectedRange
+        private func insertBulletAtPosition(_ attributedText: NSMutableAttributedString, insertionRange: NSRange) {
             let bulletText = "- "
-            let mutableText = (textView.attributedText?.mutableCopy() as? NSMutableAttributedString) ?? NSMutableAttributedString()
-
-            // Create attributed string with proper font attributes
             let fontAttrs = currentTypingAttributes(from: textView)
             let bulletString = NSAttributedString(string: bulletText, attributes: fontAttrs)
-            mutableText.insert(bulletString, at: insertionRange.location)
+            attributedText.insert(bulletString, at: insertionRange.location)
 
             let newCursorPosition = insertionRange.location + bulletText.count
-            textView.attributedText = mutableText
+            textView?.attributedText = attributedText
             setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
-            applyTypingAttributes(to: textView)
+        }
 
-            // Update binding synchronously while isProgrammaticUpdate is true to prevent race conditions
-            let updatedText = NSAttributedString(attributedString: mutableText)
-            pushTextToParent(updatedText)
-            isProgrammaticUpdate = false
+        private func insertBulletForMultipleLines(in attributedText: NSMutableAttributedString, range: NSRange, lines: [String]) {
+            let fontAttrs = currentTypingAttributes(from: textView)
+            let bulletText = "- "
+            let fullText = attributedText.string
+
+            // Find the start and end positions in the original text
+            let selectedStart = range.location
+            let selectedEnd = range.location + range.length
+
+            // Find line boundaries
+            var lineStartPos = selectedStart
+            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+                lineStartPos -= 1
+            }
+
+            // Find all line starts in the selected range
+            var lineBoundaries: [Int] = [lineStartPos]
+            var currentPos = lineStartPos
+
+            while currentPos < selectedEnd {
+                let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
+                if currentPos < fullText.count && fullText[charIndex] == "\n" && currentPos + 1 < selectedEnd {
+                    lineBoundaries.append(currentPos + 1)
+                }
+                currentPos += 1
+            }
+
+            // Process lines in reverse to avoid position shifting issues
+            for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
+                let lineStart = lineBoundaries[i]
+
+                // Find line end (newline or end of string)
+                var lineEnd = lineStart
+                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
+                    lineEnd += 1
+                }
+
+                // Get the line content
+                let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
+                let lineContent = attributedText.attributedSubstring(from: lineRange).string
+
+                // Skip empty lines
+                if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
+                    continue
+                }
+
+                // Insert bullet at the beginning of this line
+                guard lineStart <= attributedText.length else { continue }
+                let bulletString = NSAttributedString(string: bulletText, attributes: fontAttrs)
+                attributedText.insert(bulletString, at: lineStart)
+            }
+
+            // Update text view
+            textView?.attributedText = attributedText
+            let newCursorPos = min(selectedEnd + 50, attributedText.length) // rough estimate
+            textView?.selectedRange = NSRange(location: newCursorPos, length: 0)
         }
 
         func insertNumbering() {
-            guard let textView = textView else { return }
+            guard let textView = textView,
+                  let attributedText = textView.attributedText?.mutableCopy() as? NSMutableAttributedString else {
+                return
+            }
 
             isProgrammaticUpdate = true
 
-            let insertionRange = textView.selectedRange
-            let numberText = "1. "
-            let mutableText = (textView.attributedText?.mutableCopy() as? NSMutableAttributedString) ?? NSMutableAttributedString()
+            let selectedRange = textView.selectedRange
 
-            // Create attributed string with proper font attributes
+            // Check if multiple lines are selected
+            if selectedRange.length > 0 {
+                let selectedText = attributedText.attributedSubstring(from: selectedRange).string
+                let lines = selectedText.components(separatedBy: .newlines)
+
+                if lines.count > 1 {
+                    // Multiple lines selected
+                    insertNumberingForMultipleLines(in: attributedText, range: selectedRange, lines: lines)
+                } else {
+                    // Single line selected - use original behavior
+                    insertNumberingAtPosition(attributedText, insertionRange: selectedRange)
+                }
+            } else {
+                // No selection - insert at cursor position
+                insertNumberingAtPosition(attributedText, insertionRange: selectedRange)
+            }
+
+            applyTypingAttributes(to: textView)
+            pushTextToParent(attributedText)
+            isProgrammaticUpdate = false
+        }
+
+        private func insertNumberingAtPosition(_ attributedText: NSMutableAttributedString, insertionRange: NSRange) {
+            let numberText = "1. "
             let fontAttrs = currentTypingAttributes(from: textView)
             let numberString = NSAttributedString(string: numberText, attributes: fontAttrs)
-            mutableText.insert(numberString, at: insertionRange.location)
+            attributedText.insert(numberString, at: insertionRange.location)
 
             let newCursorPosition = insertionRange.location + numberText.count
-            textView.attributedText = mutableText
+            textView?.attributedText = attributedText
             setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
-            applyTypingAttributes(to: textView)
+        }
 
-            // Update binding synchronously while isProgrammaticUpdate is true to prevent race conditions
-            let updatedText = NSAttributedString(attributedString: mutableText)
-            pushTextToParent(updatedText)
-            isProgrammaticUpdate = false
+        private func insertNumberingForMultipleLines(in attributedText: NSMutableAttributedString, range: NSRange, lines: [String]) {
+            let fontAttrs = currentTypingAttributes(from: textView)
+            let fullText = attributedText.string
+
+            // Find the start and end positions in the original text
+            let selectedStart = range.location
+            let selectedEnd = range.location + range.length
+
+            // Find line boundaries
+            var lineStartPos = selectedStart
+            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+                lineStartPos -= 1
+            }
+
+            // Find all line starts in the selected range
+            var lineBoundaries: [Int] = [lineStartPos]
+            var currentPos = lineStartPos
+
+            while currentPos < selectedEnd {
+                let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
+                if currentPos < fullText.count && fullText[charIndex] == "\n" && currentPos + 1 < selectedEnd {
+                    lineBoundaries.append(currentPos + 1)
+                }
+                currentPos += 1
+            }
+
+            // Process lines in reverse to avoid position shifting issues
+            var lineNumber = lineBoundaries.count
+            for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
+                let lineStart = lineBoundaries[i]
+
+                // Find line end (newline or end of string)
+                var lineEnd = lineStart
+                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
+                    lineEnd += 1
+                }
+
+                // Get the line content
+                let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
+                let lineContent = attributedText.attributedSubstring(from: lineRange).string
+
+                // Skip empty lines
+                if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
+                    lineNumber -= 1
+                    continue
+                }
+
+                // Insert number at the beginning of this line
+                guard lineStart <= attributedText.length else {
+                    lineNumber -= 1
+                    continue
+                }
+                let numberText = "\(lineNumber). "
+                let numberString = NSAttributedString(string: numberText, attributes: fontAttrs)
+                attributedText.insert(numberString, at: lineStart)
+
+                lineNumber -= 1
+            }
+
+            // Update text view
+            textView?.attributedText = attributedText
+            let newCursorPos = min(selectedEnd + 50, attributedText.length) // rough estimate
+            textView?.selectedRange = NSRange(location: newCursorPos, length: 0)
         }
 
         func insertDate() {

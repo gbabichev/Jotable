@@ -1017,9 +1017,39 @@ struct RichTextEditor: NSViewRepresentable {
 
             isProgrammaticUpdate = true
 
+            let selectedRange = textView.selectedRange
+
+            // Check if multiple lines are selected
+            if selectedRange.length > 0 {
+                // Multiple lines selected - add checkbox to start of each line
+                let selectedText = storage.attributedSubstring(from: selectedRange).string
+                let lines = selectedText.components(separatedBy: .newlines)
+
+                if lines.count > 1 {
+                    // We have multiple lines - process each one
+                    insertCheckboxForMultipleLines(in: storage, range: selectedRange, lines: lines)
+                } else {
+                    // Single line selected - use original behavior
+                    insertCheckboxAtPosition(storage, insertionRange: selectedRange)
+                }
+            } else {
+                // No selection - insert at cursor position
+                insertCheckboxAtPosition(storage, insertionRange: selectedRange)
+            }
+
+            applyTypingAttributes(to: textView)
+
+            // Defer binding update to next runloop to avoid state modification during view update
+            let newText = NSAttributedString(attributedString: storage)
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.text = newText
+                self?.isProgrammaticUpdate = false
+            }
+        }
+
+        private func insertCheckboxAtPosition(_ storage: NSTextStorage, insertionRange: NSRange) {
             let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
             let checkboxString = NSAttributedString(attachment: checkbox)
-            let insertionRange = textView.selectedRange
 
             // Insert checkbox
             storage.insert(checkboxString, at: insertionRange.location)
@@ -1044,15 +1074,77 @@ struct RichTextEditor: NSViewRepresentable {
             }
 
             let newCursorPosition = spaceInsertionPos + 1
-            textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
-            applyTypingAttributes(to: textView)
+            textView?.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+        }
 
-            // Defer binding update to next runloop to avoid state modification during view update
-            let newText = NSAttributedString(attributedString: storage)
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.text = newText
-                self?.isProgrammaticUpdate = false
+        private func insertCheckboxForMultipleLines(in storage: NSTextStorage, range: NSRange, lines: [String]) {
+            let baseFont = NSFont.systemFont(ofSize: activeFontSize.rawValue)
+            let spaceAttrs: [NSAttributedString.Key: Any] = [.font: baseFont]
+            let fullText = storage.string
+
+            // Find the start and end positions in the original text
+            let selectedStart = range.location
+            let selectedEnd = range.location + range.length
+
+            // Find line boundaries in the selected range
+            // First, find the start of the line containing selectedStart
+            var lineStartPos = selectedStart
+            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+                lineStartPos -= 1
             }
+
+            // Find all line starts in the selected range
+            var lineBoundaries: [Int] = [lineStartPos]
+            var currentPos = lineStartPos
+
+            while currentPos < selectedEnd {
+                let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
+                if currentPos < fullText.count && fullText[charIndex] == "\n" && currentPos + 1 < selectedEnd {
+                    lineBoundaries.append(currentPos + 1)
+                }
+                currentPos += 1
+            }
+
+            // Process lines in reverse to avoid position shifting issues
+            for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
+                let lineStart = lineBoundaries[i]
+
+                // Find line end (newline or end of string)
+                var lineEnd = lineStart
+                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
+                    lineEnd += 1
+                }
+
+                // Get the line content (without newline)
+                let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
+                let lineContent = storage.attributedSubstring(from: lineRange).string
+
+                // Skip empty lines
+                if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
+                    continue
+                }
+
+                // Insert checkbox at the beginning of this line
+                let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
+                let checkboxString = NSAttributedString(attachment: checkbox)
+
+                guard lineStart <= storage.length else { continue }
+                storage.insert(checkboxString, at: lineStart)
+
+                // Check what character comes after the checkbox
+                let charAfterCheckbox = lineStart + 1
+                if charAfterCheckbox < storage.length {
+                    let nextCharRange = NSRange(location: charAfterCheckbox, length: 1)
+                    let nextChar = storage.attributedSubstring(from: nextCharRange).string
+                    if nextChar != " " && nextChar != "\n" {
+                        storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: charAfterCheckbox)
+                    }
+                }
+            }
+
+            // Update selection
+            let newCursorPos = min(selectedEnd + 10, storage.length) // rough estimate
+            textView?.setSelectedRange(NSRange(location: newCursorPos, length: 0))
         }
 
         func insertBullet() {
@@ -1063,16 +1155,25 @@ struct RichTextEditor: NSViewRepresentable {
 
             isProgrammaticUpdate = true
 
-            let insertionRange = textView.selectedRange
-            let bulletText = "- "
+            let selectedRange = textView.selectedRange
 
-            // Create attributed string with proper font attributes
-            let fontAttrs = currentTypingAttributes(from: textView)
-            let bulletString = NSAttributedString(string: bulletText, attributes: fontAttrs)
-            storage.insert(bulletString, at: insertionRange.location)
+            // Check if multiple lines are selected
+            if selectedRange.length > 0 {
+                let selectedText = storage.attributedSubstring(from: selectedRange).string
+                let lines = selectedText.components(separatedBy: .newlines)
 
-            let newCursorPosition = insertionRange.location + bulletText.count
-            textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+                if lines.count > 1 {
+                    // Multiple lines selected
+                    insertBulletForMultipleLines(in: storage, range: selectedRange, lines: lines)
+                } else {
+                    // Single line selected - use original behavior
+                    insertBulletAtPosition(storage, insertionRange: selectedRange)
+                }
+            } else {
+                // No selection - insert at cursor position
+                insertBulletAtPosition(storage, insertionRange: selectedRange)
+            }
+
             applyTypingAttributes(to: textView)
 
             let newText = NSAttributedString(attributedString: storage)
@@ -1080,6 +1181,73 @@ struct RichTextEditor: NSViewRepresentable {
                 self?.parent.text = newText
                 self?.isProgrammaticUpdate = false
             }
+        }
+
+        private func insertBulletAtPosition(_ storage: NSTextStorage, insertionRange: NSRange) {
+            let bulletText = "- "
+            let fontAttrs = currentTypingAttributes(from: textView)
+            let bulletString = NSAttributedString(string: bulletText, attributes: fontAttrs)
+            storage.insert(bulletString, at: insertionRange.location)
+
+            let newCursorPosition = insertionRange.location + bulletText.count
+            textView?.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+        }
+
+        private func insertBulletForMultipleLines(in storage: NSTextStorage, range: NSRange, lines: [String]) {
+            let fontAttrs = currentTypingAttributes(from: textView)
+            let bulletText = "- "
+            let fullText = storage.string
+
+            // Find the start and end positions in the original text
+            let selectedStart = range.location
+            let selectedEnd = range.location + range.length
+
+            // Find line boundaries
+            var lineStartPos = selectedStart
+            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+                lineStartPos -= 1
+            }
+
+            // Find all line starts in the selected range
+            var lineBoundaries: [Int] = [lineStartPos]
+            var currentPos = lineStartPos
+
+            while currentPos < selectedEnd {
+                let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
+                if currentPos < fullText.count && fullText[charIndex] == "\n" && currentPos + 1 < selectedEnd {
+                    lineBoundaries.append(currentPos + 1)
+                }
+                currentPos += 1
+            }
+
+            // Process lines in reverse to avoid position shifting issues
+            for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
+                let lineStart = lineBoundaries[i]
+
+                // Find line end (newline or end of string)
+                var lineEnd = lineStart
+                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
+                    lineEnd += 1
+                }
+
+                // Get the line content
+                let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
+                let lineContent = storage.attributedSubstring(from: lineRange).string
+
+                // Skip empty lines
+                if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
+                    continue
+                }
+
+                // Insert bullet at the beginning of this line
+                guard lineStart <= storage.length else { continue }
+                let bulletString = NSAttributedString(string: bulletText, attributes: fontAttrs)
+                storage.insert(bulletString, at: lineStart)
+            }
+
+            // Update selection
+            let newCursorPos = min(selectedEnd + 50, storage.length) // rough estimate
+            textView?.setSelectedRange(NSRange(location: newCursorPos, length: 0))
         }
 
         func insertNumbering() {
@@ -1090,16 +1258,25 @@ struct RichTextEditor: NSViewRepresentable {
 
             isProgrammaticUpdate = true
 
-            let insertionRange = textView.selectedRange
-            let numberText = "1. "
+            let selectedRange = textView.selectedRange
 
-            // Create attributed string with proper font attributes
-            let fontAttrs = currentTypingAttributes(from: textView)
-            let numberString = NSAttributedString(string: numberText, attributes: fontAttrs)
-            storage.insert(numberString, at: insertionRange.location)
+            // Check if multiple lines are selected
+            if selectedRange.length > 0 {
+                let selectedText = storage.attributedSubstring(from: selectedRange).string
+                let lines = selectedText.components(separatedBy: .newlines)
 
-            let newCursorPosition = insertionRange.location + numberText.count
-            textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+                if lines.count > 1 {
+                    // Multiple lines selected
+                    insertNumberingForMultipleLines(in: storage, range: selectedRange, lines: lines)
+                } else {
+                    // Single line selected - use original behavior
+                    insertNumberingAtPosition(storage, insertionRange: selectedRange)
+                }
+            } else {
+                // No selection - insert at cursor position
+                insertNumberingAtPosition(storage, insertionRange: selectedRange)
+            }
+
             applyTypingAttributes(to: textView)
 
             let newText = NSAttributedString(attributedString: storage)
@@ -1107,6 +1284,80 @@ struct RichTextEditor: NSViewRepresentable {
                 self?.parent.text = newText
                 self?.isProgrammaticUpdate = false
             }
+        }
+
+        private func insertNumberingAtPosition(_ storage: NSTextStorage, insertionRange: NSRange) {
+            let numberText = "1. "
+            let fontAttrs = currentTypingAttributes(from: textView)
+            let numberString = NSAttributedString(string: numberText, attributes: fontAttrs)
+            storage.insert(numberString, at: insertionRange.location)
+
+            let newCursorPosition = insertionRange.location + numberText.count
+            textView?.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+        }
+
+        private func insertNumberingForMultipleLines(in storage: NSTextStorage, range: NSRange, lines: [String]) {
+            let fontAttrs = currentTypingAttributes(from: textView)
+            let fullText = storage.string
+
+            // Find the start and end positions in the original text
+            let selectedStart = range.location
+            let selectedEnd = range.location + range.length
+
+            // Find line boundaries
+            var lineStartPos = selectedStart
+            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+                lineStartPos -= 1
+            }
+
+            // Find all line starts in the selected range
+            var lineBoundaries: [Int] = [lineStartPos]
+            var currentPos = lineStartPos
+
+            while currentPos < selectedEnd {
+                let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
+                if currentPos < fullText.count && fullText[charIndex] == "\n" && currentPos + 1 < selectedEnd {
+                    lineBoundaries.append(currentPos + 1)
+                }
+                currentPos += 1
+            }
+
+            // Process lines in reverse to avoid position shifting issues
+            var lineNumber = lineBoundaries.count
+            for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
+                let lineStart = lineBoundaries[i]
+
+                // Find line end (newline or end of string)
+                var lineEnd = lineStart
+                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
+                    lineEnd += 1
+                }
+
+                // Get the line content
+                let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
+                let lineContent = storage.attributedSubstring(from: lineRange).string
+
+                // Skip empty lines
+                if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
+                    lineNumber -= 1
+                    continue
+                }
+
+                // Insert number at the beginning of this line
+                guard lineStart <= storage.length else {
+                    lineNumber -= 1
+                    continue
+                }
+                let numberText = "\(lineNumber). "
+                let numberString = NSAttributedString(string: numberText, attributes: fontAttrs)
+                storage.insert(numberString, at: lineStart)
+
+                lineNumber -= 1
+            }
+
+            // Update selection
+            let newCursorPos = min(selectedEnd + 50, storage.length) // rough estimate
+            textView?.setSelectedRange(NSRange(location: newCursorPos, length: 0))
         }
 
         func insertDate() {
