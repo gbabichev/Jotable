@@ -70,9 +70,10 @@ struct RichTextEditor: UIViewRepresentable {
     @Binding var insertNumberingTrigger: UUID?
     @Binding var insertDateTrigger: UUID?
     @Binding var insertTimeTrigger: UUID?
-    @Binding var insertURLTrigger: (UUID, String, String)?
+    @Binding var insertURLTrigger: URLInsertionRequest?
     @Binding var presentFormatMenuTrigger: UUID?
     @Binding var resetColorTrigger: UUID?
+    @Binding var linkEditRequest: LinkEditContext?
     @Environment(\.colorScheme) var colorScheme
 
     func makeCoordinator() -> Coordinator {
@@ -227,10 +228,10 @@ struct RichTextEditor: UIViewRepresentable {
         }
 
         // Handle URL insertion trigger
-        if insertURLTrigger?.0 != context.coordinator.lastURLTrigger?.0 {
+        if insertURLTrigger?.id != context.coordinator.lastURLTrigger?.id {
             context.coordinator.lastURLTrigger = insertURLTrigger
-            if let (_, urlString, displayText) = insertURLTrigger {
-                context.coordinator.insertURL(urlString: urlString, displayText: displayText)
+            if let request = insertURLTrigger {
+                context.coordinator.insertURL(using: request)
             }
         }
 
@@ -260,7 +261,7 @@ struct RichTextEditor: UIViewRepresentable {
         var lastNumberingTrigger: UUID?
         var lastDateTrigger: UUID?
         var lastTimeTrigger: UUID?
-        var lastURLTrigger: (UUID, String, String)?
+        var lastURLTrigger: URLInsertionRequest?
         var lastResetColorTrigger: UUID?
         weak var textView: UITextView?
         var pendingActiveColorFeedback: RichTextColor?
@@ -276,11 +277,8 @@ struct RichTextEditor: UIViewRepresentable {
         var lastUpdateUIViewText: NSAttributedString = NSAttributedString()
 
         private func pushTextToParent(_ text: NSAttributedString) {
-            print("[DEBUG pushTextToParent] text passed in: '\(text.string)'")
             let snapshot = NSAttributedString(attributedString: text)
-            print("[DEBUG pushTextToParent] snapshot: '\(snapshot.string)'")
             DispatchQueue.main.async { [weak self] in
-                print("[DEBUG pushTextToParent] Setting parent.text to: '\(snapshot.string)'")
                 self?.parent.text = snapshot
             }
         }
@@ -432,6 +430,32 @@ struct RichTextEditor: UIViewRepresentable {
             syncColorState(with: textView, sampleFromText: true)
             syncFormattingState(with: textView)
             applyTypingAttributes(to: textView)
+        }
+
+        @available(iOS 16.0, *)
+        func textView(_ textView: UITextView, editMenuForTextIn range: NSRange, suggestedActions: [UIMenuElement]) -> UIMenu? {
+            return buildEditMenu(for: [range], in: textView, suggestedActions: suggestedActions)
+        }
+
+        @available(iOS 26.0, *)
+        func textView(_ textView: UITextView, editMenuForTextInRanges ranges: [NSValue], suggestedActions: [UIMenuElement]) -> UIMenu? {
+            let nsRanges = ranges.map { $0.rangeValue }
+            return buildEditMenu(for: nsRanges, in: textView, suggestedActions: suggestedActions)
+        }
+
+        private func buildEditMenu(for ranges: [NSRange], in textView: UITextView, suggestedActions: [UIMenuElement]) -> UIMenu? {
+            guard let context = linkContext(for: ranges, in: textView) else {
+                return UIMenu(children: suggestedActions)
+            }
+
+            var elements = suggestedActions
+            let editAction = UIAction(title: "Edit Link", image: UIImage(systemName: "link")) { [weak self] _ in
+                DispatchQueue.main.async {
+                    self?.parent.linkEditRequest = context
+                }
+            }
+            elements.append(editAction)
+            return UIMenu(children: elements)
         }
 
         func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorage.EditActions, range editedRange: NSRange, changeInLength delta: Int) {
@@ -1859,18 +1883,21 @@ struct RichTextEditor: UIViewRepresentable {
             isProgrammaticUpdate = false
         }
 
-        func insertURL(urlString: String, displayText: String) {
+        func insertURL(using request: URLInsertionRequest) {
             guard let textView = textView else { return }
 
             isProgrammaticUpdate = true
 
-            let insertionRange = textView.selectedRange
             let mutableText = (textView.attributedText?.mutableCopy() as? NSMutableAttributedString) ?? NSMutableAttributedString()
 
-            guard let linkURL = URL(string: urlString) else {
+            guard let linkURL = URL(string: request.urlString) else {
                 isProgrammaticUpdate = false
                 return
             }
+
+            let baseRange = request.replacementRange?.nsRange ?? textView.selectedRange
+            let insertionRange = validateCursorPosition(baseRange, for: textView)
+            let shouldAppendTrailingSpace = request.replacementRange == nil
 
             // Create link attributes with blue color and underline
             let linkAttrs: [NSAttributedString.Key: Any] = [
@@ -1881,27 +1908,33 @@ struct RichTextEditor: UIViewRepresentable {
                 ColorMapping.colorIDKey: "blue",
                 ColorMapping.fontSizeKey: activeFontSize.rawValue
             ]
-            let linkString = NSAttributedString(string: displayText, attributes: linkAttrs)
+            let linkString = NSAttributedString(string: request.displayText, attributes: linkAttrs)
 
-            // Insert link text at cursor position
-            mutableText.insert(linkString, at: insertionRange.location)
+            // Replace the selected text (or insert at cursor)
+            mutableText.replaceCharacters(in: insertionRange, with: linkString)
 
-            // Insert space after link if next character is not already a space
-            let spaceInsertionPos = insertionRange.location + displayText.count
-            if spaceInsertionPos < mutableText.length {
-                let nextCharRange = NSRange(location: spaceInsertionPos, length: 1)
-                let nextChar = mutableText.attributedSubstring(from: nextCharRange).string
-                if nextChar != " " {
+            var newCursorPosition = insertionRange.location + request.displayText.count
+
+            if shouldAppendTrailingSpace {
+                let spaceInsertionPos = newCursorPosition
+                if spaceInsertionPos < mutableText.length {
+                    let nextCharRange = NSRange(location: spaceInsertionPos, length: 1)
+                    let nextChar = mutableText.attributedSubstring(from: nextCharRange).string
+                    if nextChar != " " {
+                        let spaceAttrs = currentTypingAttributes(from: textView)
+                        mutableText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
+                        newCursorPosition += 1
+                    } else {
+                        newCursorPosition = spaceInsertionPos + 1
+                    }
+                } else {
+                    // End of text, just add space
                     let spaceAttrs = currentTypingAttributes(from: textView)
                     mutableText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
+                    newCursorPosition = spaceInsertionPos + 1
                 }
-            } else {
-                // End of text, just add space
-                let spaceAttrs = currentTypingAttributes(from: textView)
-                mutableText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
             }
 
-            let newCursorPosition = spaceInsertionPos + 1
             textView.attributedText = mutableText
             setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
             applyTypingAttributes(to: textView)
@@ -1910,6 +1943,57 @@ struct RichTextEditor: UIViewRepresentable {
             let updatedText = NSAttributedString(attributedString: mutableText)
             pushTextToParent(updatedText)
             isProgrammaticUpdate = false
+        }
+
+        private func linkContext(for ranges: [NSRange], in textView: UITextView) -> LinkEditContext? {
+            guard let attributed = textView.attributedText, attributed.length > 0 else {
+                return nil
+            }
+
+            var probeLocations: [Int] = []
+            if ranges.isEmpty {
+                let selection = validateCursorPosition(textView.selectedRange, for: textView)
+                if selection.length > 0 {
+                    probeLocations.append(selection.location)
+                    let end = max(selection.location + selection.length - 1, 0)
+                    probeLocations.append(end)
+                } else {
+                    probeLocations.append(selection.location)
+                    probeLocations.append(max(selection.location - 1, 0))
+                }
+            } else {
+                for range in ranges {
+                    if range.length > 0 {
+                        probeLocations.append(range.location)
+                        let end = max(range.location + range.length - 1, 0)
+                        probeLocations.append(end)
+                    } else {
+                        probeLocations.append(range.location)
+                        probeLocations.append(max(range.location - 1, 0))
+                    }
+                }
+            }
+
+            for location in probeLocations {
+                guard attributed.length > 0,
+                      location >= 0,
+                      location < attributed.length else { continue }
+
+                var effectiveRange = NSRange(location: 0, length: 0)
+                if let url = attributed.attribute(NSAttributedString.Key.link, at: location, effectiveRange: &effectiveRange) as? URL,
+                   effectiveRange.length > 0 {
+                    let displayText = attributed.attributedSubstring(from: effectiveRange).string
+                    let snapshot = LinkEditContext(
+                        id: UUID(),
+                        range: LinkRangeSnapshot(location: effectiveRange.location, length: effectiveRange.length),
+                        urlString: url.absoluteString,
+                        displayText: displayText
+                    )
+                    return snapshot
+                }
+            }
+
+            return nil
         }
 
     }

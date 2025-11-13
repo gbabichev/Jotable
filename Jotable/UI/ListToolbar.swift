@@ -20,6 +20,7 @@ struct ListToolbar: View {
                 NavigationStack {
                     AddURLView(
                         tempURLData: $tempURLData,
+                        editingContext: nil,
                         onDismiss: {
                             showingAddURLDialog = false
                         }
@@ -71,8 +72,10 @@ struct ListToolbar: View {
                 Divider()
             }
 
+            Divider()
+            
             Button(action: addURLAction) {
-                Label("Add URL", systemImage: "link")
+                Label("Add Link", systemImage: "link")
             }
 
             Divider()

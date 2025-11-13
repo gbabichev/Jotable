@@ -29,7 +29,7 @@ struct NoteEditorView: View {
     @State private var insertNumberingTrigger: UUID?
     @State private var insertDateTrigger: UUID?
     @State private var insertTimeTrigger: UUID?
-    @State private var insertURLTrigger: (UUID, String, String)?
+    @State private var insertURLTrigger: URLInsertionRequest?
     @State private var presentFormatMenuTrigger: UUID?
     @State private var resetColorTrigger: UUID?
     @State private var tempURLData: (String, String)? = nil
@@ -37,14 +37,35 @@ struct NoteEditorView: View {
     @State private var headerHeight: CGFloat = 0
     @State private var lastSyncedRichText: NSAttributedString?
     @State private var skipNextAttributedContentChange = false
+#if !os(macOS)
+    @State private var linkEditRequest: LinkEditContext?
+#endif
 
     var body: some View {
         editorContent
+#if os(macOS)
             .addURLSheet(isPresented: $showingAddURLDialog, tempURLData: $tempURLData)
+#else
+            .addURLSheet(
+                isPresented: $showingAddURLDialog,
+                tempURLData: $tempURLData,
+                editingContext: linkEditRequest
+            ) {
+                if tempURLData == nil {
+                    linkEditRequest = nil
+                }
+            }
+#endif
             .onChange(of: tempURLData != nil) { _, hasData in
                 guard hasData else { return }
                 handlePendingURLData(tempURLData)
             }
+#if !os(macOS)
+            .onChange(of: linkEditRequest) { _, newValue in
+                guard newValue != nil else { return }
+                showingAddURLDialog = true
+            }
+#endif
             .onAppear {
                 isEditorActive = true
             }
@@ -113,7 +134,8 @@ struct NoteEditorView: View {
             insertTimeTrigger: $insertTimeTrigger,
             insertURLTrigger: $insertURLTrigger,
             presentFormatMenuTrigger: $presentFormatMenuTrigger,
-            resetColorTrigger: $resetColorTrigger
+            resetColorTrigger: $resetColorTrigger,
+            linkEditRequest: $linkEditRequest
         )
         #endif
     }
@@ -336,10 +358,22 @@ struct NoteEditorView: View {
 
     private func handlePendingURLData(_ data: (String, String)?) {
         guard let (urlString, displayText) = data else { return }
+        var replacementRange: LinkRangeSnapshot?
+#if !os(macOS)
+        replacementRange = linkEditRequest?.range
+#endif
         DispatchQueue.main.async {
-            insertURLTrigger = (UUID(), urlString, displayText)
+            insertURLTrigger = URLInsertionRequest(
+                id: UUID(),
+                urlString: urlString,
+                displayText: displayText,
+                replacementRange: replacementRange
+            )
             showingAddURLDialog = false
             tempURLData = nil
+#if !os(macOS)
+            linkEditRequest = nil
+#endif
         }
     }
 }
@@ -448,10 +482,20 @@ private extension View {
 
 #else
 private extension View {
-    func addURLSheet(isPresented: Binding<Bool>, tempURLData: Binding<(String, String)?>) -> some View {
-        sheet(isPresented: isPresented) {
+    func addURLSheet(
+        isPresented: Binding<Bool>,
+        tempURLData: Binding<(String, String)?>,
+        editingContext: LinkEditContext?,
+        onDismiss: (() -> Void)? = nil
+    ) -> some View {
+        sheet(isPresented: isPresented, onDismiss: {
+            onDismiss?()
+        }) {
             NavigationStack {
-                AddURLView(tempURLData: tempURLData)
+                AddURLView(
+                    tempURLData: tempURLData,
+                    editingContext: editingContext
+                )
             }
         }
     }

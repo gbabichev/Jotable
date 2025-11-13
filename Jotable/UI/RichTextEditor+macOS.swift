@@ -108,7 +108,7 @@ struct RichTextEditor: NSViewRepresentable {
     @Binding var insertNumberingTrigger: UUID?
     @Binding var insertDateTrigger: UUID?
     @Binding var insertTimeTrigger: UUID?
-    @Binding var insertURLTrigger: (UUID, String, String)?
+    @Binding var insertURLTrigger: URLInsertionRequest?
     @Binding var presentFormatMenuTrigger: UUID?
     @Binding var resetColorTrigger: UUID?
     @Binding var pastePlaintextTrigger: UUID?
@@ -268,10 +268,10 @@ struct RichTextEditor: NSViewRepresentable {
         }
 
         // Handle URL insertion trigger
-        if insertURLTrigger?.0 != context.coordinator.lastURLTrigger?.0 {
+        if insertURLTrigger?.id != context.coordinator.lastURLTrigger?.id {
             context.coordinator.lastURLTrigger = insertURLTrigger
-            if let (_, urlString, displayText) = insertURLTrigger {
-                context.coordinator.insertURL(urlString: urlString, displayText: displayText)
+            if let request = insertURLTrigger {
+                context.coordinator.insertURL(using: request)
             }
         }
 
@@ -319,7 +319,7 @@ struct RichTextEditor: NSViewRepresentable {
         var lastNumberingTrigger: UUID?
         var lastDateTrigger: UUID?
         var lastTimeTrigger: UUID?
-        var lastURLTrigger: (UUID, String, String)?
+        var lastURLTrigger: URLInsertionRequest?
         var lastFormatMenuTrigger: UUID?
         var lastResetColorTrigger: UUID?
         var lastPlaintextPasteTrigger: UUID?
@@ -1769,7 +1769,7 @@ struct RichTextEditor: NSViewRepresentable {
             }
         }
 
-        func insertURL(urlString: String, displayText: String) {
+        func insertURL(using request: URLInsertionRequest) {
             guard let textView = textView,
                   let storage = textView.textStorage else {
                 return
@@ -1777,12 +1777,14 @@ struct RichTextEditor: NSViewRepresentable {
 
             isProgrammaticUpdate = true
 
-            let insertionRange = textView.selectedRange
-
-            guard let linkURL = URL(string: urlString) else {
+            guard let linkURL = URL(string: request.urlString) else {
                 isProgrammaticUpdate = false
                 return
             }
+
+            let baseRange = request.replacementRange?.nsRange ?? textView.selectedRange
+            let insertionRange = clampRange(baseRange, length: storage.length)
+            let shouldAppendTrailingSpace = request.replacementRange == nil
 
             // Create link attributes with blue color and underline
             let linkAttrs: [NSAttributedString.Key: Any] = [
@@ -1793,27 +1795,32 @@ struct RichTextEditor: NSViewRepresentable {
                 ColorMapping.colorIDKey: "blue",
                 ColorMapping.fontSizeKey: activeFontSize.rawValue
             ]
-            let linkString = NSAttributedString(string: displayText, attributes: linkAttrs)
+            let linkString = NSAttributedString(string: request.displayText, attributes: linkAttrs)
 
-            // Insert link text at cursor position
-            storage.insert(linkString, at: insertionRange.location)
+            // Replace the target range or insert at cursor
+            storage.replaceCharacters(in: insertionRange, with: linkString)
 
-            // Insert space after link if next character is not already a space
-            let spaceInsertionPos = insertionRange.location + displayText.count
-            if spaceInsertionPos < storage.length {
-                let nextCharRange = NSRange(location: spaceInsertionPos, length: 1)
-                let nextChar = storage.attributedSubstring(from: nextCharRange).string
-                if nextChar != " " {
+            var newCursorPosition = insertionRange.location + request.displayText.count
+
+            if shouldAppendTrailingSpace {
+                let spaceInsertionPos = newCursorPosition
+                if spaceInsertionPos < storage.length {
+                    let nextCharRange = NSRange(location: spaceInsertionPos, length: 1)
+                    let nextChar = storage.attributedSubstring(from: nextCharRange).string
+                    if nextChar != " " {
+                        let spaceAttrs = currentTypingAttributes(from: textView)
+                        storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
+                        newCursorPosition += 1
+                    } else {
+                        newCursorPosition = spaceInsertionPos + 1
+                    }
+                } else {
                     let spaceAttrs = currentTypingAttributes(from: textView)
                     storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
+                    newCursorPosition = spaceInsertionPos + 1
                 }
-            } else {
-                // End of text, just add space
-                let spaceAttrs = currentTypingAttributes(from: textView)
-                storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
             }
 
-            let newCursorPosition = spaceInsertionPos + 1
             textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
             applyTypingAttributes(to: textView)
 
@@ -1823,6 +1830,13 @@ struct RichTextEditor: NSViewRepresentable {
                 self?.parent.text = newText
                 self?.isProgrammaticUpdate = false
             }
+        }
+
+        private func clampRange(_ range: NSRange, length: Int) -> NSRange {
+            let clampedLocation = min(max(0, range.location), length)
+            let remaining = max(0, length - clampedLocation)
+            let clampedLength = min(max(0, range.length), remaining)
+            return NSRange(location: clampedLocation, length: clampedLength)
         }
 
         func pastePlaintext() {
