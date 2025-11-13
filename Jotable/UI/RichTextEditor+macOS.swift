@@ -342,6 +342,37 @@ struct RichTextEditor: NSViewRepresentable {
             return (activeColor.nsColor, activeColor.id)
         }
 
+        private func registerUndoSnapshot(for textView: NSTextView,
+                                          actionName: String,
+                                          textSnapshot: NSAttributedString? = nil,
+                                          selectionSnapshot: NSRange? = nil) {
+            guard let undoManager = textView.undoManager else { return }
+
+            let snapshot = NSAttributedString(attributedString: textSnapshot ?? textView.attributedString())
+            let selection = selectionSnapshot ?? textView.selectedRange
+            let targetTextView = textView
+
+            undoManager.registerUndo(withTarget: self) { [weak self] _ in
+                guard let self = self else { return }
+                let currentText = targetTextView.attributedString()
+                let currentSelection = targetTextView.selectedRange
+                self.registerUndoSnapshot(for: targetTextView,
+                                          actionName: actionName,
+                                          textSnapshot: currentText,
+                                          selectionSnapshot: currentSelection)
+
+                self.isProgrammaticUpdate = true
+                targetTextView.textStorage?.setAttributedString(snapshot)
+                targetTextView.setSelectedRange(selection)
+                self.applyTypingAttributes(to: targetTextView)
+                self.updateTypingAttributesHighlight(targetTextView)
+                self.parent.text = snapshot
+                self.isProgrammaticUpdate = false
+            }
+
+            undoManager.setActionName(actionName)
+        }
+
         func syncFormattingState(with textView: NSTextView) {
             isSyncingFormattingState = true
             defer { isSyncingFormattingState = false }
@@ -945,6 +976,7 @@ struct RichTextEditor: NSViewRepresentable {
                     return false
                 }
 
+                registerUndoSnapshot(for: textView, actionName: "Insert Number")
                 isProgrammaticUpdate = true
 
                 // If newText is just "\n", replace the entire line (removes formatting)
@@ -1004,13 +1036,18 @@ struct RichTextEditor: NSViewRepresentable {
 
             guard let storage = textView.textStorage else { return false }
 
+            registerUndoSnapshot(for: textView, actionName: "Insert Checkbox")
             isProgrammaticUpdate = true
+
+            var newCursorPosition = cursorRange.location
 
             if contentAfter.isEmpty {
                 // Blank line after checkbox - remove the checkbox, just add newline with proper attributes
                 let fontAttrs = currentTypingAttributes(from: textView)
                 let newlineWithAttrs = NSAttributedString(string: "\n", attributes: fontAttrs)
                 storage.replaceCharacters(in: lineRange, with: newlineWithAttrs)
+
+                newCursorPosition = min(lineRange.location, storage.length)
             } else {
                 // Content after checkbox - add newline and new checkbox
                 let newCheckbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
@@ -1027,10 +1064,11 @@ struct RichTextEditor: NSViewRepresentable {
                 let spaceAttrs: [NSAttributedString.Key: Any] = [.font: baseFont]
                 newLine.append(NSAttributedString(string: " ", attributes: spaceAttrs))
                 storage.replaceCharacters(in: cursorRange, with: newLine)
+
+                newCursorPosition = min(cursorRange.location + newLine.length, storage.length)
             }
 
             // Position cursor after the inserted content
-            let newCursorPosition = cursorRange.location + (contentAfter.isEmpty ? 1 : 3)  // +3 for "\n" + checkbox + space
             textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
 
             // Ensure typing attributes are set for the next line
@@ -1043,6 +1081,7 @@ struct RichTextEditor: NSViewRepresentable {
         }
 
         private func applyAutoFormat(_ newText: String, to textView: NSTextView, at range: NSRange, lineRange: NSRange) -> Bool {
+            registerUndoSnapshot(for: textView, actionName: "Auto Format")
             isProgrammaticUpdate = true
 
             guard let storage = textView.textStorage else {
@@ -1251,6 +1290,7 @@ struct RichTextEditor: NSViewRepresentable {
                 return
             }
 
+            registerUndoSnapshot(for: textView, actionName: "Insert Dash")
             let selectedRange = textView.selectedRange
 
             // Check if multiple lines are selected
@@ -1412,6 +1452,7 @@ struct RichTextEditor: NSViewRepresentable {
                 return
             }
 
+            registerUndoSnapshot(for: textView, actionName: "Insert Bullet")
             let selectedRange = textView.selectedRange
 
             if selectedRange.length > 0 {
@@ -1544,6 +1585,7 @@ struct RichTextEditor: NSViewRepresentable {
                 return
             }
 
+            registerUndoSnapshot(for: textView, actionName: "Insert Number")
             let selectedRange = textView.selectedRange
 
             if selectedRange.length > 0 {
