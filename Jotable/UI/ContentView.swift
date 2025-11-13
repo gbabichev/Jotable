@@ -453,52 +453,55 @@ struct ContentView: View {
 
     private func authenticateWithBiometrics(reason: String = "Authenticate to continue", completion: @escaping (Bool) -> Void) {
         let context = LAContext()
-        var error: NSError?
+        context.localizedFallbackTitle = "Use Password"
+        var authError: NSError?
 
-        // Check if biometric authentication is available
-        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
-            authErrorMessage = error?.localizedDescription ?? "Biometric authentication not available"
+        // Suppress Sendable warning - completion is dispatched to main thread and auth callbacks are safe
+        nonisolated(unsafe) let unsafeCompletion = completion
+
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &authError) else {
+            authErrorMessage = authError?.localizedDescription ?? "Device authentication not available"
             showAuthError = true
             completion(false)
             return
         }
 
-        // Perform biometric authentication
-        // Suppress Sendable warning - completion is dispatched to main thread and auth callbacks are safe
-        nonisolated(unsafe) let unsafeCompletion = completion
-        context.evaluatePolicy(
-            .deviceOwnerAuthenticationWithBiometrics,
-            localizedReason: reason
-        ) { success, error in
+        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { success, error in
             if success {
                 DispatchQueue.main.async {
                     unsafeCompletion(true)
                 }
+                return
+            }
+
+            let errorMessage: String
+            if let laError = error as? LAError {
+                switch laError.code {
+                case .userCancel:
+                    errorMessage = "Authentication cancelled"
+                case .userFallback:
+                    errorMessage = "Authentication failed"
+                case .authenticationFailed:
+                    errorMessage = "Authentication failed"
+                case .biometryNotAvailable:
+                    errorMessage = "Biometric authentication not available"
+                case .biometryNotEnrolled:
+                    errorMessage = "No biometric data enrolled"
+                case .biometryLockout:
+                    errorMessage = "Too many failed attempts. Try again later."
+                case .passcodeNotSet:
+                    errorMessage = "No passcode configured on this device"
+                default:
+                    errorMessage = laError.localizedDescription
+                }
             } else {
-                let errorMessage: String
-                if let error = error as? LAError {
-                    switch error.code {
-                    case .userCancel:
-                        errorMessage = "Authentication cancelled"
-                    case .userFallback:
-                        errorMessage = "Authentication failed"
-                    case .biometryNotAvailable:
-                        errorMessage = "Biometric authentication not available"
-                    case .biometryNotEnrolled:
-                        errorMessage = "No biometric data enrolled"
-                    case .biometryLockout:
-                        errorMessage = "Too many failed attempts. Try again later."
-                    default:
-                        errorMessage = error.localizedDescription
-                    }
-                } else {
-                    errorMessage = error?.localizedDescription ?? "Authentication failed"
-                }
-                DispatchQueue.main.async {
-                    self.authErrorMessage = errorMessage
-                    self.showAuthError = true
-                    unsafeCompletion(false)
-                }
+                errorMessage = error?.localizedDescription ?? "Authentication failed"
+            }
+
+            DispatchQueue.main.async {
+                self.authErrorMessage = errorMessage
+                self.showAuthError = true
+                unsafeCompletion(false)
             }
         }
     }
