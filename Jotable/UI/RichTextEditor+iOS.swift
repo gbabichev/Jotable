@@ -1142,6 +1142,9 @@ struct RichTextEditor: UIViewRepresentable {
                 currentPos += 1
             }
 
+            // Track total insertions
+            var totalInserted = 0
+
             // Process lines in reverse to avoid position shifting issues
             for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
                 let lineStart = lineBoundaries[i]
@@ -1167,6 +1170,7 @@ struct RichTextEditor: UIViewRepresentable {
 
                 guard lineStart <= attributedText.length else { continue }
                 attributedText.insert(checkboxString, at: lineStart)
+                totalInserted += 1
 
                 // Check what character comes after the checkbox
                 let charAfterCheckbox = lineStart + 1
@@ -1175,14 +1179,15 @@ struct RichTextEditor: UIViewRepresentable {
                     let nextChar = attributedText.attributedSubstring(from: nextCharRange).string
                     if nextChar != " " && nextChar != "\n" {
                         attributedText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: charAfterCheckbox)
+                        totalInserted += 1
                     }
                 }
             }
 
             // Update text view
             textView?.attributedText = attributedText
-            // Set cursor after the last modified content
-            let newCursorPos = min(selectedEnd + 10, attributedText.length) // rough estimate
+            // Place cursor at the end of the selected range plus all insertions
+            let newCursorPos = selectedEnd + totalInserted
             textView?.selectedRange = NSRange(location: newCursorPos, length: 0)
         }
 
@@ -1257,6 +1262,9 @@ struct RichTextEditor: UIViewRepresentable {
                 currentPos += 1
             }
 
+            // Track total insertions
+            var totalInserted = 0
+
             // Process lines in reverse to avoid position shifting issues
             for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
                 let lineStart = lineBoundaries[i]
@@ -1280,11 +1288,13 @@ struct RichTextEditor: UIViewRepresentable {
                 guard lineStart <= attributedText.length else { continue }
                 let dashString = NSAttributedString(string: dashText, attributes: fontAttrs)
                 attributedText.insert(dashString, at: lineStart)
+                totalInserted += dashText.count
             }
 
             // Update text view
             textView?.attributedText = attributedText
-            let newCursorPos = min(selectedEnd + 50, attributedText.length) // rough estimate
+            // Place cursor at the end of the selected range plus all insertions
+            let newCursorPos = selectedEnd + totalInserted
             textView?.selectedRange = NSRange(location: newCursorPos, length: 0)
         }
 
@@ -1359,6 +1369,9 @@ struct RichTextEditor: UIViewRepresentable {
                 currentPos += 1
             }
 
+            // Track total insertions
+            var totalInserted = 0
+
             // Process lines in reverse to avoid position shifting issues
             for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
                 let lineStart = lineBoundaries[i]
@@ -1382,11 +1395,13 @@ struct RichTextEditor: UIViewRepresentable {
                 guard lineStart <= attributedText.length else { continue }
                 let bulletString = NSAttributedString(string: bulletText, attributes: fontAttrs)
                 attributedText.insert(bulletString, at: lineStart)
+                totalInserted += bulletText.count
             }
 
             // Update text view
             textView?.attributedText = attributedText
-            let newCursorPos = min(selectedEnd + 50, attributedText.length) // rough estimate
+            // Place cursor at the end of the selected range plus all insertions
+            let newCursorPos = selectedEnd + totalInserted
             textView?.selectedRange = NSRange(location: newCursorPos, length: 0)
         }
 
@@ -1462,6 +1477,8 @@ struct RichTextEditor: UIViewRepresentable {
 
             // Process lines in reverse to avoid position shifting issues
             var lineNumber = lineBoundaries.count
+            var totalInserted = 0
+
             for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
                 let lineStart = lineBoundaries[i]
 
@@ -1489,13 +1506,15 @@ struct RichTextEditor: UIViewRepresentable {
                 let numberText = "\(lineNumber). "
                 let numberString = NSAttributedString(string: numberText, attributes: fontAttrs)
                 attributedText.insert(numberString, at: lineStart)
+                totalInserted += numberText.count
 
                 lineNumber -= 1
             }
 
             // Update text view
             textView?.attributedText = attributedText
-            let newCursorPos = min(selectedEnd + 50, attributedText.length) // rough estimate
+            // Place cursor at the end of the selected range plus all insertions
+            let newCursorPos = selectedEnd + totalInserted
             textView?.selectedRange = NSRange(location: newCursorPos, length: 0)
         }
 
