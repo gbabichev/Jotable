@@ -1191,6 +1191,33 @@ struct RichTextEditor: NSViewRepresentable {
                     continue
                 }
 
+                // Check for and remove existing formatting at the start of the line
+                var existingFormattingLength = 0
+
+                // Check for existing checkbox attachment
+                if lineStart < storage.length {
+                    if storage.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
+                        // Remove the checkbox and the space after it
+                        existingFormattingLength = 2 // checkbox + space
+                    }
+                }
+
+                // If no checkbox, check for dash, bullet, or number patterns
+                if existingFormattingLength == 0 {
+                    if let dashMatch = lineContent.range(of: #"^-\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: dashMatch.upperBound)
+                    } else if let bulletCharMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletCharMatch.upperBound)
+                    } else if let numberMatch = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: numberMatch.upperBound)
+                    }
+                }
+
+                // Remove existing formatting if found
+                if existingFormattingLength > 0 {
+                    storage.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
+                }
+
                 // Insert checkbox at the beginning of this line
                 let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
                 let checkboxString = NSAttributedString(attachment: checkbox)
@@ -1306,6 +1333,33 @@ struct RichTextEditor: NSViewRepresentable {
                     continue
                 }
 
+                // Check for and remove existing formatting at the start of the line
+                var existingFormattingLength = 0
+
+                // Check for checkbox attachment
+                if lineStart < storage.length {
+                    if storage.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
+                        // Remove the checkbox and the space after it
+                        existingFormattingLength = 2 // checkbox + space
+                    }
+                }
+
+                // If no checkbox, check for dash, bullet, or number patterns
+                if existingFormattingLength == 0 {
+                    if let dashMatch = lineContent.range(of: #"^-\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: dashMatch.upperBound)
+                    } else if let bulletCharMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletCharMatch.upperBound)
+                    } else if let numberMatch = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: numberMatch.upperBound)
+                    }
+                }
+
+                // Remove existing formatting if found
+                if existingFormattingLength > 0 {
+                    storage.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
+                }
+
                 // Insert dash at the beginning of this line
                 guard lineStart <= storage.length else { continue }
                 let dashString = NSAttributedString(string: dashText, attributes: fontAttrs)
@@ -1407,6 +1461,33 @@ struct RichTextEditor: NSViewRepresentable {
                 // Skip empty lines
                 if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
                     continue
+                }
+
+                // Check for and remove existing formatting at the start of the line
+                var existingFormattingLength = 0
+
+                // Check for checkbox attachment
+                if lineStart < storage.length {
+                    if storage.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
+                        // Remove the checkbox and the space after it
+                        existingFormattingLength = 2 // checkbox + space
+                    }
+                }
+
+                // If no checkbox, check for dash, bullet, or number patterns
+                if existingFormattingLength == 0 {
+                    if let dashMatch = lineContent.range(of: #"^-\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: dashMatch.upperBound)
+                    } else if let bulletCharMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletCharMatch.upperBound)
+                    } else if let numberMatch = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: numberMatch.upperBound)
+                    }
+                }
+
+                // Remove existing formatting if found
+                if existingFormattingLength > 0 {
+                    storage.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
                 }
 
                 // Insert bullet at the beginning of this line
@@ -1566,6 +1647,33 @@ struct RichTextEditor: NSViewRepresentable {
                 if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
                     lineNumber -= 1
                     continue
+                }
+
+                // Check for and remove existing formatting at the start of the line
+                var existingFormattingLength = 0
+
+                // Check for checkbox attachment
+                if lineStart < storage.length {
+                    if storage.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
+                        // Remove the checkbox and the space after it
+                        existingFormattingLength = 2 // checkbox + space
+                    }
+                }
+
+                // If no checkbox, check for dash, bullet, or number patterns
+                if existingFormattingLength == 0 {
+                    if let dashMatch = lineContent.range(of: #"^-\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: dashMatch.upperBound)
+                    } else if let bulletCharMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletCharMatch.upperBound)
+                    } else if let numberMatch = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: numberMatch.upperBound)
+                    }
+                }
+
+                // Remove existing formatting if found
+                if existingFormattingLength > 0 {
+                    storage.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
                 }
 
                 // Insert number at the beginning of this line

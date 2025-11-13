@@ -111,24 +111,36 @@ struct AutoFormatting {
         return (newText: "\n\(nextNumber). ", renumberPositions: renumberPositions)
     }
 
-    /// Detects if a line starts with a dash pattern (e.g., "- ")
+    /// Detects if a line starts with a dash or bullet pattern (e.g., "- " or "• ")
     /// Returns a new bullet point if content exists, or nil to remove bullet if blank
     static func handleBulletPoint(lineText: String) -> String? {
-        // Pattern: a dash followed by a space at the start of the line
-        guard lineText.hasPrefix("- ") else {
+        var bulletPrefix = ""
+        var contentStart = 0
+
+        // Check for dash pattern (- )
+        if lineText.hasPrefix("- ") {
+            bulletPrefix = "- "
+            contentStart = 2
+        }
+        // Check for bullet character pattern (• )
+        else if lineText.hasPrefix("• ") {
+            bulletPrefix = "• "
+            contentStart = 2
+        }
+        else {
             return nil
         }
 
-        // Get the text after the dash pattern
-        let contentAfterDash = String(lineText.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+        // Get the text after the bullet pattern
+        let contentAfterBullet = String(lineText.dropFirst(contentStart)).trimmingCharacters(in: .whitespaces)
 
-        // If the line is blank after the dash, return just newline (removes bullet)
-        if contentAfterDash.isEmpty {
+        // If the line is blank after the bullet, return just newline (removes bullet)
+        if contentAfterBullet.isEmpty {
             return "\n"
         }
 
-        // Return a new bullet point
-        return "\n- "
+        // Return a new bullet point with the same prefix
+        return "\n\(bulletPrefix)"
     }
 
     /// Detects and converts checkbox patterns "[ ]" and "[x]" or "[X]" to CheckboxTextAttachment

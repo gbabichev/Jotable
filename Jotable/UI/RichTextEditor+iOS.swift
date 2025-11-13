@@ -1212,6 +1212,34 @@ struct RichTextEditor: UIViewRepresentable {
                     continue
                 }
 
+                // Check for and remove existing formatting at the start of the line
+                var existingFormattingLength = 0
+
+                // Check for existing checkbox attachment
+                if lineStart < attributedText.length {
+                    if attributedText.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
+                        // Remove the checkbox and the space after it
+                        existingFormattingLength = 2 // checkbox + space
+                    }
+                }
+
+                // If no checkbox, check for dash, bullet, or number patterns
+                if existingFormattingLength == 0 {
+                    if let dashMatch = lineContent.range(of: #"^-\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: dashMatch.upperBound)
+                    } else if let bulletCharMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletCharMatch.upperBound)
+                    } else if let numberMatch = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: numberMatch.upperBound)
+                    }
+                }
+
+                // Remove existing formatting if found
+                if existingFormattingLength > 0 {
+                    attributedText.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
+                    totalInserted -= existingFormattingLength
+                }
+
                 // Insert checkbox at the beginning of this line
                 let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
                 let checkboxString = NSAttributedString(attachment: checkbox)
@@ -1332,6 +1360,34 @@ struct RichTextEditor: UIViewRepresentable {
                     continue
                 }
 
+                // Check for and remove existing formatting at the start of the line
+                var existingFormattingLength = 0
+
+                // Check for checkbox attachment
+                if lineStart < attributedText.length {
+                    if attributedText.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
+                        // Remove the checkbox and the space after it
+                        existingFormattingLength = 2 // checkbox + space
+                    }
+                }
+
+                // If no checkbox, check for dash, bullet, or number patterns
+                if existingFormattingLength == 0 {
+                    if let dashMatch = lineContent.range(of: #"^-\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: dashMatch.upperBound)
+                    } else if let bulletCharMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletCharMatch.upperBound)
+                    } else if let numberMatch = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: numberMatch.upperBound)
+                    }
+                }
+
+                // Remove existing formatting if found
+                if existingFormattingLength > 0 {
+                    attributedText.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
+                    totalInserted -= existingFormattingLength
+                }
+
                 // Insert dash at the beginning of this line
                 guard lineStart <= attributedText.length else { continue }
                 let dashString = NSAttributedString(string: dashText, attributes: fontAttrs)
@@ -1437,6 +1493,34 @@ struct RichTextEditor: UIViewRepresentable {
                 // Skip empty lines
                 if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
                     continue
+                }
+
+                // Check for and remove existing formatting at the start of the line
+                var existingFormattingLength = 0
+
+                // Check for checkbox attachment
+                if lineStart < attributedText.length {
+                    if attributedText.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
+                        // Remove the checkbox and the space after it
+                        existingFormattingLength = 2 // checkbox + space
+                    }
+                }
+
+                // If no checkbox, check for dash, bullet, or number patterns
+                if existingFormattingLength == 0 {
+                    if let dashMatch = lineContent.range(of: #"^-\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: dashMatch.upperBound)
+                    } else if let bulletCharMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletCharMatch.upperBound)
+                    } else if let numberMatch = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: numberMatch.upperBound)
+                    }
+                }
+
+                // Remove existing formatting if found
+                if existingFormattingLength > 0 {
+                    attributedText.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
+                    totalInserted -= existingFormattingLength
                 }
 
                 // Insert bullet at the beginning of this line
@@ -1599,6 +1683,36 @@ struct RichTextEditor: UIViewRepresentable {
                 if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
                     lineNumber -= 1
                     continue
+                }
+
+                // Check for and remove existing formatting at the start of the line
+                var contentStartPos = lineStart
+                var existingFormattingLength = 0
+
+                // Check for checkbox attachment
+                if lineStart < attributedText.length {
+                    if attributedText.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
+                        // Remove the checkbox and the space after it
+                        existingFormattingLength = 2 // checkbox + space
+                        contentStartPos = lineStart + 1
+                    }
+                }
+
+                // If no checkbox, check for dash, bullet, or number patterns
+                if existingFormattingLength == 0 {
+                    if let dashMatch = lineContent.range(of: #"^-\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: dashMatch.upperBound)
+                    } else if let bulletCharMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletCharMatch.upperBound)
+                    } else if let numberMatch = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: numberMatch.upperBound)
+                    }
+                }
+
+                // Remove existing formatting if found
+                if existingFormattingLength > 0 {
+                    attributedText.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
+                    totalInserted -= existingFormattingLength
                 }
 
                 // Insert number at the beginning of this line
