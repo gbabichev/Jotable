@@ -276,8 +276,11 @@ struct RichTextEditor: UIViewRepresentable {
         var lastUpdateUIViewText: NSAttributedString = NSAttributedString()
 
         private func pushTextToParent(_ text: NSAttributedString) {
+            print("[DEBUG pushTextToParent] text passed in: '\(text.string)'")
             let snapshot = NSAttributedString(attributedString: text)
+            print("[DEBUG pushTextToParent] snapshot: '\(snapshot.string)'")
             DispatchQueue.main.async { [weak self] in
+                print("[DEBUG pushTextToParent] Setting parent.text to: '\(snapshot.string)'")
                 self?.parent.text = snapshot
             }
         }
@@ -1099,8 +1102,7 @@ struct RichTextEditor: UIViewRepresentable {
         }
 
         func insertUncheckedCheckbox() {
-            guard let textView = textView,
-                  let attributedText = textView.attributedText?.mutableCopy() as? NSMutableAttributedString else {
+            guard let textView = textView else {
                 return
             }
 
@@ -1111,61 +1113,62 @@ struct RichTextEditor: UIViewRepresentable {
             // Check if multiple lines are selected
             if selectedRange.length > 0 {
                 // Multiple lines selected - add checkbox to start of each line
-                let selectedText = attributedText.attributedSubstring(from: selectedRange).string
+                let selectedText = textView.textStorage.attributedSubstring(from: selectedRange).string
                 let lines = selectedText.components(separatedBy: .newlines)
 
                 if lines.count > 1 {
                     // We have multiple lines - process each one
-                    insertCheckboxForMultipleLines(in: attributedText, range: selectedRange, lines: lines)
+                    insertCheckboxForMultipleLines(range: selectedRange, lines: lines)
                 } else {
                     // Single line selected - use original behavior
-                    insertCheckboxAtPosition(attributedText, insertionRange: selectedRange)
+                    insertCheckboxAtPosition(insertionRange: selectedRange)
                 }
             } else {
                 // No selection - insert at cursor position
-                insertCheckboxAtPosition(attributedText, insertionRange: selectedRange)
+                insertCheckboxAtPosition(insertionRange: selectedRange)
             }
 
             applyTypingAttributes(to: textView)
-            pushTextToParent(attributedText)
+            pushTextToParent(textView.attributedText ?? NSAttributedString())
             isProgrammaticUpdate = false
         }
 
-        private func insertCheckboxAtPosition(_ attributedText: NSMutableAttributedString, insertionRange: NSRange) {
+        private func insertCheckboxAtPosition(insertionRange: NSRange) {
+            guard let textView = textView else { return }
             let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
             let checkboxString = NSAttributedString(attachment: checkbox)
 
-            // Insert checkbox
-            attributedText.insert(checkboxString, at: insertionRange.location)
+            // Use textStorage to properly register with undo manager
+            textView.textStorage.insert(checkboxString, at: insertionRange.location)
 
             // Insert space after checkbox if next character is not already a space
             let spaceInsertionPos = insertionRange.location + 1
-            if spaceInsertionPos < attributedText.length {
+            if spaceInsertionPos < textView.textStorage.length {
                 let nextCharRange = NSRange(location: spaceInsertionPos, length: 1)
-                let nextChar = attributedText.attributedSubstring(from: nextCharRange).string
+                let nextChar = textView.textStorage.attributedSubstring(from: nextCharRange).string
                 if nextChar != " " {
                     // Space after attachment should have minimal attributes to avoid rendering issues
                     // Only include font to ensure proper baseline alignment
                     let baseFont = UIFont.systemFont(ofSize: activeFontSize.rawValue)
                     let spaceAttrs: [NSAttributedString.Key: Any] = [.font: baseFont]
-                    attributedText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
+                    textView.textStorage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
                 }
             } else {
                 // End of text, just add space with minimal attributes
                 let baseFont = UIFont.systemFont(ofSize: activeFontSize.rawValue)
                 let spaceAttrs: [NSAttributedString.Key: Any] = [.font: baseFont]
-                attributedText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
+                textView.textStorage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
             }
 
             let newCursorPosition = spaceInsertionPos + 1
-            textView?.attributedText = attributedText
-            textView?.selectedRange = NSRange(location: newCursorPosition, length: 0)
+            textView.selectedRange = NSRange(location: newCursorPosition, length: 0)
         }
 
-        private func insertCheckboxForMultipleLines(in attributedText: NSMutableAttributedString, range: NSRange, lines: [String]) {
+        private func insertCheckboxForMultipleLines(range: NSRange, lines: [String]) {
+            guard let textView = textView else { return }
             let baseFont = UIFont.systemFont(ofSize: activeFontSize.rawValue)
             let spaceAttrs: [NSAttributedString.Key: Any] = [.font: baseFont]
-            let fullText = attributedText.string
+            let fullText = textView.textStorage.string
 
             // Find the start and end positions in the original text
             let selectedStart = range.location
@@ -1193,6 +1196,9 @@ struct RichTextEditor: UIViewRepresentable {
             // Track total insertions
             var totalInserted = 0
 
+            // Group all edits into a single undo action
+            textView.textStorage.beginEditing()
+
             // Process lines in reverse to avoid position shifting issues
             for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
                 let lineStart = lineBoundaries[i]
@@ -1205,7 +1211,7 @@ struct RichTextEditor: UIViewRepresentable {
 
                 // Get the line content (without newline)
                 let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
-                let lineContent = attributedText.attributedSubstring(from: lineRange).string
+                let lineContent = textView.textStorage.attributedSubstring(from: lineRange).string
 
                 // Skip empty lines
                 if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -1216,8 +1222,8 @@ struct RichTextEditor: UIViewRepresentable {
                 var existingFormattingLength = 0
 
                 // Check for existing checkbox attachment
-                if lineStart < attributedText.length {
-                    if attributedText.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
+                if lineStart < textView.textStorage.length {
+                    if textView.textStorage.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
                         // Remove the checkbox and the space after it
                         existingFormattingLength = 2 // checkbox + space
                     }
@@ -1236,7 +1242,7 @@ struct RichTextEditor: UIViewRepresentable {
 
                 // Remove existing formatting if found
                 if existingFormattingLength > 0 {
-                    attributedText.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
+                    textView.textStorage.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
                     totalInserted -= existingFormattingLength
                 }
 
@@ -1244,77 +1250,108 @@ struct RichTextEditor: UIViewRepresentable {
                 let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
                 let checkboxString = NSAttributedString(attachment: checkbox)
 
-                guard lineStart <= attributedText.length else { continue }
-                attributedText.insert(checkboxString, at: lineStart)
+                guard lineStart <= textView.textStorage.length else { continue }
+                textView.textStorage.insert(checkboxString, at: lineStart)
                 totalInserted += 1
 
                 // Check what character comes after the checkbox
                 let charAfterCheckbox = lineStart + 1
-                if charAfterCheckbox < attributedText.length {
+                if charAfterCheckbox < textView.textStorage.length {
                     let nextCharRange = NSRange(location: charAfterCheckbox, length: 1)
-                    let nextChar = attributedText.attributedSubstring(from: nextCharRange).string
+                    let nextChar = textView.textStorage.attributedSubstring(from: nextCharRange).string
                     if nextChar != " " && nextChar != "\n" {
-                        attributedText.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: charAfterCheckbox)
+                        textView.textStorage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: charAfterCheckbox)
                         totalInserted += 1
                     }
                 }
             }
 
-            // Update text view
-            textView?.attributedText = attributedText
+            textView.textStorage.endEditing()
+
             // Place cursor at the end of the selected range plus all insertions
             let newCursorPos = selectedEnd + totalInserted
-            textView?.selectedRange = NSRange(location: newCursorPos, length: 0)
+            textView.selectedRange = NSRange(location: newCursorPos, length: 0)
         }
 
         func insertDash() {
-            guard let textView = textView,
-                  let attributedText = textView.attributedText?.mutableCopy() as? NSMutableAttributedString else {
+            guard let textView = textView else {
                 return
             }
 
             isProgrammaticUpdate = true
 
+            print("[DEBUG insertDash] Starting - textStorage length: \(textView.textStorage.length)")
+            print("[DEBUG insertDash] textStorage content: '\(textView.textStorage.string)'")
+            print("[DEBUG insertDash] selectedRange: \(textView.selectedRange)")
+            if let undoManager = textView.undoManager {
+                print("[DEBUG insertDash] undoManager: \(undoManager)")
+            } else {
+                print("[DEBUG insertDash] undoManager: nil")
+            }
+            print("[DEBUG insertDash] undoManager?.isUndoing: \(textView.undoManager?.isUndoing ?? false)")
+            print("[DEBUG insertDash] undoManager?.isRedoing: \(textView.undoManager?.isRedoing ?? false)")
+
             let selectedRange = textView.selectedRange
 
             // Check if multiple lines are selected
             if selectedRange.length > 0 {
-                let selectedText = attributedText.attributedSubstring(from: selectedRange).string
+                let selectedText = textView.textStorage.attributedSubstring(from: selectedRange).string
                 let lines = selectedText.components(separatedBy: .newlines)
+
+                print("[DEBUG insertDash] Selected text: '\(selectedText)'")
+                print("[DEBUG insertDash] Number of lines: \(lines.count)")
 
                 if lines.count > 1 {
                     // Multiple lines selected
-                    insertDashForMultipleLines(in: attributedText, range: selectedRange, lines: lines)
+                    print("[DEBUG insertDash] Calling insertDashForMultipleLines")
+                    insertDashForMultipleLines(range: selectedRange, lines: lines)
                 } else {
                     // Single line selected - use original behavior
-                    insertDashAtPosition(attributedText, insertionRange: selectedRange)
+                    print("[DEBUG insertDash] Calling insertDashAtPosition")
+                    insertDashAtPosition(insertionRange: selectedRange)
                 }
             } else {
                 // No selection - insert at cursor position
-                insertDashAtPosition(attributedText, insertionRange: selectedRange)
+                print("[DEBUG insertDash] No selection - calling insertDashAtPosition")
+                insertDashAtPosition(insertionRange: selectedRange)
             }
 
+            print("[DEBUG insertDash] After insertion - textStorage length: \(textView.textStorage.length)")
+            print("[DEBUG insertDash] After insertion - textStorage content: '\(textView.textStorage.string)'")
+            print("[DEBUG insertDash] undoManager?.canUndo: \(textView.undoManager?.canUndo ?? false)")
+            print("[DEBUG insertDash] undoManager?.undoCount: \(textView.undoManager?.undoCount ?? 0)")
+
             applyTypingAttributes(to: textView)
-            pushTextToParent(attributedText)
+            pushTextToParent(textView.attributedText ?? NSAttributedString())
+
+            print("[DEBUG insertDash] After pushTextToParent - textStorage content: '\(textView.textStorage.string)'")
+            print("[DEBUG insertDash] After pushTextToParent - undoManager?.canUndo: \(textView.undoManager?.canUndo ?? false)")
             isProgrammaticUpdate = false
         }
 
-        private func insertDashAtPosition(_ attributedText: NSMutableAttributedString, insertionRange: NSRange) {
+        private func insertDashAtPosition(insertionRange: NSRange) {
             guard let textView = textView else { return }
             let dashText = "- "
             let fontAttrs = currentTypingAttributes(from: textView)
             let dashString = NSAttributedString(string: dashText, attributes: fontAttrs)
-            attributedText.insert(dashString, at: insertionRange.location)
+
+            // Use textStorage to properly register with undo manager
+            textView.textStorage.insert(dashString, at: insertionRange.location)
 
             let newCursorPosition = insertionRange.location + dashText.count
-            textView.attributedText = attributedText
             setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
         }
 
-        private func insertDashForMultipleLines(in attributedText: NSMutableAttributedString, range: NSRange, lines: [String]) {
+        private func insertDashForMultipleLines(range: NSRange, lines: [String]) {
+            guard let textView = textView else { return }
             let fontAttrs = currentTypingAttributes(from: textView)
             let dashText = "- "
-            let fullText = attributedText.string
+            let fullText = textView.textStorage.string
+
+            print("[DEBUG insertDashForMultipleLines] Starting - textStorage length: \(textView.textStorage.length)")
+            print("[DEBUG insertDashForMultipleLines] fullText: '\(fullText)'")
+            print("[DEBUG insertDashForMultipleLines] range: \(range)")
+            print("[DEBUG insertDashForMultipleLines] lines: \(lines)")
 
             // Find the start and end positions in the original text
             let selectedStart = range.location
@@ -1338,12 +1375,19 @@ struct RichTextEditor: UIViewRepresentable {
                 currentPos += 1
             }
 
+            print("[DEBUG insertDashForMultipleLines] lineBoundaries: \(lineBoundaries)")
+
             // Track total insertions
             var totalInserted = 0
+
+            // Group all edits into a single undo action
+            print("[DEBUG insertDashForMultipleLines] Calling beginEditing()")
+            textView.textStorage.beginEditing()
 
             // Process lines in reverse to avoid position shifting issues
             for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
                 let lineStart = lineBoundaries[i]
+                print("[DEBUG insertDashForMultipleLines] Processing line \(i) - lineStart: \(lineStart)")
 
                 // Find line end (newline or end of string)
                 var lineEnd = lineStart
@@ -1353,10 +1397,12 @@ struct RichTextEditor: UIViewRepresentable {
 
                 // Get the line content
                 let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
-                let lineContent = attributedText.attributedSubstring(from: lineRange).string
+                let lineContent = textView.textStorage.attributedSubstring(from: lineRange).string
+                print("[DEBUG insertDashForMultipleLines] lineContent: '\(lineContent)'")
 
                 // Skip empty lines
                 if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
+                    print("[DEBUG insertDashForMultipleLines] Skipping empty line")
                     continue
                 }
 
@@ -1364,10 +1410,11 @@ struct RichTextEditor: UIViewRepresentable {
                 var existingFormattingLength = 0
 
                 // Check for checkbox attachment
-                if lineStart < attributedText.length {
-                    if attributedText.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
+                if lineStart < textView.textStorage.length {
+                    if textView.textStorage.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
                         // Remove the checkbox and the space after it
                         existingFormattingLength = 2 // checkbox + space
+                        print("[DEBUG insertDashForMultipleLines] Found checkbox attachment")
                     }
                 }
 
@@ -1375,36 +1422,48 @@ struct RichTextEditor: UIViewRepresentable {
                 if existingFormattingLength == 0 {
                     if let dashMatch = lineContent.range(of: #"^-\s"#, options: .regularExpression) {
                         existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: dashMatch.upperBound)
+                        print("[DEBUG insertDashForMultipleLines] Found dash pattern, length: \(existingFormattingLength)")
                     } else if let bulletCharMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
                         existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletCharMatch.upperBound)
+                        print("[DEBUG insertDashForMultipleLines] Found bullet pattern, length: \(existingFormattingLength)")
                     } else if let numberMatch = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
                         existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: numberMatch.upperBound)
+                        print("[DEBUG insertDashForMultipleLines] Found number pattern, length: \(existingFormattingLength)")
                     }
                 }
 
                 // Remove existing formatting if found
                 if existingFormattingLength > 0 {
-                    attributedText.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
+                    print("[DEBUG insertDashForMultipleLines] Removing \(existingFormattingLength) chars of existing formatting")
+                    textView.textStorage.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
                     totalInserted -= existingFormattingLength
                 }
 
                 // Insert dash at the beginning of this line
-                guard lineStart <= attributedText.length else { continue }
+                guard lineStart <= textView.textStorage.length else {
+                    print("[DEBUG insertDashForMultipleLines] lineStart \(lineStart) > textStorage.length \(textView.textStorage.length)")
+                    continue
+                }
+                print("[DEBUG insertDashForMultipleLines] Inserting dash at \(lineStart)")
                 let dashString = NSAttributedString(string: dashText, attributes: fontAttrs)
-                attributedText.insert(dashString, at: lineStart)
+                textView.textStorage.insert(dashString, at: lineStart)
                 totalInserted += dashText.count
+                print("[DEBUG insertDashForMultipleLines] totalInserted now: \(totalInserted), textStorage now: '\(textView.textStorage.string)'")
             }
 
-            // Update text view
-            textView?.attributedText = attributedText
+            print("[DEBUG insertDashForMultipleLines] Calling endEditing()")
+            textView.textStorage.endEditing()
+            print("[DEBUG insertDashForMultipleLines] After endEditing() - textStorage: '\(textView.textStorage.string)'")
+
             // Place cursor at the end of the selected range plus all insertions
             let newCursorPos = selectedEnd + totalInserted
-            textView?.selectedRange = NSRange(location: newCursorPos, length: 0)
+            print("[DEBUG insertDashForMultipleLines] Setting cursor to \(newCursorPos)")
+            textView.selectedRange = NSRange(location: newCursorPos, length: 0)
+            print("[DEBUG insertDashForMultipleLines] Final textStorage: '\(textView.textStorage.string)'")
         }
 
         func insertBullet() {
-            guard let textView = textView,
-                  let attributedText = textView.attributedText?.mutableCopy() as? NSMutableAttributedString else {
+            guard let textView = textView else {
                 return
             }
 
@@ -1414,42 +1473,44 @@ struct RichTextEditor: UIViewRepresentable {
 
             // Check if multiple lines are selected
             if selectedRange.length > 0 {
-                let selectedText = attributedText.attributedSubstring(from: selectedRange).string
+                let selectedText = textView.textStorage.attributedSubstring(from: selectedRange).string
                 let lines = selectedText.components(separatedBy: .newlines)
 
                 if lines.count > 1 {
                     // Multiple lines selected
-                    insertBulletForMultipleLines(in: attributedText, range: selectedRange, lines: lines)
+                    insertBulletForMultipleLines(range: selectedRange, lines: lines)
                 } else {
                     // Single line selected - use original behavior
-                    insertBulletAtPosition(attributedText, insertionRange: selectedRange)
+                    insertBulletAtPosition(insertionRange: selectedRange)
                 }
             } else {
                 // No selection - insert at cursor position
-                insertBulletAtPosition(attributedText, insertionRange: selectedRange)
+                insertBulletAtPosition(insertionRange: selectedRange)
             }
 
             applyTypingAttributes(to: textView)
-            pushTextToParent(attributedText)
+            pushTextToParent(textView.attributedText ?? NSAttributedString())
             isProgrammaticUpdate = false
         }
 
-        private func insertBulletAtPosition(_ attributedText: NSMutableAttributedString, insertionRange: NSRange) {
+        private func insertBulletAtPosition(insertionRange: NSRange) {
             guard let textView = textView else { return }
             let bulletText = "• "
             let fontAttrs = currentTypingAttributes(from: textView)
             let bulletString = NSAttributedString(string: bulletText, attributes: fontAttrs)
-            attributedText.insert(bulletString, at: insertionRange.location)
+
+            // Use textStorage to properly register with undo manager
+            textView.textStorage.insert(bulletString, at: insertionRange.location)
 
             let newCursorPosition = insertionRange.location + bulletText.count
-            textView.attributedText = attributedText
             setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
         }
 
-        private func insertBulletForMultipleLines(in attributedText: NSMutableAttributedString, range: NSRange, lines: [String]) {
+        private func insertBulletForMultipleLines(range: NSRange, lines: [String]) {
+            guard let textView = textView else { return }
             let fontAttrs = currentTypingAttributes(from: textView)
             let bulletText = "• "
-            let fullText = attributedText.string
+            let fullText = textView.textStorage.string
 
             // Find the start and end positions in the original text
             let selectedStart = range.location
@@ -1476,6 +1537,9 @@ struct RichTextEditor: UIViewRepresentable {
             // Track total insertions
             var totalInserted = 0
 
+            // Group all edits into a single undo action
+            textView.textStorage.beginEditing()
+
             // Process lines in reverse to avoid position shifting issues
             for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
                 let lineStart = lineBoundaries[i]
@@ -1488,7 +1552,7 @@ struct RichTextEditor: UIViewRepresentable {
 
                 // Get the line content
                 let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
-                let lineContent = attributedText.attributedSubstring(from: lineRange).string
+                let lineContent = textView.textStorage.attributedSubstring(from: lineRange).string
 
                 // Skip empty lines
                 if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -1499,8 +1563,8 @@ struct RichTextEditor: UIViewRepresentable {
                 var existingFormattingLength = 0
 
                 // Check for checkbox attachment
-                if lineStart < attributedText.length {
-                    if attributedText.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
+                if lineStart < textView.textStorage.length {
+                    if textView.textStorage.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
                         // Remove the checkbox and the space after it
                         existingFormattingLength = 2 // checkbox + space
                     }
@@ -1519,27 +1583,26 @@ struct RichTextEditor: UIViewRepresentable {
 
                 // Remove existing formatting if found
                 if existingFormattingLength > 0 {
-                    attributedText.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
+                    textView.textStorage.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
                     totalInserted -= existingFormattingLength
                 }
 
                 // Insert bullet at the beginning of this line
-                guard lineStart <= attributedText.length else { continue }
+                guard lineStart <= textView.textStorage.length else { continue }
                 let bulletString = NSAttributedString(string: bulletText, attributes: fontAttrs)
-                attributedText.insert(bulletString, at: lineStart)
+                textView.textStorage.insert(bulletString, at: lineStart)
                 totalInserted += bulletText.count
             }
 
-            // Update text view
-            textView?.attributedText = attributedText
+            textView.textStorage.endEditing()
+
             // Place cursor at the end of the selected range plus all insertions
             let newCursorPos = selectedEnd + totalInserted
-            textView?.selectedRange = NSRange(location: newCursorPos, length: 0)
+            textView.selectedRange = NSRange(location: newCursorPos, length: 0)
         }
 
         func insertNumbering() {
-            guard let textView = textView,
-                  let attributedText = textView.attributedText?.mutableCopy() as? NSMutableAttributedString else {
+            guard let textView = textView else {
                 return
             }
 
@@ -1549,35 +1612,37 @@ struct RichTextEditor: UIViewRepresentable {
 
             // Check if multiple lines are selected
             if selectedRange.length > 0 {
-                let selectedText = attributedText.attributedSubstring(from: selectedRange).string
+                let selectedText = textView.textStorage.attributedSubstring(from: selectedRange).string
                 let lines = selectedText.components(separatedBy: .newlines)
 
                 if lines.count > 1 {
                     // Multiple lines selected
-                    insertNumberingForMultipleLines(in: attributedText, range: selectedRange, lines: lines)
+                    insertNumberingForMultipleLines(range: selectedRange, lines: lines)
                 } else {
                     // Single line selected - use original behavior
-                    insertNumberingAtPosition(attributedText, insertionRange: selectedRange)
+                    insertNumberingAtPosition(insertionRange: selectedRange)
                 }
             } else {
                 // No selection - insert at cursor position
-                insertNumberingAtPosition(attributedText, insertionRange: selectedRange)
+                insertNumberingAtPosition(insertionRange: selectedRange)
             }
 
             applyTypingAttributes(to: textView)
-            pushTextToParent(attributedText)
+            pushTextToParent(textView.attributedText ?? NSAttributedString())
             isProgrammaticUpdate = false
         }
 
-        private func insertNumberingAtPosition(_ attributedText: NSMutableAttributedString, insertionRange: NSRange) {
+        private func insertNumberingAtPosition(insertionRange: NSRange) {
             guard let textView = textView else { return }
             let numberText = "1. "
             let fontAttrs = currentTypingAttributes(from: textView)
             let numberString = NSAttributedString(string: numberText, attributes: fontAttrs)
-            attributedText.insert(numberString, at: insertionRange.location)
+
+            // Use textStorage to properly register with undo manager
+            textView.textStorage.insert(numberString, at: insertionRange.location)
 
             // Find the start of the current line to renumber from the next line
-            let fullText = attributedText.string
+            let fullText = textView.textStorage.string
             var lineStartPos = insertionRange.location
             while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
                 lineStartPos -= 1
@@ -1591,11 +1656,10 @@ struct RichTextEditor: UIViewRepresentable {
 
             // Renumber any subsequent numbered lines starting from the next line
             if lineEndPos < fullText.count {
-                renumberSubsequentLines(in: attributedText, startingAfter: lineEndPos + 1, fontAttrs: fontAttrs)
+                renumberSubsequentLines(in: textView.textStorage, startingAfter: lineEndPos + 1, fontAttrs: fontAttrs)
             }
 
             let newCursorPosition = insertionRange.location + numberText.count
-            textView.attributedText = attributedText
             setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
         }
 
@@ -1636,9 +1700,10 @@ struct RichTextEditor: UIViewRepresentable {
             }
         }
 
-        private func insertNumberingForMultipleLines(in attributedText: NSMutableAttributedString, range: NSRange, lines: [String]) {
+        private func insertNumberingForMultipleLines(range: NSRange, lines: [String]) {
+            guard let textView = textView else { return }
             let fontAttrs = currentTypingAttributes(from: textView)
-            let fullText = attributedText.string
+            let fullText = textView.textStorage.string
 
             // Find the start and end positions in the original text
             let selectedStart = range.location
@@ -1666,6 +1731,9 @@ struct RichTextEditor: UIViewRepresentable {
             var lineNumber = lineBoundaries.count
             var totalInserted = 0
 
+            // Group all edits into a single undo action
+            textView.textStorage.beginEditing()
+
             for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
                 let lineStart = lineBoundaries[i]
 
@@ -1677,7 +1745,7 @@ struct RichTextEditor: UIViewRepresentable {
 
                 // Get the line content
                 let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
-                let lineContent = attributedText.attributedSubstring(from: lineRange).string
+                let lineContent = textView.textStorage.attributedSubstring(from: lineRange).string
 
                 // Skip empty lines
                 if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -1686,15 +1754,13 @@ struct RichTextEditor: UIViewRepresentable {
                 }
 
                 // Check for and remove existing formatting at the start of the line
-                var contentStartPos = lineStart
                 var existingFormattingLength = 0
 
                 // Check for checkbox attachment
-                if lineStart < attributedText.length {
-                    if attributedText.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
+                if lineStart < textView.textStorage.length {
+                    if textView.textStorage.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
                         // Remove the checkbox and the space after it
                         existingFormattingLength = 2 // checkbox + space
-                        contentStartPos = lineStart + 1
                     }
                 }
 
@@ -1711,28 +1777,28 @@ struct RichTextEditor: UIViewRepresentable {
 
                 // Remove existing formatting if found
                 if existingFormattingLength > 0 {
-                    attributedText.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
+                    textView.textStorage.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
                     totalInserted -= existingFormattingLength
                 }
 
                 // Insert number at the beginning of this line
-                guard lineStart <= attributedText.length else {
+                guard lineStart <= textView.textStorage.length else {
                     lineNumber -= 1
                     continue
                 }
                 let numberText = "\(lineNumber). "
                 let numberString = NSAttributedString(string: numberText, attributes: fontAttrs)
-                attributedText.insert(numberString, at: lineStart)
+                textView.textStorage.insert(numberString, at: lineStart)
                 totalInserted += numberText.count
 
                 lineNumber -= 1
             }
 
-            // Update text view
-            textView?.attributedText = attributedText
+            textView.textStorage.endEditing()
+
             // Place cursor at the end of the selected range plus all insertions
             let newCursorPos = selectedEnd + totalInserted
-            textView?.selectedRange = NSRange(location: newCursorPos, length: 0)
+            textView.selectedRange = NSRange(location: newCursorPos, length: 0)
         }
 
         func insertDate() {

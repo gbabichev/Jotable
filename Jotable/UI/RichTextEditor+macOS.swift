@@ -520,10 +520,14 @@ struct RichTextEditor: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard !isProgrammaticUpdate,
                   let textView = notification.object as? NSTextView,
-                  textView === self.textView else { return }
+                  textView === self.textView else {
+                return
+            }
 
             // Skip textDidChange during initialization to prevent feedback loops
-            guard !isInitializing else { return }
+            guard !isInitializing else {
+                return
+            }
 
             syncColorState(with: textView, sampleFromText: true)
             syncFormattingState(with: textView)
@@ -1082,163 +1086,159 @@ struct RichTextEditor: NSViewRepresentable {
                 return
             }
 
-            isProgrammaticUpdate = true
-
             let selectedRange = textView.selectedRange
 
-            // Check if multiple lines are selected
             if selectedRange.length > 0 {
-                // Multiple lines selected - add checkbox to start of each line
                 let selectedText = storage.attributedSubstring(from: selectedRange).string
                 let lines = selectedText.components(separatedBy: .newlines)
-
                 if lines.count > 1 {
-                    // We have multiple lines - process each one
-                    insertCheckboxForMultipleLines(in: storage, range: selectedRange, lines: lines)
+                    insertCheckboxForMultipleLines(range: selectedRange)
                 } else {
-                    // Single line selected - use original behavior
-                    insertCheckboxAtPosition(storage, insertionRange: selectedRange)
+                    insertCheckboxAtPosition(insertionRange: selectedRange)
                 }
             } else {
-                // No selection - insert at cursor position
-                insertCheckboxAtPosition(storage, insertionRange: selectedRange)
+                insertCheckboxAtPosition(insertionRange: selectedRange)
             }
 
             applyTypingAttributes(to: textView)
-
-            // Defer binding update to next runloop to avoid state modification during view update
-            let newText = NSAttributedString(attributedString: storage)
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.text = newText
-                self?.isProgrammaticUpdate = false
-            }
         }
 
-        private func insertCheckboxAtPosition(_ storage: NSTextStorage, insertionRange: NSRange) {
-            let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
-            let checkboxString = NSAttributedString(attachment: checkbox)
+        private func insertCheckboxAtPosition(insertionRange: NSRange) {
+            guard let textView = textView,
+                  let storage = textView.textStorage else { return }
 
-            // Insert checkbox
-            storage.insert(checkboxString, at: insertionRange.location)
+            let needsSpace = checkboxNeedsTrailingSpace(after: insertionRange.location, in: storage.string)
+            let replacement = checkboxPrefix(includeSpace: needsSpace)
+            let insertionPoint = NSRange(location: insertionRange.location, length: 0)
 
-            // Insert space after checkbox if next character is not already a space
-            let spaceInsertionPos = insertionRange.location + 1
-            if spaceInsertionPos < storage.length {
-                let nextCharRange = NSRange(location: spaceInsertionPos, length: 1)
-                let nextChar = storage.attributedSubstring(from: nextCharRange).string
-                if nextChar != " " {
-                    // Space after attachment should have minimal attributes to avoid rendering issues
-                    // Only include font to ensure proper baseline alignment
-                    let baseFont = NSFont.systemFont(ofSize: activeFontSize.rawValue)
-                    let spaceAttrs: [NSAttributedString.Key: Any] = [.font: baseFont]
-                    storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
-                }
-            } else {
-                // End of text, just add space with minimal attributes
-                let baseFont = NSFont.systemFont(ofSize: activeFontSize.rawValue)
-                let spaceAttrs: [NSAttributedString.Key: Any] = [.font: baseFont]
-                storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
-            }
-
-            let newCursorPosition = spaceInsertionPos + 1
-            textView?.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+            let insertedLength = replaceText(in: insertionPoint, with: replacement, in: textView)
+            let newCursorPosition = insertionRange.location + insertedLength
+            textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
         }
 
-        private func insertCheckboxForMultipleLines(in storage: NSTextStorage, range: NSRange, lines: [String]) {
-            let baseFont = NSFont.systemFont(ofSize: activeFontSize.rawValue)
-            let spaceAttrs: [NSAttributedString.Key: Any] = [.font: baseFont]
+        private func insertCheckboxForMultipleLines(range: NSRange) {
+            guard let textView = textView,
+                  let storage = textView.textStorage else {
+                return
+            }
+
             let fullText = storage.string
+            let spaceAttrs = checkboxSpaceAttributes()
 
-            // Find the start and end positions in the original text
             let selectedStart = range.location
-            let selectedEnd = range.location + range.length
+            let originalSelectedEnd = range.location + range.length
 
-            // Find line boundaries in the selected range
-            // First, find the start of the line containing selectedStart
             var lineStartPos = selectedStart
-            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+            while lineStartPos > 0 &&
+                    fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
                 lineStartPos -= 1
             }
 
-            // Find all line starts in the selected range
             var lineBoundaries: [Int] = [lineStartPos]
             var currentPos = lineStartPos
 
-            while currentPos < selectedEnd {
+            while currentPos < originalSelectedEnd {
                 let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
-                if currentPos < fullText.count && fullText[charIndex] == "\n" && currentPos + 1 < selectedEnd {
+                if currentPos < fullText.count &&
+                    fullText[charIndex] == "\n" &&
+                    currentPos + 1 <= originalSelectedEnd {
                     lineBoundaries.append(currentPos + 1)
                 }
                 currentPos += 1
             }
 
-            // Process lines in reverse to avoid position shifting issues
-            for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
-                let lineStart = lineBoundaries[i]
+            var affectedEnd = originalSelectedEnd
+            while affectedEnd < fullText.count,
+                  fullText[fullText.index(fullText.startIndex, offsetBy: affectedEnd)] != "\n" {
+                affectedEnd += 1
+            }
 
-                // Find line end (newline or end of string)
+            guard affectedEnd >= lineStartPos else { return }
+
+            let affectedRange = NSRange(location: lineStartPos, length: affectedEnd - lineStartPos)
+            let mutableSelection = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: affectedRange))
+            let relativeStarts = lineBoundaries
+                .map { max(0, min($0 - lineStartPos, mutableSelection.length)) }
+                .filter { $0 < mutableSelection.length }
+
+            for lineStart in relativeStarts.reversed() {
                 var lineEnd = lineStart
-                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
+                let mutableString = mutableSelection.mutableString
+                while lineEnd < mutableSelection.length && mutableString.character(at: lineEnd) != 10 {
                     lineEnd += 1
                 }
 
-                // Get the line content (without newline)
                 let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
-                let lineContent = storage.attributedSubstring(from: lineRange).string
+                let lineContent = mutableSelection.attributedSubstring(from: lineRange).string
 
-                // Skip empty lines
                 if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
                     continue
                 }
 
-                // Check for and remove existing formatting at the start of the line
                 var existingFormattingLength = 0
-
-                // Check for existing checkbox attachment
-                if lineStart < storage.length {
-                    if storage.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
-                        // Remove the checkbox and the space after it
-                        existingFormattingLength = 2 // checkbox + space
-                    }
+                if lineStart < mutableSelection.length,
+                   mutableSelection.attribute(NSAttributedString.Key.attachment,
+                                             at: lineStart,
+                                             longestEffectiveRange: nil,
+                                             in: lineRange) is CheckboxTextAttachment {
+                    existingFormattingLength = min(2, mutableSelection.length - lineStart)
                 }
 
-                // If no checkbox, check for dash, bullet, or number patterns
                 if existingFormattingLength == 0 {
                     if let dashMatch = lineContent.range(of: #"^-\s"#, options: .regularExpression) {
                         existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: dashMatch.upperBound)
-                    } else if let bulletCharMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
-                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletCharMatch.upperBound)
+                    } else if let bulletMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletMatch.upperBound)
                     } else if let numberMatch = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
                         existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: numberMatch.upperBound)
                     }
                 }
 
-                // Remove existing formatting if found
                 if existingFormattingLength > 0 {
-                    storage.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
+                    let removalLength = min(existingFormattingLength, mutableSelection.length - lineStart)
+                    mutableSelection.deleteCharacters(in: NSRange(location: lineStart, length: removalLength))
                 }
 
-                // Insert checkbox at the beginning of this line
                 let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
                 let checkboxString = NSAttributedString(attachment: checkbox)
+                mutableSelection.insert(checkboxString, at: lineStart)
 
-                guard lineStart <= storage.length else { continue }
-                storage.insert(checkboxString, at: lineStart)
-
-                // Check what character comes after the checkbox
-                let charAfterCheckbox = lineStart + 1
-                if charAfterCheckbox < storage.length {
+                let charAfterCheckbox = lineStart + checkboxString.length
+                if charAfterCheckbox < mutableSelection.length {
                     let nextCharRange = NSRange(location: charAfterCheckbox, length: 1)
-                    let nextChar = storage.attributedSubstring(from: nextCharRange).string
+                    let nextChar = mutableSelection.attributedSubstring(from: nextCharRange).string
                     if nextChar != " " && nextChar != "\n" {
-                        storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: charAfterCheckbox)
+                        mutableSelection.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: charAfterCheckbox)
                     }
+                } else {
+                    mutableSelection.append(NSAttributedString(string: " ", attributes: spaceAttrs))
                 }
             }
 
-            // Update selection
-            let newCursorPos = min(selectedEnd + 10, storage.length) // rough estimate
-            textView?.setSelectedRange(NSRange(location: newCursorPos, length: 0))
+            let delta = replaceText(in: affectedRange, with: mutableSelection, in: textView)
+            let newCursorPos = min(originalSelectedEnd + delta, storage.length)
+            textView.setSelectedRange(NSRange(location: newCursorPos, length: 0))
+        }
+
+        private func checkboxPrefix(includeSpace: Bool) -> NSAttributedString {
+            let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
+            let prefix = NSMutableAttributedString(attachment: checkbox)
+            if includeSpace {
+                prefix.append(NSAttributedString(string: " ", attributes: checkboxSpaceAttributes()))
+            }
+            return prefix
+        }
+
+        private func checkboxSpaceAttributes() -> [NSAttributedString.Key: Any] {
+            let baseFont = NSFont.systemFont(ofSize: activeFontSize.rawValue)
+            return [.font: baseFont]
+        }
+
+        private func checkboxNeedsTrailingSpace(after location: Int, in fullText: String) -> Bool {
+            guard location < fullText.count else { return true }
+            let index = fullText.index(fullText.startIndex, offsetBy: location)
+            let char = fullText[index]
+            return char != " " && char != "\n"
         }
 
         func insertDash() {
@@ -1247,8 +1247,6 @@ struct RichTextEditor: NSViewRepresentable {
                 return
             }
 
-            isProgrammaticUpdate = true
-
             let selectedRange = textView.selectedRange
 
             // Check if multiple lines are selected
@@ -1258,47 +1256,51 @@ struct RichTextEditor: NSViewRepresentable {
 
                 if lines.count > 1 {
                     // Multiple lines selected
-                    insertDashForMultipleLines(in: storage, range: selectedRange, lines: lines)
+                    insertDashForMultipleLines(range: selectedRange)
                 } else {
                     // Single line selected - use original behavior
-                    insertDashAtPosition(storage, insertionRange: selectedRange)
+                    insertDashAtPosition(insertionRange: selectedRange)
                 }
             } else {
                 // No selection - insert at cursor position
-                insertDashAtPosition(storage, insertionRange: selectedRange)
+                insertDashAtPosition(insertionRange: selectedRange)
             }
 
             applyTypingAttributes(to: textView)
-
-            let newText = NSAttributedString(attributedString: storage)
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.text = newText
-                self?.isProgrammaticUpdate = false
-            }
         }
 
-        private func insertDashAtPosition(_ storage: NSTextStorage, insertionRange: NSRange) {
+        private func insertDashAtPosition(insertionRange: NSRange) {
+            guard let textView = textView else { return }
+
             let dashText = "- "
             let fontAttrs = currentTypingAttributes(from: textView)
             let dashString = NSAttributedString(string: dashText, attributes: fontAttrs)
-            storage.insert(dashString, at: insertionRange.location)
+
+            let insertionPoint = NSRange(location: insertionRange.location, length: 0)
+            _ = replaceText(in: insertionPoint, with: dashString, in: textView)
 
             let newCursorPosition = insertionRange.location + dashText.count
-            textView?.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+            textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
         }
 
-        private func insertDashForMultipleLines(in storage: NSTextStorage, range: NSRange, lines: [String]) {
+        private func insertDashForMultipleLines(range: NSRange) {
+            guard let textView = textView,
+                  let storage = textView.textStorage else {
+                return
+            }
+
             let fontAttrs = currentTypingAttributes(from: textView)
             let dashText = "- "
+            let dashString = NSAttributedString(string: dashText, attributes: fontAttrs)
             let fullText = storage.string
 
             // Find the start and end positions in the original text
             let selectedStart = range.location
             let selectedEnd = range.location + range.length
 
-            // Find line boundaries
             var lineStartPos = selectedStart
-            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+            while lineStartPos > 0,
+                  fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
                 lineStartPos -= 1
             }
 
@@ -1314,19 +1316,33 @@ struct RichTextEditor: NSViewRepresentable {
                 currentPos += 1
             }
 
-            // Process lines in reverse to avoid position shifting issues
-            for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
-                let lineStart = lineBoundaries[i]
+            var affectedEnd = selectedEnd
+            while affectedEnd < fullText.count {
+                let charIndex = fullText.index(fullText.startIndex, offsetBy: affectedEnd)
+                if fullText[charIndex] == "\n" {
+                    break
+                }
+                affectedEnd += 1
+            }
 
-                // Find line end (newline or end of string)
+            guard affectedEnd >= lineStartPos else { return }
+
+            let affectedRange = NSRange(location: lineStartPos, length: affectedEnd - lineStartPos)
+            let mutableSelection = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: affectedRange))
+            let relativeStarts = lineBoundaries
+                .map { max(0, min($0 - lineStartPos, mutableSelection.length)) }
+                .filter { $0 < mutableSelection.length }
+
+            // Process lines in reverse to avoid position shifting issues
+            for lineStart in relativeStarts.reversed() {
                 var lineEnd = lineStart
-                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
+                let mutableString = mutableSelection.mutableString
+                while lineEnd < mutableSelection.length && mutableString.character(at: lineEnd) != 10 {
                     lineEnd += 1
                 }
 
-                // Get the line content
                 let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
-                let lineContent = storage.attributedSubstring(from: lineRange).string
+                let lineContent = mutableSelection.attributedSubstring(from: lineRange).string
 
                 // Skip empty lines
                 if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -1336,12 +1352,12 @@ struct RichTextEditor: NSViewRepresentable {
                 // Check for and remove existing formatting at the start of the line
                 var existingFormattingLength = 0
 
-                // Check for checkbox attachment
-                if lineStart < storage.length {
-                    if storage.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
-                        // Remove the checkbox and the space after it
-                        existingFormattingLength = 2 // checkbox + space
-                    }
+                if lineStart < mutableSelection.length,
+                   mutableSelection.attribute(NSAttributedString.Key.attachment,
+                                             at: lineStart,
+                                             longestEffectiveRange: nil,
+                                             in: lineRange) is CheckboxTextAttachment {
+                    existingFormattingLength = min(2, mutableSelection.length - lineStart)
                 }
 
                 // If no checkbox, check for dash, bullet, or number patterns
@@ -1355,20 +1371,35 @@ struct RichTextEditor: NSViewRepresentable {
                     }
                 }
 
-                // Remove existing formatting if found
                 if existingFormattingLength > 0 {
-                    storage.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
+                    let removalLength = min(existingFormattingLength, mutableSelection.length - lineStart)
+                    mutableSelection.deleteCharacters(in: NSRange(location: lineStart, length: removalLength))
                 }
 
-                // Insert dash at the beginning of this line
-                guard lineStart <= storage.length else { continue }
-                let dashString = NSAttributedString(string: dashText, attributes: fontAttrs)
-                storage.insert(dashString, at: lineStart)
+                mutableSelection.insert(NSAttributedString(attributedString: dashString), at: lineStart)
             }
 
-            // Update selection
-            let newCursorPos = min(selectedEnd + 50, storage.length) // rough estimate
-            textView?.setSelectedRange(NSRange(location: newCursorPos, length: 0))
+            let delta = replaceText(in: affectedRange, with: mutableSelection, in: textView)
+            let newCursorPos = min(selectedEnd + delta, textView.textStorage?.length ?? 0)
+            textView.setSelectedRange(NSRange(location: newCursorPos, length: 0))
+        }
+
+        @discardableResult
+        private func replaceText(in range: NSRange,
+                                 with replacement: NSAttributedString,
+                                 in textView: NSTextView) -> Int {
+            guard let storage = textView.textStorage else { return 0 }
+
+            if !textView.shouldChangeText(in: range, replacementString: replacement.string) {
+                return 0
+            }
+
+            storage.beginEditing()
+            storage.replaceCharacters(in: range, with: replacement)
+            storage.endEditing()
+
+            textView.didChangeText()
+            return replacement.length - range.length
         }
 
         func insertBullet() {
@@ -1377,128 +1408,130 @@ struct RichTextEditor: NSViewRepresentable {
                 return
             }
 
-            isProgrammaticUpdate = true
-
             let selectedRange = textView.selectedRange
 
-            // Check if multiple lines are selected
             if selectedRange.length > 0 {
                 let selectedText = storage.attributedSubstring(from: selectedRange).string
                 let lines = selectedText.components(separatedBy: .newlines)
 
                 if lines.count > 1 {
-                    // Multiple lines selected
-                    insertBulletForMultipleLines(in: storage, range: selectedRange, lines: lines)
+                    insertBulletForMultipleLines(range: selectedRange)
                 } else {
-                    // Single line selected - use original behavior
-                    insertBulletAtPosition(storage, insertionRange: selectedRange)
+                    insertBulletAtPosition(insertionRange: selectedRange)
                 }
             } else {
-                // No selection - insert at cursor position
-                insertBulletAtPosition(storage, insertionRange: selectedRange)
+                insertBulletAtPosition(insertionRange: selectedRange)
             }
 
             applyTypingAttributes(to: textView)
-
-            let newText = NSAttributedString(attributedString: storage)
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.text = newText
-                self?.isProgrammaticUpdate = false
-            }
         }
 
-        private func insertBulletAtPosition(_ storage: NSTextStorage, insertionRange: NSRange) {
+        private func insertBulletAtPosition(insertionRange: NSRange) {
+            guard let textView = textView else { return }
+
             let bulletText = "• "
             let fontAttrs = currentTypingAttributes(from: textView)
             let bulletString = NSAttributedString(string: bulletText, attributes: fontAttrs)
-            storage.insert(bulletString, at: insertionRange.location)
+
+            let insertionPoint = NSRange(location: insertionRange.location, length: 0)
+            _ = replaceText(in: insertionPoint, with: bulletString, in: textView)
 
             let newCursorPosition = insertionRange.location + bulletText.count
-            textView?.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+            textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
         }
 
-        private func insertBulletForMultipleLines(in storage: NSTextStorage, range: NSRange, lines: [String]) {
+        private func insertBulletForMultipleLines(range: NSRange) {
+            guard let textView = textView,
+                  let storage = textView.textStorage else {
+                return
+            }
+
             let fontAttrs = currentTypingAttributes(from: textView)
             let bulletText = "• "
             let fullText = storage.string
 
-            // Find the start and end positions in the original text
             let selectedStart = range.location
-            let selectedEnd = range.location + range.length
+            let originalSelectedEnd = range.location + range.length
 
-            // Find line boundaries
             var lineStartPos = selectedStart
-            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+            while lineStartPos > 0 &&
+                    fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
                 lineStartPos -= 1
             }
 
-            // Find all line starts in the selected range
             var lineBoundaries: [Int] = [lineStartPos]
             var currentPos = lineStartPos
 
-            while currentPos < selectedEnd {
+            while currentPos < originalSelectedEnd {
                 let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
-                if currentPos < fullText.count && fullText[charIndex] == "\n" && currentPos + 1 < selectedEnd {
+                if currentPos < fullText.count &&
+                    fullText[charIndex] == "\n" &&
+                    currentPos + 1 <= originalSelectedEnd {
                     lineBoundaries.append(currentPos + 1)
                 }
                 currentPos += 1
             }
 
-            // Process lines in reverse to avoid position shifting issues
-            for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
-                let lineStart = lineBoundaries[i]
+            var affectedEnd = originalSelectedEnd
+            while affectedEnd < fullText.count,
+                  fullText[fullText.index(fullText.startIndex, offsetBy: affectedEnd)] != "\n" {
+                affectedEnd += 1
+            }
 
-                // Find line end (newline or end of string)
+            guard affectedEnd >= lineStartPos else { return }
+
+            let affectedRange = NSRange(location: lineStartPos, length: affectedEnd - lineStartPos)
+            let mutableSelection = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: affectedRange))
+            let relativeStarts = lineBoundaries
+                .map { max(0, min($0 - lineStartPos, mutableSelection.length)) }
+                .filter { $0 < mutableSelection.length }
+
+            for lineStart in relativeStarts.reversed() {
                 var lineEnd = lineStart
-                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
+                let mutableString = mutableSelection.mutableString
+                while lineEnd < mutableSelection.length && mutableString.character(at: lineEnd) != 10 {
                     lineEnd += 1
                 }
 
-                // Get the line content
                 let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
-                let lineContent = storage.attributedSubstring(from: lineRange).string
+                let lineContent = mutableSelection.attributedSubstring(from: lineRange).string
 
-                // Skip empty lines
                 if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
                     continue
                 }
 
-                // Check for and remove existing formatting at the start of the line
                 var existingFormattingLength = 0
 
-                // Check for checkbox attachment
-                if lineStart < storage.length {
-                    if storage.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
-                        // Remove the checkbox and the space after it
-                        existingFormattingLength = 2 // checkbox + space
-                    }
+                if lineStart < mutableSelection.length,
+                   mutableSelection.attribute(NSAttributedString.Key.attachment,
+                                             at: lineStart,
+                                             longestEffectiveRange: nil,
+                                             in: lineRange) is CheckboxTextAttachment {
+                    existingFormattingLength = min(2, mutableSelection.length - lineStart)
                 }
 
-                // If no checkbox, check for dash, bullet, or number patterns
                 if existingFormattingLength == 0 {
                     if let dashMatch = lineContent.range(of: #"^-\s"#, options: .regularExpression) {
                         existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: dashMatch.upperBound)
-                    } else if let bulletCharMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
-                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletCharMatch.upperBound)
+                    } else if let bulletMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletMatch.upperBound)
                     } else if let numberMatch = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
                         existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: numberMatch.upperBound)
                     }
                 }
 
-                // Remove existing formatting if found
                 if existingFormattingLength > 0 {
-                    storage.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
+                    let removalLength = min(existingFormattingLength, mutableSelection.length - lineStart)
+                    mutableSelection.deleteCharacters(in: NSRange(location: lineStart, length: removalLength))
                 }
 
-                // Insert bullet at the beginning of this line
-                guard lineStart <= storage.length else { continue }
                 let bulletString = NSAttributedString(string: bulletText, attributes: fontAttrs)
-                storage.insert(bulletString, at: lineStart)
+                mutableSelection.insert(bulletString, at: lineStart)
             }
 
-            // Update selection
-            let newCursorPos = min(selectedEnd + 50, storage.length) // rough estimate
-            textView?.setSelectedRange(NSRange(location: newCursorPos, length: 0))
+            let delta = replaceText(in: affectedRange, with: mutableSelection, in: textView)
+            let newCursorPos = min(originalSelectedEnd + delta, storage.length)
+            textView.setSelectedRange(NSRange(location: newCursorPos, length: 0))
         }
 
         func insertNumbering() {
@@ -1507,190 +1540,171 @@ struct RichTextEditor: NSViewRepresentable {
                 return
             }
 
-            isProgrammaticUpdate = true
-
             let selectedRange = textView.selectedRange
 
-            // Check if multiple lines are selected
             if selectedRange.length > 0 {
                 let selectedText = storage.attributedSubstring(from: selectedRange).string
                 let lines = selectedText.components(separatedBy: .newlines)
 
                 if lines.count > 1 {
-                    // Multiple lines selected
-                    insertNumberingForMultipleLines(in: storage, range: selectedRange, lines: lines)
+                    insertNumberingForMultipleLines(range: selectedRange)
                 } else {
-                    // Single line selected - use original behavior
-                    insertNumberingAtPosition(storage, insertionRange: selectedRange)
+                    insertNumberingAtPosition(insertionRange: selectedRange)
                 }
             } else {
-                // No selection - insert at cursor position
-                insertNumberingAtPosition(storage, insertionRange: selectedRange)
+                insertNumberingAtPosition(insertionRange: selectedRange)
             }
 
             applyTypingAttributes(to: textView)
-
-            let newText = NSAttributedString(attributedString: storage)
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.text = newText
-                self?.isProgrammaticUpdate = false
-            }
         }
 
-        private func insertNumberingAtPosition(_ storage: NSTextStorage, insertionRange: NSRange) {
-            let numberText = "1. "
-            let fontAttrs = currentTypingAttributes(from: textView)
-            let numberString = NSAttributedString(string: numberText, attributes: fontAttrs)
-            storage.insert(numberString, at: insertionRange.location)
-
-            // Find the start of the current line to renumber from the next line
-            let fullText = storage.string
-            var lineStartPos = insertionRange.location
-            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
-                lineStartPos -= 1
-            }
-
-            // Find the end of the current line
-            var lineEndPos = insertionRange.location + numberText.count
-            while lineEndPos < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEndPos)] != "\n" {
-                lineEndPos += 1
-            }
-
-            // Renumber any subsequent numbered lines starting from the next line
-            if lineEndPos < fullText.count {
-                renumberSubsequentLines(in: storage, startingAfter: lineEndPos + 1, fontAttrs: fontAttrs)
-            }
-
-            let newCursorPosition = insertionRange.location + numberText.count
-            textView?.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+        private func insertNumberingAtPosition(insertionRange: NSRange) {
+            applyNumbering(to: insertionRange, includeFollowingNumberedLines: true)
         }
 
-        private func renumberSubsequentLines(in storage: NSTextStorage, startingAfter position: Int, fontAttrs: [NSAttributedString.Key: Any]) {
-            var currentPosition = position
-            var currentNumber = 2
-
-            // Process subsequent lines
-            while currentPosition < storage.length {
-                let fullText = storage.string
-
-                // Find the end of the current line
-                var lineEnd = currentPosition
-                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
-                    lineEnd += 1
-                }
-
-                let lineContent = storage.attributedSubstring(from: NSRange(location: currentPosition, length: lineEnd - currentPosition)).string
-
-                // Check if this line starts with a number pattern
-                if let match = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
-                    let numberPrefixLength = lineContent.distance(from: lineContent.startIndex, to: match.upperBound)
-                    let oldNumberRange = NSRange(location: currentPosition, length: numberPrefixLength)
-
-                    // Replace with the new number
-                    let newNumberText = "\(currentNumber). "
-                    let newNumberString = NSAttributedString(string: newNumberText, attributes: fontAttrs)
-                    storage.replaceCharacters(in: oldNumberRange, with: newNumberString)
-
-                    // Adjust currentPosition based on the difference in length
-                    let lengthDifference = newNumberText.count - numberPrefixLength
-                    currentNumber += 1
-                    currentPosition = lineEnd + lengthDifference + 1 // +1 for the newline
-                } else {
-                    // Line doesn't have a number pattern, stop renumbering
-                    break
-                }
-            }
+        private func insertNumberingForMultipleLines(range: NSRange) {
+            applyNumbering(to: range, includeFollowingNumberedLines: false)
         }
 
-        private func insertNumberingForMultipleLines(in storage: NSTextStorage, range: NSRange, lines: [String]) {
+        private func applyNumbering(to range: NSRange, includeFollowingNumberedLines: Bool) {
+            guard let textView = textView,
+                  let storage = textView.textStorage else {
+                return
+            }
+
             let fontAttrs = currentTypingAttributes(from: textView)
             let fullText = storage.string
 
-            // Find the start and end positions in the original text
             let selectedStart = range.location
-            let selectedEnd = range.location + range.length
+            let originalSelectedEnd = range.location + range.length
 
-            // Find line boundaries
             var lineStartPos = selectedStart
-            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+            while lineStartPos > 0 &&
+                    fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
                 lineStartPos -= 1
             }
 
-            // Find all line starts in the selected range
+            var effectiveEnd = max(originalSelectedEnd, selectedStart)
+            while effectiveEnd < fullText.count,
+                  fullText[fullText.index(fullText.startIndex, offsetBy: effectiveEnd)] != "\n" {
+                effectiveEnd += 1
+            }
+
             var lineBoundaries: [Int] = [lineStartPos]
             var currentPos = lineStartPos
 
-            while currentPos < selectedEnd {
+            while currentPos < effectiveEnd {
                 let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
-                if currentPos < fullText.count && fullText[charIndex] == "\n" && currentPos + 1 < selectedEnd {
+                if currentPos < fullText.count &&
+                    fullText[charIndex] == "\n" &&
+                    currentPos + 1 <= effectiveEnd {
                     lineBoundaries.append(currentPos + 1)
                 }
                 currentPos += 1
             }
 
-            // Process lines in reverse to avoid position shifting issues
-            var lineNumber = lineBoundaries.count
-            for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
-                let lineStart = lineBoundaries[i]
+            if includeFollowingNumberedLines {
+                var scanPos = effectiveEnd
+                while scanPos < fullText.count {
+                    let currentIndex = fullText.index(fullText.startIndex, offsetBy: scanPos)
+                    if fullText[currentIndex] != "\n" {
+                        scanPos += 1
+                        continue
+                    }
 
-                // Find line end (newline or end of string)
-                var lineEnd = lineStart
-                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
-                    lineEnd += 1
+                    let nextLineStart = scanPos + 1
+                    if nextLineStart >= fullText.count { break }
+
+                    var nextLineEnd = nextLineStart
+                    while nextLineEnd < fullText.count &&
+                            fullText[fullText.index(fullText.startIndex, offsetBy: nextLineEnd)] != "\n" {
+                        nextLineEnd += 1
+                    }
+
+                    let lineRange = NSRange(location: nextLineStart, length: nextLineEnd - nextLineStart)
+                    let lineContent = (fullText as NSString).substring(with: lineRange)
+
+                    if lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) != nil {
+                        lineBoundaries.append(nextLineStart)
+                        effectiveEnd = nextLineEnd
+                        scanPos = nextLineEnd
+                    } else {
+                        break
+                    }
                 }
+            }
 
-                // Get the line content
-                let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
-                let lineContent = storage.attributedSubstring(from: lineRange).string
+            guard effectiveEnd >= lineStartPos else { return }
 
-                // Skip empty lines
-                if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
+            let affectedRange = NSRange(location: lineStartPos, length: effectiveEnd - lineStartPos)
+            let mutableSelection = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: affectedRange))
+            let relativeStarts = lineBoundaries
+                .map { max(0, min($0 - lineStartPos, mutableSelection.length)) }
+                .filter { $0 <= mutableSelection.length }
+
+            var lineNumber = relativeStarts.count
+            for lineStart in relativeStarts.reversed() {
+                guard lineStart <= mutableSelection.length else {
                     lineNumber -= 1
                     continue
                 }
 
-                // Check for and remove existing formatting at the start of the line
-                var existingFormattingLength = 0
-
-                // Check for checkbox attachment
-                if lineStart < storage.length {
-                    if storage.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
-                        // Remove the checkbox and the space after it
-                        existingFormattingLength = 2 // checkbox + space
-                    }
+                var lineEnd = lineStart
+                let mutableString = mutableSelection.mutableString
+                while lineEnd < mutableSelection.length && mutableString.character(at: lineEnd) != 10 {
+                    lineEnd += 1
                 }
 
-                // If no checkbox, check for dash, bullet, or number patterns
+                let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
+                let lineContent = mutableSelection.attributedSubstring(from: lineRange).string
+                let isFirstLine = (lineNumber == relativeStarts.count)
+
+                if lineContent.trimmingCharacters(in: .whitespaces).isEmpty &&
+                    !(includeFollowingNumberedLines && isFirstLine) {
+                    lineNumber -= 1
+                    continue
+                }
+
+                var existingFormattingLength = 0
+                if lineStart < mutableSelection.length,
+                   mutableSelection.attribute(NSAttributedString.Key.attachment,
+                                             at: lineStart,
+                                             longestEffectiveRange: nil,
+                                             in: lineRange) is CheckboxTextAttachment {
+                    existingFormattingLength = min(2, mutableSelection.length - lineStart)
+                }
+
                 if existingFormattingLength == 0 {
                     if let dashMatch = lineContent.range(of: #"^-\s"#, options: .regularExpression) {
                         existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: dashMatch.upperBound)
-                    } else if let bulletCharMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
-                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletCharMatch.upperBound)
+                    } else if let bulletMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
+                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletMatch.upperBound)
                     } else if let numberMatch = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
                         existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: numberMatch.upperBound)
                     }
                 }
 
-                // Remove existing formatting if found
                 if existingFormattingLength > 0 {
-                    storage.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
+                    let removalLength = min(existingFormattingLength, mutableSelection.length - lineStart)
+                    mutableSelection.deleteCharacters(in: NSRange(location: lineStart, length: removalLength))
                 }
 
-                // Insert number at the beginning of this line
-                guard lineStart <= storage.length else {
-                    lineNumber -= 1
-                    continue
-                }
                 let numberText = "\(lineNumber). "
                 let numberString = NSAttributedString(string: numberText, attributes: fontAttrs)
-                storage.insert(numberString, at: lineStart)
+                mutableSelection.insert(numberString, at: lineStart)
 
                 lineNumber -= 1
             }
 
-            // Update selection
-            let newCursorPos = min(selectedEnd + 50, storage.length) // rough estimate
-            textView?.setSelectedRange(NSRange(location: newCursorPos, length: 0))
+            let delta = replaceText(in: affectedRange, with: mutableSelection, in: textView)
+
+            if includeFollowingNumberedLines {
+                let cursorPosition = min(lineStartPos + "1. ".count, storage.length)
+                textView.setSelectedRange(NSRange(location: cursorPosition, length: 0))
+            } else {
+                let newCursorPos = min(originalSelectedEnd + delta, storage.length)
+                textView.setSelectedRange(NSRange(location: newCursorPos, length: 0))
+            }
         }
 
         func insertDate() {
