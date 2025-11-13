@@ -1219,13 +1219,14 @@ struct RichTextEditor: UIViewRepresentable {
         }
 
         private func insertDashAtPosition(_ attributedText: NSMutableAttributedString, insertionRange: NSRange) {
+            guard let textView = textView else { return }
             let dashText = "- "
             let fontAttrs = currentTypingAttributes(from: textView)
             let dashString = NSAttributedString(string: dashText, attributes: fontAttrs)
             attributedText.insert(dashString, at: insertionRange.location)
 
             let newCursorPosition = insertionRange.location + dashText.count
-            textView?.attributedText = attributedText
+            textView.attributedText = attributedText
             setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
         }
 
@@ -1320,13 +1321,14 @@ struct RichTextEditor: UIViewRepresentable {
         }
 
         private func insertBulletAtPosition(_ attributedText: NSMutableAttributedString, insertionRange: NSRange) {
+            guard let textView = textView else { return }
             let bulletText = "• "
             let fontAttrs = currentTypingAttributes(from: textView)
             let bulletString = NSAttributedString(string: bulletText, attributes: fontAttrs)
             attributedText.insert(bulletString, at: insertionRange.location)
 
             let newCursorPosition = insertionRange.location + bulletText.count
-            textView?.attributedText = attributedText
+            textView.attributedText = attributedText
             setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
         }
 
@@ -1421,13 +1423,14 @@ struct RichTextEditor: UIViewRepresentable {
         }
 
         private func insertNumberingAtPosition(_ attributedText: NSMutableAttributedString, insertionRange: NSRange) {
+            guard let textView = textView else { return }
             let numberText = "1. "
             let fontAttrs = currentTypingAttributes(from: textView)
             let numberString = NSAttributedString(string: numberText, attributes: fontAttrs)
             attributedText.insert(numberString, at: insertionRange.location)
 
             let newCursorPosition = insertionRange.location + numberText.count
-            textView?.attributedText = attributedText
+            textView.attributedText = attributedText
             setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
         }
 
