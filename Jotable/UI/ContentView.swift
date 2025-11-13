@@ -28,6 +28,7 @@ struct ContentView: View {
     @State private var authenticatingCategoryID: PersistentIdentifier?
     @State private var showAuthError = false
     @State private var authErrorMessage = ""
+    @State private var showingCategoryPickerForItem: Item?
 
     
     // Computed property to get the selected category for filtering
@@ -260,15 +261,25 @@ struct ContentView: View {
                     } label: {
                         Label("Edit", systemImage: "pencil")
                     }
-                    
+
+                    Button {
+                        showingCategoryPickerForItem = item
+                    } label: {
+                        Label("Edit Category", systemImage: "folder")
+                    }
+
                     Divider()
-                    
+
                     Button(role: .destructive) {
                         deleteItem(item)
                     } label: {
                         Label("Delete", systemImage: "trash")
                     }
                 }
+                .categoryPickerPresenter(
+                    isPresented: createPresentedBinding(for: item),
+                    selectedCategory: createCategoryBinding(for: item)
+                )
         }
         .onMove(perform: moveItems)
         .onDelete(perform: deleteItems)
@@ -543,6 +554,28 @@ struct ContentView: View {
         }
     }
 
+    private func createPresentedBinding(for item: Item) -> Binding<Bool> {
+        Binding(
+            get: { showingCategoryPickerForItem == item },
+            set: { if !$0 { showingCategoryPickerForItem = nil } }
+        )
+    }
+
+    private func createCategoryBinding(for item: Item) -> Binding<Category?> {
+        Binding(
+            get: { item.category },
+            set: {
+                item.category = $0
+                do {
+                    try modelContext.save()
+                    print("💾 Category updated and saved - CloudKit sync queued")
+                } catch {
+                    print("❌ Failed to save category: \(error)")
+                }
+            }
+        )
+    }
+
     private func setupCloudKitNotifications() {
         NotificationCenter.default.addObserver(
             forName: NSPersistentCloudKitContainer.eventChangedNotification,
@@ -642,3 +675,27 @@ struct NoteRowView: View {
         .id(item.persistentModelID)
     }
 }
+
+#if os(macOS)
+private extension View {
+    func categoryPickerPresenter(isPresented: Binding<Bool>, selectedCategory: Binding<Category?>) -> some View {
+        popover(
+            isPresented: isPresented,
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .bottom
+        ) {
+            CategoryPickerView(selectedCategory: selectedCategory)
+                .frame(width: 280, height: 320)
+        }
+    }
+}
+
+#else
+private extension View {
+    func categoryPickerPresenter(isPresented: Binding<Bool>, selectedCategory: Binding<Category?>) -> some View {
+        sheet(isPresented: isPresented) {
+            CategoryPickerView(selectedCategory: selectedCategory)
+        }
+    }
+}
+#endif
