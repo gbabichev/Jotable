@@ -5,8 +5,10 @@ struct ListToolbar: View {
     @Binding var insertDashTrigger: UUID?
     @Binding var insertBulletTrigger: UUID?
     @Binding var insertNumberingTrigger: UUID?
-    @Binding var insertDateTrigger: UUID?
-    @Binding var insertTimeTrigger: UUID?
+    @Binding var dateInsertionRequest: DateInsertionRequest?
+    @Binding var dateInsertionFormat: DateInsertionFormat
+    @Binding var timeInsertionRequest: TimeInsertionRequest?
+    @Binding var timeInsertionFormat: TimeInsertionFormat
     @Binding var showingAddURLDialog: Bool
     @Binding var tempURLData: (String, String)?
 
@@ -80,14 +82,30 @@ struct ListToolbar: View {
 
             Divider()
             
-            Button {
-                insertDateTrigger = UUID()
+            Menu {
+                let currentDate = Date()
+                ForEach(DateInsertionFormat.allCases) { format in
+                    Button {
+                        dateInsertionFormat = format
+                        dateInsertionRequest = DateInsertionRequest(format: format)
+                    } label: {
+                        Text(format.formattedDate(from: currentDate))
+                    }
+                }
             } label: {
                 Label("Insert Date", systemImage: "calendar")
             }
 
-            Button {
-                insertTimeTrigger = UUID()
+            Menu {
+                let currentTime = Date()
+                ForEach(TimeInsertionFormat.allCases) { format in
+                    Button {
+                        timeInsertionFormat = format
+                        timeInsertionRequest = TimeInsertionRequest(format: format)
+                    } label: {
+                        Text(format.formattedTime(from: currentTime))
+                    }
+                }
             } label: {
                 Label("Insert Time", systemImage: "clock")
             }

@@ -27,8 +27,10 @@ struct NoteEditorView: View {
     @State private var insertDashTrigger: UUID?
     @State private var insertBulletTrigger: UUID?
     @State private var insertNumberingTrigger: UUID?
-    @State private var insertDateTrigger: UUID?
-    @State private var insertTimeTrigger: UUID?
+    @State private var dateInsertionFormat: DateInsertionFormat = .monthDayYear
+    @State private var dateInsertionRequest: DateInsertionRequest?
+    @State private var timeInsertionFormat: TimeInsertionFormat = .twentyFourHour
+    @State private var timeInsertionRequest: TimeInsertionRequest?
     @State private var insertURLTrigger: URLInsertionRequest?
     @State private var presentFormatMenuTrigger: UUID?
     @State private var resetColorTrigger: UUID?
@@ -109,8 +111,8 @@ struct NoteEditorView: View {
             insertDashTrigger: $insertDashTrigger,
             insertBulletTrigger: $insertBulletTrigger,
             insertNumberingTrigger: $insertNumberingTrigger,
-            insertDateTrigger: $insertDateTrigger,
-            insertTimeTrigger: $insertTimeTrigger,
+            dateInsertionRequest: $dateInsertionRequest,
+            timeInsertionRequest: $timeInsertionRequest,
             insertURLTrigger: $insertURLTrigger,
             presentFormatMenuTrigger: $presentFormatMenuTrigger,
             resetColorTrigger: $resetColorTrigger,
@@ -130,8 +132,8 @@ struct NoteEditorView: View {
             insertDashTrigger: $insertDashTrigger,
             insertBulletTrigger: $insertBulletTrigger,
             insertNumberingTrigger: $insertNumberingTrigger,
-            insertDateTrigger: $insertDateTrigger,
-            insertTimeTrigger: $insertTimeTrigger,
+            dateInsertionRequest: $dateInsertionRequest,
+            timeInsertionRequest: $timeInsertionRequest,
             insertURLTrigger: $insertURLTrigger,
             presentFormatMenuTrigger: $presentFormatMenuTrigger,
             resetColorTrigger: $resetColorTrigger,
@@ -198,8 +200,10 @@ struct NoteEditorView: View {
                     insertDashTrigger: $insertDashTrigger,
                     insertBulletTrigger: $insertBulletTrigger,
                     insertNumberingTrigger: $insertNumberingTrigger,
-                    insertDateTrigger: $insertDateTrigger,
-                    insertTimeTrigger: $insertTimeTrigger,
+                    dateInsertionRequest: $dateInsertionRequest,
+                    dateInsertionFormat: $dateInsertionFormat,
+                    timeInsertionRequest: $timeInsertionRequest,
+                    timeInsertionFormat: $timeInsertionFormat,
                     showingAddURLDialog: $showingAddURLDialog,
                     tempURLData: $tempURLData
                 )

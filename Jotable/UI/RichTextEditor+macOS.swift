@@ -106,8 +106,8 @@ struct RichTextEditor: NSViewRepresentable {
     @Binding var insertDashTrigger: UUID?
     @Binding var insertBulletTrigger: UUID?
     @Binding var insertNumberingTrigger: UUID?
-    @Binding var insertDateTrigger: UUID?
-    @Binding var insertTimeTrigger: UUID?
+    @Binding var dateInsertionRequest: DateInsertionRequest?
+    @Binding var timeInsertionRequest: TimeInsertionRequest?
     @Binding var insertURLTrigger: URLInsertionRequest?
     @Binding var presentFormatMenuTrigger: UUID?
     @Binding var resetColorTrigger: UUID?
@@ -256,15 +256,19 @@ struct RichTextEditor: NSViewRepresentable {
         }
 
         // Handle date insertion trigger
-        if insertDateTrigger != context.coordinator.lastDateTrigger {
-            context.coordinator.lastDateTrigger = insertDateTrigger
-            context.coordinator.insertDate()
+        if dateInsertionRequest?.id != context.coordinator.lastDateRequest?.id {
+            context.coordinator.lastDateRequest = dateInsertionRequest
+            if let request = dateInsertionRequest {
+                context.coordinator.insertDate(using: request.format)
+            }
         }
 
         // Handle time insertion trigger
-        if insertTimeTrigger != context.coordinator.lastTimeTrigger {
-            context.coordinator.lastTimeTrigger = insertTimeTrigger
-            context.coordinator.insertTime()
+        if timeInsertionRequest?.id != context.coordinator.lastTimeRequest?.id {
+            context.coordinator.lastTimeRequest = timeInsertionRequest
+            if let request = timeInsertionRequest {
+                context.coordinator.insertTime(using: request.format)
+            }
         }
 
         // Handle URL insertion trigger
@@ -317,8 +321,8 @@ struct RichTextEditor: NSViewRepresentable {
         var lastDashTrigger: UUID?
         var lastBulletTrigger: UUID?
         var lastNumberingTrigger: UUID?
-        var lastDateTrigger: UUID?
-        var lastTimeTrigger: UUID?
+        var lastDateRequest: DateInsertionRequest?
+        var lastTimeRequest: TimeInsertionRequest?
         var lastURLTrigger: URLInsertionRequest?
         var lastFormatMenuTrigger: UUID?
         var lastResetColorTrigger: UUID?
@@ -1707,62 +1711,45 @@ struct RichTextEditor: NSViewRepresentable {
             }
         }
 
-        func insertDate() {
-            guard let textView = textView,
-                  let storage = textView.textStorage else {
-                return
-            }
+        func insertDate(using format: DateInsertionFormat) {
+            guard let textView = textView else { return }
 
             isProgrammaticUpdate = true
 
-            let insertionRange = textView.selectedRange
-
-            // Format the date as "Wednesday, 11/5/25"
-            let formatter = DateFormatter()
-            formatter.dateFormat = "EEEE, M/d/yy"
-            let dateText = formatter.string(from: Date())
-
-            // Create attributed string with proper font attributes
+            textView.breakUndoCoalescing()
+            let dateText = format.formattedDate()
             let fontAttrs = currentTypingAttributes(from: textView)
             let dateString = NSAttributedString(string: dateText, attributes: fontAttrs)
-            storage.insert(dateString, at: insertionRange.location)
 
-            let newCursorPosition = insertionRange.location + dateText.count
-            textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+            textView.insertText(dateString, replacementRange: textView.selectedRange())
+            textView.undoManager?.setActionName("Insert Date")
+            textView.breakUndoCoalescing()
             applyTypingAttributes(to: textView)
 
-            let newText = NSAttributedString(attributedString: storage)
+            let newText = textView.attributedString()
             DispatchQueue.main.async { [weak self] in
                 self?.parent.text = newText
                 self?.isProgrammaticUpdate = false
             }
         }
 
-        func insertTime() {
-            guard let textView = textView,
-                  let storage = textView.textStorage else {
-                return
-            }
+        func insertTime(using format: TimeInsertionFormat) {
+            guard let textView = textView else { return }
 
             isProgrammaticUpdate = true
 
-            let insertionRange = textView.selectedRange
+            textView.breakUndoCoalescing()
+            let timeText = format.formattedTime()
 
-            // Format the time as "HH:mm" in 24-hour format
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm"
-            let timeText = formatter.string(from: Date())
-
-            // Create attributed string with proper font attributes
             let fontAttrs = currentTypingAttributes(from: textView)
             let timeString = NSAttributedString(string: timeText, attributes: fontAttrs)
-            storage.insert(timeString, at: insertionRange.location)
 
-            let newCursorPosition = insertionRange.location + timeText.count
-            textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+            textView.insertText(timeString, replacementRange: textView.selectedRange())
+            textView.undoManager?.setActionName("Insert Time")
+            textView.breakUndoCoalescing()
             applyTypingAttributes(to: textView)
 
-            let newText = NSAttributedString(attributedString: storage)
+            let newText = textView.attributedString()
             DispatchQueue.main.async { [weak self] in
                 self?.parent.text = newText
                 self?.isProgrammaticUpdate = false

@@ -68,8 +68,8 @@ struct RichTextEditor: UIViewRepresentable {
     @Binding var insertDashTrigger: UUID?
     @Binding var insertBulletTrigger: UUID?
     @Binding var insertNumberingTrigger: UUID?
-    @Binding var insertDateTrigger: UUID?
-    @Binding var insertTimeTrigger: UUID?
+    @Binding var dateInsertionRequest: DateInsertionRequest?
+    @Binding var timeInsertionRequest: TimeInsertionRequest?
     @Binding var insertURLTrigger: URLInsertionRequest?
     @Binding var presentFormatMenuTrigger: UUID?
     @Binding var resetColorTrigger: UUID?
@@ -216,15 +216,19 @@ struct RichTextEditor: UIViewRepresentable {
         }
 
         // Handle date insertion trigger
-        if insertDateTrigger != context.coordinator.lastDateTrigger {
-            context.coordinator.lastDateTrigger = insertDateTrigger
-            context.coordinator.insertDate()
+        if dateInsertionRequest?.id != context.coordinator.lastDateRequest?.id {
+            context.coordinator.lastDateRequest = dateInsertionRequest
+            if let request = dateInsertionRequest {
+                context.coordinator.insertDate(using: request.format)
+            }
         }
 
-        // Handle time insertion trigger
-        if insertTimeTrigger != context.coordinator.lastTimeTrigger {
-            context.coordinator.lastTimeTrigger = insertTimeTrigger
-            context.coordinator.insertTime()
+        // Handle time insertion request
+        if timeInsertionRequest?.id != context.coordinator.lastTimeRequest?.id {
+            context.coordinator.lastTimeRequest = timeInsertionRequest
+            if let request = timeInsertionRequest {
+                context.coordinator.insertTime(using: request.format)
+            }
         }
 
         // Handle URL insertion trigger
@@ -259,8 +263,8 @@ struct RichTextEditor: UIViewRepresentable {
         var lastDashTrigger: UUID?
         var lastBulletTrigger: UUID?
         var lastNumberingTrigger: UUID?
-        var lastDateTrigger: UUID?
-        var lastTimeTrigger: UUID?
+        var lastDateRequest: DateInsertionRequest?
+        var lastTimeRequest: TimeInsertionRequest?
         var lastURLTrigger: URLInsertionRequest?
         var lastResetColorTrigger: UUID?
         weak var textView: UITextView?
@@ -1825,62 +1829,67 @@ struct RichTextEditor: UIViewRepresentable {
             textView.selectedRange = NSRange(location: newCursorPos, length: 0)
         }
 
-        func insertDate() {
+        func insertDate(using format: DateInsertionFormat) {
             guard let textView = textView else { return }
 
             isProgrammaticUpdate = true
+            defer { isProgrammaticUpdate = false }
 
-            let insertionRange = textView.selectedRange
-            let mutableText = (textView.attributedText?.mutableCopy() as? NSMutableAttributedString) ?? NSMutableAttributedString()
-
-            // Format the date as "Wednesday, 11/5/25"
-            let formatter = DateFormatter()
-            formatter.dateFormat = "EEEE, M/d/yy"
-            let dateText = formatter.string(from: Date())
-
-            // Create attributed string with proper font attributes
+            let dateText = format.formattedDate()
             let fontAttrs = currentTypingAttributes(from: textView)
-            let dateString = NSAttributedString(string: dateText, attributes: fontAttrs)
-            mutableText.insert(dateString, at: insertionRange.location)
+            let previousTypingAttributes = textView.typingAttributes
+            applyAttributesWithoutUndo(fontAttrs, to: textView)
 
-            let newCursorPosition = insertionRange.location + dateText.count
-            textView.attributedText = mutableText
-            setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
+            if let selectedTextRange = textView.selectedTextRange {
+                textView.replace(selectedTextRange, withText: dateText)
+            } else {
+                textView.insertText(dateText)
+            }
+            textView.undoManager?.setActionName("Insert Date")
+
+            applyAttributesWithoutUndo(previousTypingAttributes, to: textView)
             applyTypingAttributes(to: textView)
-
-            // Update binding synchronously while isProgrammaticUpdate is true to prevent race conditions
-            let updatedText = NSAttributedString(attributedString: mutableText)
-            pushTextToParent(updatedText)
-            isProgrammaticUpdate = false
+            pushTextToParent(textView.attributedText ?? NSAttributedString())
         }
 
-        func insertTime() {
+        func insertTime(using format: TimeInsertionFormat) {
             guard let textView = textView else { return }
 
             isProgrammaticUpdate = true
+            defer { isProgrammaticUpdate = false }
 
-            let insertionRange = textView.selectedRange
-            let mutableText = (textView.attributedText?.mutableCopy() as? NSMutableAttributedString) ?? NSMutableAttributedString()
+            let timeText = format.formattedTime()
 
-            // Format the time as "HH:mm" in 24-hour format
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm"
-            let timeText = formatter.string(from: Date())
-
-            // Create attributed string with proper font attributes
             let fontAttrs = currentTypingAttributes(from: textView)
-            let timeString = NSAttributedString(string: timeText, attributes: fontAttrs)
-            mutableText.insert(timeString, at: insertionRange.location)
+            let previousTypingAttributes = textView.typingAttributes
+            applyAttributesWithoutUndo(fontAttrs, to: textView)
 
-            let newCursorPosition = insertionRange.location + timeText.count
-            textView.attributedText = mutableText
-            setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
+            if let selectedTextRange = textView.selectedTextRange {
+                textView.replace(selectedTextRange, withText: timeText)
+            } else {
+                textView.insertText(timeText)
+            }
+            textView.undoManager?.setActionName("Insert Time")
+
+            applyAttributesWithoutUndo(previousTypingAttributes, to: textView)
             applyTypingAttributes(to: textView)
+            pushTextToParent(textView.attributedText ?? NSAttributedString())
+        }
 
-            // Update binding synchronously while isProgrammaticUpdate is true to prevent race conditions
-            let updatedText = NSAttributedString(attributedString: mutableText)
-            pushTextToParent(updatedText)
-            isProgrammaticUpdate = false
+        private func applyAttributesWithoutUndo(_ attributes: [NSAttributedString.Key: Any], to textView: UITextView) {
+            guard let undoManager = textView.undoManager else {
+                textView.typingAttributes = attributes
+                return
+            }
+
+            let wasEnabled = undoManager.isUndoRegistrationEnabled
+            if wasEnabled {
+                undoManager.disableUndoRegistration()
+            }
+            textView.typingAttributes = attributes
+            if wasEnabled {
+                undoManager.enableUndoRegistration()
+            }
         }
 
         func insertURL(using request: URLInsertionRequest) {
