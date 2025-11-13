@@ -422,19 +422,12 @@ struct ContentView: View {
     }
 
     private func togglePrivacy(for category: Category) {
-        // If disabling privacy, just toggle it off
-        if category.isPrivate {
-            category.isPrivate = false
-            saveCategory()
-            return
-        }
+        let actionDescription = category.isPrivate ? "disable privacy for this category" : "enable privacy for this category"
+        authenticateWithBiometrics(reason: "Authenticate to \(actionDescription)") { success in
+            guard success else { return }
 
-        // If enabling privacy, verify with biometrics first
-        authenticateWithBiometrics(reason: "Authenticate to enable privacy for this category") { success in
-            if success {
-                category.isPrivate = true
-                self.saveCategory()
-            }
+            category.isPrivate.toggle()
+            self.saveCategory()
         }
     }
 
@@ -636,13 +629,13 @@ struct CategoryRowView: View {
                     .frame(width: 12, height: 12)
             }
 
-            Text(title)
-
             if isPrivate {
                 Image(systemName: "eye.slash.fill")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
+
+            Text(title)
 
             Spacer()
 
