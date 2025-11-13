@@ -533,7 +533,7 @@ struct ContentView: View {
     private func addItem() {
         // Create date formatter for the title
         let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "EEEE, MMMM d, yyyy"
+        dateFormatter.dateFormat = "EEEE, M/d/yy"
         let dateTitle = dateFormatter.string(from: Date())
 
         let newItem = Item(title: dateTitle)
