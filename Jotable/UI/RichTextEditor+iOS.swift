@@ -1346,17 +1346,6 @@ struct RichTextEditor: UIViewRepresentable {
             registerUndoSnapshot(for: textView, actionName: "Insert Dash")
             isProgrammaticUpdate = true
 
-            print("[DEBUG insertDash] Starting - textStorage length: \(textView.textStorage.length)")
-            print("[DEBUG insertDash] textStorage content: '\(textView.textStorage.string)'")
-            print("[DEBUG insertDash] selectedRange: \(textView.selectedRange)")
-            if let undoManager = textView.undoManager {
-                print("[DEBUG insertDash] undoManager: \(undoManager)")
-            } else {
-                print("[DEBUG insertDash] undoManager: nil")
-            }
-            print("[DEBUG insertDash] undoManager?.isUndoing: \(textView.undoManager?.isUndoing ?? false)")
-            print("[DEBUG insertDash] undoManager?.isRedoing: \(textView.undoManager?.isRedoing ?? false)")
-
             let selectedRange = textView.selectedRange
 
             // Check if multiple lines are selected
@@ -1364,34 +1353,21 @@ struct RichTextEditor: UIViewRepresentable {
                 let selectedText = textView.textStorage.attributedSubstring(from: selectedRange).string
                 let lines = selectedText.components(separatedBy: .newlines)
 
-                print("[DEBUG insertDash] Selected text: '\(selectedText)'")
-                print("[DEBUG insertDash] Number of lines: \(lines.count)")
-
                 if lines.count > 1 {
                     // Multiple lines selected
-                    print("[DEBUG insertDash] Calling insertDashForMultipleLines")
                     insertDashForMultipleLines(range: selectedRange, lines: lines)
                 } else {
                     // Single line selected - use original behavior
-                    print("[DEBUG insertDash] Calling insertDashAtPosition")
                     insertDashAtPosition(insertionRange: selectedRange)
                 }
             } else {
                 // No selection - insert at cursor position
-                print("[DEBUG insertDash] No selection - calling insertDashAtPosition")
                 insertDashAtPosition(insertionRange: selectedRange)
             }
 
-            print("[DEBUG insertDash] After insertion - textStorage length: \(textView.textStorage.length)")
-            print("[DEBUG insertDash] After insertion - textStorage content: '\(textView.textStorage.string)'")
-            print("[DEBUG insertDash] undoManager?.canUndo: \(textView.undoManager?.canUndo ?? false)")
-            print("[DEBUG insertDash] undoManager?.undoCount: \(textView.undoManager?.undoCount ?? 0)")
 
             applyTypingAttributes(to: textView)
             pushTextToParent(textView.attributedText ?? NSAttributedString())
-
-            print("[DEBUG insertDash] After pushTextToParent - textStorage content: '\(textView.textStorage.string)'")
-            print("[DEBUG insertDash] After pushTextToParent - undoManager?.canUndo: \(textView.undoManager?.canUndo ?? false)")
             isProgrammaticUpdate = false
         }
 
@@ -1413,11 +1389,6 @@ struct RichTextEditor: UIViewRepresentable {
             let fontAttrs = currentTypingAttributes(from: textView)
             let dashText = "- "
             let fullText = textView.textStorage.string
-
-            print("[DEBUG insertDashForMultipleLines] Starting - textStorage length: \(textView.textStorage.length)")
-            print("[DEBUG insertDashForMultipleLines] fullText: '\(fullText)'")
-            print("[DEBUG insertDashForMultipleLines] range: \(range)")
-            print("[DEBUG insertDashForMultipleLines] lines: \(lines)")
 
             // Find the start and end positions in the original text
             let selectedStart = range.location
@@ -1441,19 +1412,16 @@ struct RichTextEditor: UIViewRepresentable {
                 currentPos += 1
             }
 
-            print("[DEBUG insertDashForMultipleLines] lineBoundaries: \(lineBoundaries)")
 
             // Track total insertions
             var totalInserted = 0
 
             // Group all edits into a single undo action
-            print("[DEBUG insertDashForMultipleLines] Calling beginEditing()")
             textView.textStorage.beginEditing()
 
             // Process lines in reverse to avoid position shifting issues
             for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
                 let lineStart = lineBoundaries[i]
-                print("[DEBUG insertDashForMultipleLines] Processing line \(i) - lineStart: \(lineStart)")
 
                 // Find line end (newline or end of string)
                 var lineEnd = lineStart
@@ -1464,11 +1432,9 @@ struct RichTextEditor: UIViewRepresentable {
                 // Get the line content
                 let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
                 let lineContent = textView.textStorage.attributedSubstring(from: lineRange).string
-                print("[DEBUG insertDashForMultipleLines] lineContent: '\(lineContent)'")
 
                 // Skip empty lines
                 if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
-                    print("[DEBUG insertDashForMultipleLines] Skipping empty line")
                     continue
                 }
 
@@ -1480,7 +1446,6 @@ struct RichTextEditor: UIViewRepresentable {
                     if textView.textStorage.attribute(NSAttributedString.Key.attachment, at: lineStart, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
                         // Remove the checkbox and the space after it
                         existingFormattingLength = 2 // checkbox + space
-                        print("[DEBUG insertDashForMultipleLines] Found checkbox attachment")
                     }
                 }
 
@@ -1488,44 +1453,39 @@ struct RichTextEditor: UIViewRepresentable {
                 if existingFormattingLength == 0 {
                     if let dashMatch = lineContent.range(of: #"^-\s"#, options: .regularExpression) {
                         existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: dashMatch.upperBound)
-                        print("[DEBUG insertDashForMultipleLines] Found dash pattern, length: \(existingFormattingLength)")
+
                     } else if let bulletCharMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
                         existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletCharMatch.upperBound)
-                        print("[DEBUG insertDashForMultipleLines] Found bullet pattern, length: \(existingFormattingLength)")
+
                     } else if let numberMatch = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
                         existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: numberMatch.upperBound)
-                        print("[DEBUG insertDashForMultipleLines] Found number pattern, length: \(existingFormattingLength)")
+
                     }
                 }
 
                 // Remove existing formatting if found
                 if existingFormattingLength > 0 {
-                    print("[DEBUG insertDashForMultipleLines] Removing \(existingFormattingLength) chars of existing formatting")
+
                     textView.textStorage.deleteCharacters(in: NSRange(location: lineStart, length: existingFormattingLength))
                     totalInserted -= existingFormattingLength
                 }
 
                 // Insert dash at the beginning of this line
                 guard lineStart <= textView.textStorage.length else {
-                    print("[DEBUG insertDashForMultipleLines] lineStart \(lineStart) > textStorage.length \(textView.textStorage.length)")
                     continue
                 }
-                print("[DEBUG insertDashForMultipleLines] Inserting dash at \(lineStart)")
                 let dashString = NSAttributedString(string: dashText, attributes: fontAttrs)
                 textView.textStorage.insert(dashString, at: lineStart)
                 totalInserted += dashText.count
-                print("[DEBUG insertDashForMultipleLines] totalInserted now: \(totalInserted), textStorage now: '\(textView.textStorage.string)'")
+
             }
 
-            print("[DEBUG insertDashForMultipleLines] Calling endEditing()")
             textView.textStorage.endEditing()
-            print("[DEBUG insertDashForMultipleLines] After endEditing() - textStorage: '\(textView.textStorage.string)'")
+
 
             // Place cursor at the end of the selected range plus all insertions
             let newCursorPos = selectedEnd + totalInserted
-            print("[DEBUG insertDashForMultipleLines] Setting cursor to \(newCursorPos)")
             textView.selectedRange = NSRange(location: newCursorPos, length: 0)
-            print("[DEBUG insertDashForMultipleLines] Final textStorage: '\(textView.textStorage.string)'")
         }
 
         func insertBullet() {
