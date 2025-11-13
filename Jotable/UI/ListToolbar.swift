@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ListToolbar: View {
     @Binding var insertUncheckedCheckboxTrigger: UUID?
+    @Binding var insertDashTrigger: UUID?
     @Binding var insertBulletTrigger: UUID?
     @Binding var insertNumberingTrigger: UUID?
     @Binding var insertDateTrigger: UUID?
@@ -49,9 +50,15 @@ struct ListToolbar: View {
             }
 
             Button {
+                insertDashTrigger = UUID()
+            } label: {
+                Label("Insert Dash", systemImage: "minus")
+            }
+
+            Button {
                 insertBulletTrigger = UUID()
             } label: {
-                Label("Bullet Point", systemImage: "minus")
+                Label("Insert Bullet", systemImage: "circle.fill")
             }
 
             Button {

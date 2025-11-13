@@ -65,6 +65,7 @@ struct RichTextEditor: UIViewRepresentable {
     @Binding var isUnderlined: Bool
     @Binding var isStrikethrough: Bool
     @Binding var insertUncheckedCheckboxTrigger: UUID?
+    @Binding var insertDashTrigger: UUID?
     @Binding var insertBulletTrigger: UUID?
     @Binding var insertNumberingTrigger: UUID?
     @Binding var insertDateTrigger: UUID?
@@ -195,6 +196,12 @@ struct RichTextEditor: UIViewRepresentable {
             context.coordinator.insertUncheckedCheckbox()
         }
 
+        // Handle dash insertion trigger
+        if insertDashTrigger != context.coordinator.lastDashTrigger {
+            context.coordinator.lastDashTrigger = insertDashTrigger
+            context.coordinator.insertDash()
+        }
+
         // Handle bullet insertion trigger
         if insertBulletTrigger != context.coordinator.lastBulletTrigger {
             context.coordinator.lastBulletTrigger = insertBulletTrigger
@@ -248,6 +255,7 @@ struct RichTextEditor: UIViewRepresentable {
         var isStrikethrough: Bool
         var isProgrammaticUpdate = false
         var lastUncheckedCheckboxTrigger: UUID?
+        var lastDashTrigger: UUID?
         var lastBulletTrigger: UUID?
         var lastNumberingTrigger: UUID?
         var lastDateTrigger: UUID?
@@ -1178,6 +1186,107 @@ struct RichTextEditor: UIViewRepresentable {
             textView?.selectedRange = NSRange(location: newCursorPos, length: 0)
         }
 
+        func insertDash() {
+            guard let textView = textView,
+                  let attributedText = textView.attributedText?.mutableCopy() as? NSMutableAttributedString else {
+                return
+            }
+
+            isProgrammaticUpdate = true
+
+            let selectedRange = textView.selectedRange
+
+            // Check if multiple lines are selected
+            if selectedRange.length > 0 {
+                let selectedText = attributedText.attributedSubstring(from: selectedRange).string
+                let lines = selectedText.components(separatedBy: .newlines)
+
+                if lines.count > 1 {
+                    // Multiple lines selected
+                    insertDashForMultipleLines(in: attributedText, range: selectedRange, lines: lines)
+                } else {
+                    // Single line selected - use original behavior
+                    insertDashAtPosition(attributedText, insertionRange: selectedRange)
+                }
+            } else {
+                // No selection - insert at cursor position
+                insertDashAtPosition(attributedText, insertionRange: selectedRange)
+            }
+
+            applyTypingAttributes(to: textView)
+            pushTextToParent(attributedText)
+            isProgrammaticUpdate = false
+        }
+
+        private func insertDashAtPosition(_ attributedText: NSMutableAttributedString, insertionRange: NSRange) {
+            let dashText = "- "
+            let fontAttrs = currentTypingAttributes(from: textView)
+            let dashString = NSAttributedString(string: dashText, attributes: fontAttrs)
+            attributedText.insert(dashString, at: insertionRange.location)
+
+            let newCursorPosition = insertionRange.location + dashText.count
+            textView?.attributedText = attributedText
+            setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
+        }
+
+        private func insertDashForMultipleLines(in attributedText: NSMutableAttributedString, range: NSRange, lines: [String]) {
+            let fontAttrs = currentTypingAttributes(from: textView)
+            let dashText = "- "
+            let fullText = attributedText.string
+
+            // Find the start and end positions in the original text
+            let selectedStart = range.location
+            let selectedEnd = range.location + range.length
+
+            // Find line boundaries
+            var lineStartPos = selectedStart
+            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+                lineStartPos -= 1
+            }
+
+            // Find all line starts in the selected range
+            var lineBoundaries: [Int] = [lineStartPos]
+            var currentPos = lineStartPos
+
+            while currentPos < selectedEnd {
+                let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
+                if currentPos < fullText.count && fullText[charIndex] == "\n" && currentPos + 1 < selectedEnd {
+                    lineBoundaries.append(currentPos + 1)
+                }
+                currentPos += 1
+            }
+
+            // Process lines in reverse to avoid position shifting issues
+            for i in stride(from: lineBoundaries.count - 1, through: 0, by: -1) {
+                let lineStart = lineBoundaries[i]
+
+                // Find line end (newline or end of string)
+                var lineEnd = lineStart
+                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
+                    lineEnd += 1
+                }
+
+                // Get the line content
+                let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
+                let lineContent = attributedText.attributedSubstring(from: lineRange).string
+
+                // Skip empty lines
+                if lineContent.trimmingCharacters(in: .whitespaces).isEmpty {
+                    continue
+                }
+
+                // Insert dash at the beginning of this line
+                guard lineStart <= attributedText.length else { continue }
+                let dashString = NSAttributedString(string: dashText, attributes: fontAttrs)
+                attributedText.insert(dashString, at: lineStart)
+            }
+
+            // Update text view
+            textView?.attributedText = attributedText
+            let newCursorPos = min(selectedEnd + 50, attributedText.length) // rough estimate
+            textView?.selectedRange = NSRange(location: newCursorPos, length: 0)
+        }
+
         func insertBullet() {
             guard let textView = textView,
                   let attributedText = textView.attributedText?.mutableCopy() as? NSMutableAttributedString else {
@@ -1211,7 +1320,7 @@ struct RichTextEditor: UIViewRepresentable {
         }
 
         private func insertBulletAtPosition(_ attributedText: NSMutableAttributedString, insertionRange: NSRange) {
-            let bulletText = "- "
+            let bulletText = "• "
             let fontAttrs = currentTypingAttributes(from: textView)
             let bulletString = NSAttributedString(string: bulletText, attributes: fontAttrs)
             attributedText.insert(bulletString, at: insertionRange.location)
@@ -1223,7 +1332,7 @@ struct RichTextEditor: UIViewRepresentable {
 
         private func insertBulletForMultipleLines(in attributedText: NSMutableAttributedString, range: NSRange, lines: [String]) {
             let fontAttrs = currentTypingAttributes(from: textView)
-            let bulletText = "- "
+            let bulletText = "• "
             let fullText = attributedText.string
 
             // Find the start and end positions in the original text

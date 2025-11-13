@@ -20,6 +20,7 @@ struct NoteEditorView: View {
     @State private var isUnderlined: Bool = false
     @State private var isStrikethrough: Bool = false
     @State private var insertUncheckedCheckboxTrigger: UUID?
+    @State private var insertDashTrigger: UUID?
     @State private var insertBulletTrigger: UUID?
     @State private var insertNumberingTrigger: UUID?
     @State private var insertDateTrigger: UUID?
@@ -84,6 +85,7 @@ struct NoteEditorView: View {
                         isUnderlined: $isUnderlined,
                         isStrikethrough: $isStrikethrough,
                         insertUncheckedCheckboxTrigger: $insertUncheckedCheckboxTrigger,
+                        insertDashTrigger: $insertDashTrigger,
                         insertBulletTrigger: $insertBulletTrigger,
                         insertNumberingTrigger: $insertNumberingTrigger,
                         insertDateTrigger: $insertDateTrigger,
@@ -132,6 +134,7 @@ struct NoteEditorView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 ListToolbar(
                     insertUncheckedCheckboxTrigger: $insertUncheckedCheckboxTrigger,
+                    insertDashTrigger: $insertDashTrigger,
                     insertBulletTrigger: $insertBulletTrigger,
                     insertNumberingTrigger: $insertNumberingTrigger,
                     insertDateTrigger: $insertDateTrigger,
