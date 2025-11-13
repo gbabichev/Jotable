@@ -11,6 +11,8 @@ struct NoteEditorView: View {
     @Environment(\.modelContext) private var modelContext
     @FocusState private var isTitleFocused: Bool
     @State private var showingCategoryPicker = false
+    @Binding var pastePlaintextTrigger: UUID?
+    @Binding var isEditorActive: Bool
     @State private var richText = AttributedTextWrapper(value: NSAttributedString(string: ""))
     @State private var activeColor: RichTextColor = .automatic
     @State private var activeHighlighter: HighlighterColor = .none
@@ -40,6 +42,12 @@ struct NoteEditorView: View {
             .onChange(of: tempURLData != nil) { _, hasData in
                 guard hasData else { return }
                 handlePendingURLData(tempURLData)
+            }
+            .onAppear {
+                isEditorActive = true
+            }
+            .onDisappear {
+                isEditorActive = false
             }
     }
 
@@ -92,7 +100,8 @@ struct NoteEditorView: View {
                         insertTimeTrigger: $insertTimeTrigger,
                         insertURLTrigger: $insertURLTrigger,
                         presentFormatMenuTrigger: $presentFormatMenuTrigger,
-                        resetColorTrigger: $resetColorTrigger
+                        resetColorTrigger: $resetColorTrigger,
+                        pastePlaintextTrigger: $pastePlaintextTrigger
                     )
                         .frame(maxWidth: .infinity)
                         .frame(minHeight: max(proxy.size.height - headerHeight - 12, 0))

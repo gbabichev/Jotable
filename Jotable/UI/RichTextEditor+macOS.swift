@@ -111,6 +111,7 @@ struct RichTextEditor: NSViewRepresentable {
     @Binding var insertURLTrigger: (UUID, String, String)?
     @Binding var presentFormatMenuTrigger: UUID?
     @Binding var resetColorTrigger: UUID?
+    @Binding var pastePlaintextTrigger: UUID?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -284,6 +285,13 @@ struct RichTextEditor: NSViewRepresentable {
             context.coordinator.lastResetColorTrigger = resetColorTrigger
             context.coordinator.handleColorReset()
         }
+
+        // Handle plaintext paste trigger
+        if pastePlaintextTrigger != context.coordinator.lastPlaintextPasteTrigger {
+            context.coordinator.lastPlaintextPasteTrigger = pastePlaintextTrigger
+            context.coordinator.pastePlaintext()
+        }
+
         // Note: Don't sync color state here during updateNSView - it gets called constantly
         // during the view render cycle and causes feedback loops. Only sync in textDidChange
         // and textViewDidChangeSelection which are user-triggered events.
@@ -314,6 +322,7 @@ struct RichTextEditor: NSViewRepresentable {
         var lastURLTrigger: (UUID, String, String)?
         var lastFormatMenuTrigger: UUID?
         var lastResetColorTrigger: UUID?
+        var lastPlaintextPasteTrigger: UUID?
         weak var textView: NSTextView?
         var pendingActiveColorFeedback: RichTextColor?
         var customTypingColor: NSColor?
@@ -1579,6 +1588,57 @@ struct RichTextEditor: NSViewRepresentable {
 
             let newCursorPosition = spaceInsertionPos + 1
             textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+            applyTypingAttributes(to: textView)
+
+            // Defer binding update to next runloop to avoid state modification during view update
+            let newText = NSAttributedString(attributedString: storage)
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.text = newText
+                self?.isProgrammaticUpdate = false
+            }
+        }
+
+        func pastePlaintext() {
+            guard let textView = textView,
+                  let storage = textView.textStorage else {
+                return
+            }
+
+            let pasteboard = NSPasteboard.general
+            guard let plainText = pasteboard.string(forType: .string) else {
+                return
+            }
+
+            isProgrammaticUpdate = true
+
+            let insertionRange = textView.selectedRange
+
+            // Create attributes with only font (size, bold, italic) - strip color and highlights
+            let styler = TextStyler(
+                isBold: isBold,
+                isItalic: isItalic,
+                fontSize: activeFontSize
+            )
+            let font = styler.buildFont()
+
+            // Only apply font, no color or highlights for "paste as plaintext"
+            let plainAttrs: [NSAttributedString.Key: Any] = [
+                NSAttributedString.Key.font: font,
+                ColorMapping.fontSizeKey: activeFontSize.rawValue
+            ]
+            let plainAttributedString = NSAttributedString(string: plainText, attributes: plainAttrs)
+
+            // Replace selected text or insert at cursor
+            if insertionRange.length > 0 {
+                storage.replaceCharacters(in: insertionRange, with: plainAttributedString)
+                let newCursorPosition = insertionRange.location + plainText.count
+                textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+            } else {
+                storage.insert(plainAttributedString, at: insertionRange.location)
+                let newCursorPosition = insertionRange.location + plainText.count
+                textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
+            }
+
             applyTypingAttributes(to: textView)
 
             // Defer binding update to next runloop to avoid state modification during view update

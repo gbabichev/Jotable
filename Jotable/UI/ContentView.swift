@@ -19,7 +19,10 @@ struct ContentView: View {
     // Changed from timestamp to createdAt for stable sorting based on creation date
     @Query(sort: \Item.createdAt, order: .reverse) private var allItems: [Item]
     @Query(sort: \Category.sortOrder) private var categories: [Category]
-    
+
+    @Binding var pastePlaintextTrigger: UUID?
+    @Binding var isEditorActive: Bool
+
     @State private var selectedItem: Item?
     @State private var sidebarSelection: SidebarSelection? = .allNotes
     @State private var showingAddCategory = false
@@ -154,7 +157,7 @@ struct ContentView: View {
             // Detail view wrapped in NavigationStack for proper navigation
             NavigationStack {
                 if let selectedItem {
-                    NoteEditorView(item: selectedItem)
+                    NoteEditorView(item: selectedItem, pastePlaintextTrigger: $pastePlaintextTrigger, isEditorActive: $isEditorActive)
                     .id(selectedItem.id) // Force view recreation when switching notes
                 } else {
                     ContentUnavailableView {
