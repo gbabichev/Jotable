@@ -1935,14 +1935,14 @@ struct RichTextEditor: UIViewRepresentable {
         func insertURL(using request: URLInsertionRequest) {
             guard let textView = textView else { return }
 
-            isProgrammaticUpdate = true
-
             let mutableText = (textView.attributedText?.mutableCopy() as? NSMutableAttributedString) ?? NSMutableAttributedString()
 
             guard let linkURL = URL(string: request.urlString) else {
-                isProgrammaticUpdate = false
                 return
             }
+
+            registerUndoSnapshot(for: textView, actionName: "Insert Link")
+            isProgrammaticUpdate = true
 
             let baseRange = request.replacementRange?.nsRange ?? textView.selectedRange
             let insertionRange = validateCursorPosition(baseRange, for: textView)

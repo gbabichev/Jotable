@@ -1804,12 +1804,12 @@ struct RichTextEditor: NSViewRepresentable {
                 return
             }
 
-            isProgrammaticUpdate = true
-
             guard let linkURL = URL(string: request.urlString) else {
-                isProgrammaticUpdate = false
                 return
             }
+
+            registerUndoSnapshot(for: textView, actionName: "Insert Link")
+            isProgrammaticUpdate = true
 
             let baseRange = request.replacementRange?.nsRange ?? textView.selectedRange
             let insertionRange = clampRange(baseRange, length: storage.length)
