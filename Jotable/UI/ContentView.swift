@@ -74,6 +74,15 @@ struct ContentView: View {
 
         return items
     }
+
+    // Count of notes visible without authenticating into locked categories
+    private var unlockedNoteCount: Int {
+        let lockedCategoryIDs = Set(categories.filter { $0.isPrivate }.compactMap { $0.id })
+        return allItems.filter { item in
+            guard let category = item.category else { return true }
+            return !lockedCategoryIDs.contains(category.id)
+        }.count
+    }
     
     var body: some View {
         NavigationSplitView {
@@ -118,16 +127,16 @@ struct ContentView: View {
                     Button(action: { showingAddCategory = true }) {
                         Image(systemName: "folder.badge.plus")
                     }
-                    #if DEBUG
-                    Button(action: {
-                        print("Debug Print")
-                    }) {
-                        Label("Debug", systemImage: "ladybug")
-                    }
-                    Button(role: .destructive, action: deleteEverything) {
-                        Image(systemName: "trash.fill")
-                    }
-                    #endif
+//                    #if DEBUG
+//                    Button(action: {
+//                        print("Debug Print")
+//                    }) {
+//                        Label("Debug", systemImage: "ladybug")
+//                    }
+//                    Button(role: .destructive, action: deleteEverything) {
+//                        Image(systemName: "trash.fill")
+//                    }
+//                    #endif
                 }
             }
             .sheet(isPresented: $showingAddCategory) {
@@ -201,7 +210,7 @@ struct ContentView: View {
             CategoryRowView(
                 icon: "note.text",
                 title: "All Notes",
-                count: allItems.count,
+                count: unlockedNoteCount,
                 color: nil,
                 isPrivate: false
             )
