@@ -46,6 +46,7 @@ struct JotableApp: App {
 
     #if os(macOS)
     @State private var pastePlaintextTrigger: UUID?
+    @State private var isAboutPresented = false
     #endif
     @State private var isEditorActive = false
 
@@ -63,6 +64,11 @@ struct JotableApp: App {
                         print("🚀 App launched - Found \(items.count) existing items")
                     } catch {
                         print("❌ Failed to fetch items on launch: \(error)")
+                    }
+                }
+                .overlay {
+                    if isAboutPresented {
+                        AboutOverlayView(isPresented: $isAboutPresented)
                     }
                 }
             #else
@@ -83,6 +89,11 @@ struct JotableApp: App {
         .modelContainer(Self.sharedModelContainer)
         #if os(macOS)
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About Jotable") {
+                    isAboutPresented = true
+                }
+            }
             CommandGroup(after: .pasteboard) {
                 Button(action: {
                     self.pastePlaintextTrigger = UUID()
