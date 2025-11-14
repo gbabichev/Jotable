@@ -48,6 +48,13 @@ struct CategoryPickerView: View {
                         Circle()
                             .fill(Color.fromString(category.color))
                             .frame(width: 16, height: 16)
+
+                        if category.isPrivate {
+                            Image(systemName: "eye.slash.fill")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
                         Text(category.name)
                         Spacer()
                         if selectedCategory?.id == category.id {
