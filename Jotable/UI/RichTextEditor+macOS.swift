@@ -1879,6 +1879,9 @@ struct RichTextEditor: NSViewRepresentable {
                 return
             }
 
+            // Register undo snapshot BEFORE making changes
+            registerUndoSnapshot(for: textView, actionName: "Paste as Plaintext")
+
             isProgrammaticUpdate = true
 
             let insertionRange = textView.selectedRange
