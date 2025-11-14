@@ -1916,6 +1916,8 @@ struct RichTextEditor: NSViewRepresentable {
             DispatchQueue.main.async { [weak self] in
                 self?.parent.text = newText
                 self?.isProgrammaticUpdate = false
+                // CRITICAL: Reset the trigger to prevent it from triggering on other notes
+                self?.parent.pastePlaintextTrigger = nil
             }
         }
     }
