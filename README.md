@@ -61,6 +61,19 @@ Just a clean, focused space for your thoughts.
 
 ## 📝 Changelog
 
+### 1.1.0
+- Added private categories. (FaceID / TouchID required to unlock)
+- Added clickable checkboxes. Click to toggle! 
+- Added Insert Date & Insert Time tools.
+- Added Insert Bullet tool. 
+- Added Highlighter tool. 
+- Added Italics Font. 
+- Added pasteable images. 
+- Added "paste plaintext" on Mac. (cmd+shift+v)
+- Added Insert Checkbox / Dash / Bullet / Numbering on selected text.
+- Added editable Links on iOS.
+- Lots of bugfixes.
+
 ### 1.0.0
 - Initial Release. 
 

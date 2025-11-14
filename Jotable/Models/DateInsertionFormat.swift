@@ -3,6 +3,7 @@ import Foundation
 enum DateInsertionFormat: String, CaseIterable, Identifiable {
     case monthDayYear
     case monthDayYearDashed
+    case weekdayMonthDayYearShort
     case weekdayMonthDayYear
     case iso8601
 
@@ -22,6 +23,8 @@ enum DateInsertionFormat: String, CaseIterable, Identifiable {
             return "M/d/yyyy"
         case .monthDayYearDashed:
             return "M-d-yyyy"
+        case .weekdayMonthDayYearShort:
+            return "EEEE, M/d/yy"
         case .weekdayMonthDayYear:
             return "EEEE, MMMM d, yyyy"
         case .iso8601:
