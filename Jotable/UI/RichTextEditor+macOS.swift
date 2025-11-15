@@ -291,9 +291,13 @@ struct RichTextEditor: NSViewRepresentable {
         }
 
         // Handle plaintext paste trigger
+        // Only trigger when the new value is non-nil (user clicked the button)
+        // Ignore transitions to nil (which happen when we reset the trigger)
         if pastePlaintextTrigger != context.coordinator.lastPlaintextPasteTrigger {
             context.coordinator.lastPlaintextPasteTrigger = pastePlaintextTrigger
-            context.coordinator.pastePlaintext()
+            if pastePlaintextTrigger != nil {
+                context.coordinator.pastePlaintext()
+            }
         }
 
         // Note: Don't sync color state here during updateNSView - it gets called constantly
@@ -1886,19 +1890,18 @@ struct RichTextEditor: NSViewRepresentable {
 
             let insertionRange = textView.selectedRange
 
-            // Create attributes with only font (size, bold, italic) - strip color and highlights
-            let styler = TextStyler(
-                isBold: isBold,
-                isItalic: isItalic,
-                fontSize: activeFontSize
-            )
-            let font = styler.buildFont()
+            // Get default typing attributes which include the theme-aware color
+            var plainAttrs = currentTypingAttributes(from: textView)
 
-            // Only apply font, no color or highlights for "paste as plaintext"
-            let plainAttrs: [NSAttributedString.Key: Any] = [
-                NSAttributedString.Key.font: font,
-                ColorMapping.fontSizeKey: activeFontSize.rawValue
-            ]
+            // Strip out formatting attributes that shouldn't be in "plaintext"
+            // Keep: font, size, color (automatic/themed), bold, italic
+            // Remove: underline, strikethrough, highlight, any other formatting
+            plainAttrs.removeValue(forKey: NSAttributedString.Key.underlineStyle)
+            plainAttrs.removeValue(forKey: NSAttributedString.Key.strikethroughStyle)
+            // Remove highlight-related attributes
+            plainAttrs.removeValue(forKey: NSAttributedString.Key.backgroundColor)
+            plainAttrs.removeValue(forKey: ColorMapping.highlightIDKey)
+
             let plainAttributedString = NSAttributedString(string: plainText, attributes: plainAttrs)
 
             // Replace selected text or insert at cursor
@@ -1919,9 +1922,13 @@ struct RichTextEditor: NSViewRepresentable {
             DispatchQueue.main.async { [weak self] in
                 self?.parent.text = newText
                 self?.isProgrammaticUpdate = false
-                // CRITICAL: Reset the trigger to prevent it from triggering on other notes
-                self?.parent.pastePlaintextTrigger = nil
             }
+
+            // Reset trigger SYNCHRONOUSLY to prevent it from triggering on note switches.
+            // This must happen synchronously (not in the async block) to ensure the trigger
+            // is cleared before a user can switch notes. If a new Coordinator is created
+            // before the trigger is reset, it will see the old UUID as a "change" and trigger again.
+            parent.pastePlaintextTrigger = nil
         }
     }
 }

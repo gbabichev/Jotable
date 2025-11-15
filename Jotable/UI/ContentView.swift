@@ -92,6 +92,10 @@ struct ContentView: View {
             }
             .listStyle(SidebarListStyle())
             .navigationTitle("Jotable")
+            .onChange(of: selectedItem) { _, newSelectedItem in
+                // Manage isEditorActive based on whether a note is selected
+                isEditorActive = newSelectedItem != nil
+            }
             .onChange(of: sidebarSelection) { oldValue, newValue in
                 // Check if the newly selected item is a locked category
                 if case .category(let category) = newValue, category.isPrivate {
@@ -127,16 +131,16 @@ struct ContentView: View {
                     Button(action: { showingAddCategory = true }) {
                         Image(systemName: "folder.badge.plus")
                     }
-//                    #if DEBUG
-//                    Button(action: {
-//                        print("Debug Print")
-//                    }) {
-//                        Label("Debug", systemImage: "ladybug")
-//                    }
-//                    Button(role: .destructive, action: deleteEverything) {
-//                        Image(systemName: "trash.fill")
-//                    }
-//                    #endif
+                    #if DEBUG
+                    Button(action: {
+                        print("Debug Print")
+                    }) {
+                        Label("Debug", systemImage: "ladybug")
+                    }
+                    Button(role: .destructive, action: deleteEverything) {
+                        Image(systemName: "trash.fill")
+                    }
+                    #endif
                 }
             }
             .sheet(isPresented: $showingAddCategory) {

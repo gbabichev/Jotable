@@ -68,12 +68,6 @@ struct NoteEditorView: View {
                 showingAddURLDialog = true
             }
 #endif
-            .onAppear {
-                isEditorActive = true
-            }
-            .onDisappear {
-                isEditorActive = false
-            }
     }
 
     private var richTextEditorView: some View {
