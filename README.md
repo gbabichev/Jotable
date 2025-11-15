@@ -61,6 +61,9 @@ Just a clean, focused space for your thoughts.
 
 ## 📝 Changelog
 
+### 1.1.1
+- Bugfixes with the Paste as Plaintext feature. 
+
 ### 1.1.0
 - Added private categories. (FaceID / TouchID required to unlock)
 - Added clickable checkboxes. Click to toggle! 
