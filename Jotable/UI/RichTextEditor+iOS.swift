@@ -1171,6 +1171,7 @@ struct RichTextEditor: UIViewRepresentable {
                 return
             }
 
+            registerUndoSnapshot(for: textView, actionName: "Insert Checkbox")
             isProgrammaticUpdate = true
 
             let selectedRange = textView.selectedRange

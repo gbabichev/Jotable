@@ -64,6 +64,7 @@ Just a clean, focused space for your thoughts.
 ### 1.1.1
 - Bugfixes with the Paste as Plaintext feature. 
 - Bugfixes with inserting Checkbox / Dash / Bullet / Numbers into lines with emojis & other characters. 
+- Checkboxes on iOS now properly support Shake to Undo.
 
 ### 1.1.0
 - Added private categories. (FaceID / TouchID required to unlock)
