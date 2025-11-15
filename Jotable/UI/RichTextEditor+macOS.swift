@@ -1890,8 +1890,22 @@ struct RichTextEditor: NSViewRepresentable {
 
             let insertionRange = textView.selectedRange
 
-            // Get default typing attributes which include the theme-aware color
-            var plainAttrs = currentTypingAttributes(from: textView)
+            // Build plaintext attributes with AUTOMATIC (theme-aware) color, not current color
+            // This ensures text appears white in dark mode and black in light mode
+            // Strip all formatting: bold, italic, underline, strikethrough, highlight
+            let plaintextStyler = TextStyler(
+                isBold: false,  // Strip bold in plaintext
+                isItalic: false,  // Strip italic in plaintext
+                fontSize: activeFontSize,
+                colorID: RichTextColor.automatic.id,
+                color: RichTextColor.automatic.nsColor,
+                highlightID: nil,
+                highlight: nil,
+                isUnderlined: false,  // Strip underline in plaintext
+                isStrikethrough: false  // Strip strikethrough in plaintext
+            )
+
+            var plainAttrs = plaintextStyler.buildAttributes(usingAutomatic: true, customColor: nil)
 
             // Strip out formatting attributes that shouldn't be in "plaintext"
             // Keep: font, size, color (automatic/themed), bold, italic
