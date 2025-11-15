@@ -1233,7 +1233,7 @@ struct RichTextEditor: UIViewRepresentable {
             guard let textView = textView else { return }
             let baseFont = UIFont.systemFont(ofSize: activeFontSize.rawValue)
             let spaceAttrs: [NSAttributedString.Key: Any] = [.font: baseFont]
-            let fullText = textView.textStorage.string
+            let fullText = textView.textStorage.string as NSString
 
             // Find the start and end positions in the original text
             let selectedStart = range.location
@@ -1242,7 +1242,7 @@ struct RichTextEditor: UIViewRepresentable {
             // Find line boundaries in the selected range
             // First, find the start of the line containing selectedStart
             var lineStartPos = selectedStart
-            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+            while lineStartPos > 0 && fullText.character(at: lineStartPos - 1) != 10 {
                 lineStartPos -= 1
             }
 
@@ -1251,8 +1251,7 @@ struct RichTextEditor: UIViewRepresentable {
             var currentPos = lineStartPos
 
             while currentPos < selectedEnd {
-                let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
-                if currentPos < fullText.count && fullText[charIndex] == "\n" && currentPos + 1 < selectedEnd {
+                if currentPos < fullText.length && fullText.character(at: currentPos) == 10 && currentPos + 1 < selectedEnd {
                     lineBoundaries.append(currentPos + 1)
                 }
                 currentPos += 1
@@ -1270,7 +1269,7 @@ struct RichTextEditor: UIViewRepresentable {
 
                 // Find line end (newline or end of string)
                 var lineEnd = lineStart
-                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
+                while lineEnd < fullText.length && fullText.character(at: lineEnd) != 10 {
                     lineEnd += 1
                 }
 
@@ -1388,7 +1387,7 @@ struct RichTextEditor: UIViewRepresentable {
             guard let textView = textView else { return }
             let fontAttrs = currentTypingAttributes(from: textView)
             let dashText = "- "
-            let fullText = textView.textStorage.string
+            let fullText = textView.textStorage.string as NSString
 
             // Find the start and end positions in the original text
             let selectedStart = range.location
@@ -1396,7 +1395,7 @@ struct RichTextEditor: UIViewRepresentable {
 
             // Find line boundaries
             var lineStartPos = selectedStart
-            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+            while lineStartPos > 0 && fullText.character(at: lineStartPos - 1) != 10 {
                 lineStartPos -= 1
             }
 
@@ -1405,8 +1404,7 @@ struct RichTextEditor: UIViewRepresentable {
             var currentPos = lineStartPos
 
             while currentPos < selectedEnd {
-                let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
-                if currentPos < fullText.count && fullText[charIndex] == "\n" && currentPos + 1 < selectedEnd {
+                if currentPos < fullText.length && fullText.character(at: currentPos) == 10 && currentPos + 1 < selectedEnd {
                     lineBoundaries.append(currentPos + 1)
                 }
                 currentPos += 1
@@ -1425,7 +1423,7 @@ struct RichTextEditor: UIViewRepresentable {
 
                 // Find line end (newline or end of string)
                 var lineEnd = lineStart
-                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
+                while lineEnd < fullText.length && fullText.character(at: lineEnd) != 10 {
                     lineEnd += 1
                 }
 
@@ -1537,7 +1535,7 @@ struct RichTextEditor: UIViewRepresentable {
             guard let textView = textView else { return }
             let fontAttrs = currentTypingAttributes(from: textView)
             let bulletText = "• "
-            let fullText = textView.textStorage.string
+            let fullText = textView.textStorage.string as NSString
 
             // Find the start and end positions in the original text
             let selectedStart = range.location
@@ -1545,7 +1543,7 @@ struct RichTextEditor: UIViewRepresentable {
 
             // Find line boundaries
             var lineStartPos = selectedStart
-            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+            while lineStartPos > 0 && fullText.character(at: lineStartPos - 1) != 10 {
                 lineStartPos -= 1
             }
 
@@ -1554,8 +1552,7 @@ struct RichTextEditor: UIViewRepresentable {
             var currentPos = lineStartPos
 
             while currentPos < selectedEnd {
-                let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
-                if currentPos < fullText.count && fullText[charIndex] == "\n" && currentPos + 1 < selectedEnd {
+                if currentPos < fullText.length && fullText.character(at: currentPos) == 10 && currentPos + 1 < selectedEnd {
                     lineBoundaries.append(currentPos + 1)
                 }
                 currentPos += 1
@@ -1573,7 +1570,7 @@ struct RichTextEditor: UIViewRepresentable {
 
                 // Find line end (newline or end of string)
                 var lineEnd = lineStart
-                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
+                while lineEnd < fullText.length && fullText.character(at: lineEnd) != 10 {
                     lineEnd += 1
                 }
 
@@ -1670,20 +1667,20 @@ struct RichTextEditor: UIViewRepresentable {
             textView.textStorage.insert(numberString, at: insertionRange.location)
 
             // Find the start of the current line to renumber from the next line
-            let fullText = textView.textStorage.string
+            let fullText = textView.textStorage.string as NSString
             var lineStartPos = insertionRange.location
-            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+            while lineStartPos > 0 && fullText.character(at: lineStartPos - 1) != 10 {
                 lineStartPos -= 1
             }
 
             // Find the end of the current line
             var lineEndPos = insertionRange.location + numberText.count
-            while lineEndPos < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEndPos)] != "\n" {
+            while lineEndPos < fullText.length && fullText.character(at: lineEndPos) != 10 {
                 lineEndPos += 1
             }
 
             // Renumber any subsequent numbered lines starting from the next line
-            if lineEndPos < fullText.count {
+            if lineEndPos < fullText.length {
                 renumberSubsequentLines(in: textView.textStorage, startingAfter: lineEndPos + 1, fontAttrs: fontAttrs)
             }
 
@@ -1697,11 +1694,11 @@ struct RichTextEditor: UIViewRepresentable {
 
             // Process subsequent lines
             while currentPosition < attributedText.length {
-                let fullText = attributedText.string
+                let fullText = attributedText.string as NSString
 
                 // Find the end of the current line
                 var lineEnd = currentPosition
-                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
+                while lineEnd < fullText.length && fullText.character(at: lineEnd) != 10 {
                     lineEnd += 1
                 }
 
@@ -1731,7 +1728,7 @@ struct RichTextEditor: UIViewRepresentable {
         private func insertNumberingForMultipleLines(range: NSRange, lines: [String]) {
             guard let textView = textView else { return }
             let fontAttrs = currentTypingAttributes(from: textView)
-            let fullText = textView.textStorage.string
+            let fullText = textView.textStorage.string as NSString
 
             // Find the start and end positions in the original text
             let selectedStart = range.location
@@ -1739,7 +1736,7 @@ struct RichTextEditor: UIViewRepresentable {
 
             // Find line boundaries
             var lineStartPos = selectedStart
-            while lineStartPos > 0 && fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+            while lineStartPos > 0 && fullText.character(at: lineStartPos - 1) != 10 {
                 lineStartPos -= 1
             }
 
@@ -1748,8 +1745,7 @@ struct RichTextEditor: UIViewRepresentable {
             var currentPos = lineStartPos
 
             while currentPos < selectedEnd {
-                let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
-                if currentPos < fullText.count && fullText[charIndex] == "\n" && currentPos + 1 < selectedEnd {
+                if currentPos < fullText.length && fullText.character(at: currentPos) == 10 && currentPos + 1 < selectedEnd {
                     lineBoundaries.append(currentPos + 1)
                 }
                 currentPos += 1
@@ -1767,7 +1763,7 @@ struct RichTextEditor: UIViewRepresentable {
 
                 // Find line end (newline or end of string)
                 var lineEnd = lineStart
-                while lineEnd < fullText.count && fullText[fullText.index(fullText.startIndex, offsetBy: lineEnd)] != "\n" {
+                while lineEnd < fullText.length && fullText.character(at: lineEnd) != 10 {
                     lineEnd += 1
                 }
 

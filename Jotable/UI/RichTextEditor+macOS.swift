@@ -1169,7 +1169,7 @@ struct RichTextEditor: NSViewRepresentable {
                 return
             }
 
-            let fullText = storage.string
+            let fullText = storage.string as NSString
             let spaceAttrs = checkboxSpaceAttributes()
 
             let selectedStart = range.location
@@ -1177,7 +1177,7 @@ struct RichTextEditor: NSViewRepresentable {
 
             var lineStartPos = selectedStart
             while lineStartPos > 0 &&
-                    fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+                    fullText.character(at: lineStartPos - 1) != 10 {
                 lineStartPos -= 1
             }
 
@@ -1185,9 +1185,8 @@ struct RichTextEditor: NSViewRepresentable {
             var currentPos = lineStartPos
 
             while currentPos < originalSelectedEnd {
-                let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
-                if currentPos < fullText.count &&
-                    fullText[charIndex] == "\n" &&
+                if currentPos < fullText.length &&
+                    fullText.character(at: currentPos) == 10 &&
                     currentPos + 1 <= originalSelectedEnd {
                     lineBoundaries.append(currentPos + 1)
                 }
@@ -1195,8 +1194,8 @@ struct RichTextEditor: NSViewRepresentable {
             }
 
             var affectedEnd = originalSelectedEnd
-            while affectedEnd < fullText.count,
-                  fullText[fullText.index(fullText.startIndex, offsetBy: affectedEnd)] != "\n" {
+            while affectedEnd < fullText.length,
+                  fullText.character(at: affectedEnd) != 10 {
                 affectedEnd += 1
             }
 
@@ -1340,7 +1339,7 @@ struct RichTextEditor: NSViewRepresentable {
             let fontAttrs = currentTypingAttributes(from: textView)
             let dashText = "- "
             let dashString = NSAttributedString(string: dashText, attributes: fontAttrs)
-            let fullText = storage.string
+            let fullText = storage.string as NSString
 
             // Find the start and end positions in the original text
             let selectedStart = range.location
@@ -1348,7 +1347,7 @@ struct RichTextEditor: NSViewRepresentable {
 
             var lineStartPos = selectedStart
             while lineStartPos > 0,
-                  fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+                  fullText.character(at: lineStartPos - 1) != 10 {
                 lineStartPos -= 1
             }
 
@@ -1357,17 +1356,15 @@ struct RichTextEditor: NSViewRepresentable {
             var currentPos = lineStartPos
 
             while currentPos < selectedEnd {
-                let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
-                if currentPos < fullText.count && fullText[charIndex] == "\n" && currentPos + 1 < selectedEnd {
+                if currentPos < fullText.length && fullText.character(at: currentPos) == 10 && currentPos + 1 < selectedEnd {
                     lineBoundaries.append(currentPos + 1)
                 }
                 currentPos += 1
             }
 
             var affectedEnd = selectedEnd
-            while affectedEnd < fullText.count {
-                let charIndex = fullText.index(fullText.startIndex, offsetBy: affectedEnd)
-                if fullText[charIndex] == "\n" {
+            while affectedEnd < fullText.length {
+                if fullText.character(at: affectedEnd) == 10 {
                     break
                 }
                 affectedEnd += 1
@@ -1497,14 +1494,14 @@ struct RichTextEditor: NSViewRepresentable {
 
             let fontAttrs = currentTypingAttributes(from: textView)
             let bulletText = "• "
-            let fullText = storage.string
+            let fullText = storage.string as NSString
 
             let selectedStart = range.location
             let originalSelectedEnd = range.location + range.length
 
             var lineStartPos = selectedStart
             while lineStartPos > 0 &&
-                    fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+                    fullText.character(at: lineStartPos - 1) != 10 {
                 lineStartPos -= 1
             }
 
@@ -1512,9 +1509,8 @@ struct RichTextEditor: NSViewRepresentable {
             var currentPos = lineStartPos
 
             while currentPos < originalSelectedEnd {
-                let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
-                if currentPos < fullText.count &&
-                    fullText[charIndex] == "\n" &&
+                if currentPos < fullText.length &&
+                    fullText.character(at: currentPos) == 10 &&
                     currentPos + 1 <= originalSelectedEnd {
                     lineBoundaries.append(currentPos + 1)
                 }
@@ -1522,8 +1518,8 @@ struct RichTextEditor: NSViewRepresentable {
             }
 
             var affectedEnd = originalSelectedEnd
-            while affectedEnd < fullText.count,
-                  fullText[fullText.index(fullText.startIndex, offsetBy: affectedEnd)] != "\n" {
+            while affectedEnd < fullText.length,
+                  fullText.character(at: affectedEnd) != 10 {
                 affectedEnd += 1
             }
 
@@ -1623,20 +1619,20 @@ struct RichTextEditor: NSViewRepresentable {
             }
 
             let fontAttrs = currentTypingAttributes(from: textView)
-            let fullText = storage.string
+            let fullText = storage.string as NSString
 
             let selectedStart = range.location
             let originalSelectedEnd = range.location + range.length
 
             var lineStartPos = selectedStart
             while lineStartPos > 0 &&
-                    fullText[fullText.index(fullText.startIndex, offsetBy: lineStartPos - 1)] != "\n" {
+                    fullText.character(at: lineStartPos - 1) != 10 {
                 lineStartPos -= 1
             }
 
             var effectiveEnd = max(originalSelectedEnd, selectedStart)
-            while effectiveEnd < fullText.count,
-                  fullText[fullText.index(fullText.startIndex, offsetBy: effectiveEnd)] != "\n" {
+            while effectiveEnd < fullText.length,
+                  fullText.character(at: effectiveEnd) != 10 {
                 effectiveEnd += 1
             }
 
@@ -1644,9 +1640,8 @@ struct RichTextEditor: NSViewRepresentable {
             var currentPos = lineStartPos
 
             while currentPos < effectiveEnd {
-                let charIndex = fullText.index(fullText.startIndex, offsetBy: currentPos)
-                if currentPos < fullText.count &&
-                    fullText[charIndex] == "\n" &&
+                if currentPos < fullText.length &&
+                    fullText.character(at: currentPos) == 10 &&
                     currentPos + 1 <= effectiveEnd {
                     lineBoundaries.append(currentPos + 1)
                 }
@@ -1655,24 +1650,23 @@ struct RichTextEditor: NSViewRepresentable {
 
             if includeFollowingNumberedLines {
                 var scanPos = effectiveEnd
-                while scanPos < fullText.count {
-                    let currentIndex = fullText.index(fullText.startIndex, offsetBy: scanPos)
-                    if fullText[currentIndex] != "\n" {
+                while scanPos < fullText.length {
+                    if fullText.character(at: scanPos) != 10 {
                         scanPos += 1
                         continue
                     }
 
                     let nextLineStart = scanPos + 1
-                    if nextLineStart >= fullText.count { break }
+                    if nextLineStart >= fullText.length { break }
 
                     var nextLineEnd = nextLineStart
-                    while nextLineEnd < fullText.count &&
-                            fullText[fullText.index(fullText.startIndex, offsetBy: nextLineEnd)] != "\n" {
+                    while nextLineEnd < fullText.length &&
+                            fullText.character(at: nextLineEnd) != 10 {
                         nextLineEnd += 1
                     }
 
                     let lineRange = NSRange(location: nextLineStart, length: nextLineEnd - nextLineStart)
-                    let lineContent = (fullText as NSString).substring(with: lineRange)
+                    let lineContent = fullText.substring(with: lineRange)
 
                     if lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) != nil {
                         lineBoundaries.append(nextLineStart)
