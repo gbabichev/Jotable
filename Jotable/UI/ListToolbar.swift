@@ -11,6 +11,7 @@ struct ListToolbar: View {
     @Binding var timeInsertionFormat: TimeInsertionFormat
     @Binding var showingAddURLDialog: Bool
     @Binding var tempURLData: (String, String)?
+    @Binding var showingPasswordGenerator: Bool
 
     var body: some View {
 #if os(macOS)
@@ -78,6 +79,12 @@ struct ListToolbar: View {
             
             Button(action: addURLAction) {
                 Label("Add Link", systemImage: "link")
+            }
+
+            Button {
+                showingPasswordGenerator = true
+            } label: {
+                Label("Generate Password", systemImage: "key.horizontal")
             }
 
             Divider()

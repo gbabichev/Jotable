@@ -32,10 +32,12 @@ struct NoteEditorView: View {
     @State private var timeInsertionFormat: TimeInsertionFormat = .twentyFourHour
     @State private var timeInsertionRequest: TimeInsertionRequest?
     @State private var insertURLTrigger: URLInsertionRequest?
+    @State private var plainTextInsertionRequest: PlainTextInsertionRequest?
     @State private var presentFormatMenuTrigger: UUID?
     @State private var resetColorTrigger: UUID?
     @State private var tempURLData: (String, String)? = nil
     @State private var showingAddURLDialog: Bool = false
+    @State private var showingPasswordGenerator: Bool = false
     @State private var headerHeight: CGFloat = 0
     @State private var lastSyncedRichText: NSAttributedString?
     @State private var skipNextAttributedContentChange = false
@@ -58,6 +60,12 @@ struct NoteEditorView: View {
                 }
             }
 #endif
+            .sheet(isPresented: $showingPasswordGenerator) {
+                PasswordGeneratorView { password in
+                    plainTextInsertionRequest = PlainTextInsertionRequest(text: password)
+                    showingPasswordGenerator = false
+                }
+            }
             .onChange(of: tempURLData != nil) { _, hasData in
                 guard hasData else { return }
                 handlePendingURLData(tempURLData)
@@ -108,6 +116,7 @@ struct NoteEditorView: View {
             dateInsertionRequest: $dateInsertionRequest,
             timeInsertionRequest: $timeInsertionRequest,
             insertURLTrigger: $insertURLTrigger,
+            plainTextInsertionRequest: $plainTextInsertionRequest,
             presentFormatMenuTrigger: $presentFormatMenuTrigger,
             resetColorTrigger: $resetColorTrigger,
             pastePlaintextTrigger: $pastePlaintextTrigger
@@ -129,6 +138,7 @@ struct NoteEditorView: View {
             dateInsertionRequest: $dateInsertionRequest,
             timeInsertionRequest: $timeInsertionRequest,
             insertURLTrigger: $insertURLTrigger,
+            plainTextInsertionRequest: $plainTextInsertionRequest,
             presentFormatMenuTrigger: $presentFormatMenuTrigger,
             resetColorTrigger: $resetColorTrigger,
             linkEditRequest: $linkEditRequest
@@ -199,7 +209,8 @@ struct NoteEditorView: View {
                     timeInsertionRequest: $timeInsertionRequest,
                     timeInsertionFormat: $timeInsertionFormat,
                     showingAddURLDialog: $showingAddURLDialog,
-                    tempURLData: $tempURLData
+                    tempURLData: $tempURLData,
+                    showingPasswordGenerator: $showingPasswordGenerator
                 )
 
                 FontToolbar(

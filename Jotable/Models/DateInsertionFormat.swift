@@ -75,3 +75,8 @@ struct TimeInsertionRequest: Identifiable, Equatable {
     let id: UUID = UUID()
     let format: TimeInsertionFormat
 }
+
+struct PlainTextInsertionRequest: Identifiable, Equatable {
+    let id: UUID = UUID()
+    let text: String
+}

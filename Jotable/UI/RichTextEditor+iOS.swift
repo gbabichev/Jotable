@@ -71,6 +71,7 @@ struct RichTextEditor: UIViewRepresentable {
     @Binding var dateInsertionRequest: DateInsertionRequest?
     @Binding var timeInsertionRequest: TimeInsertionRequest?
     @Binding var insertURLTrigger: URLInsertionRequest?
+    @Binding var plainTextInsertionRequest: PlainTextInsertionRequest?
     @Binding var presentFormatMenuTrigger: UUID?
     @Binding var resetColorTrigger: UUID?
     @Binding var linkEditRequest: LinkEditContext?
@@ -239,6 +240,14 @@ struct RichTextEditor: UIViewRepresentable {
             }
         }
 
+        // Handle plain text insertion trigger (e.g., password generator)
+        if plainTextInsertionRequest?.id != context.coordinator.lastPlainTextInsertionRequest?.id {
+            context.coordinator.lastPlainTextInsertionRequest = plainTextInsertionRequest
+            if let request = plainTextInsertionRequest {
+                context.coordinator.insertPlainText(request.text)
+            }
+        }
+
         if resetColorTrigger != context.coordinator.lastResetColorTrigger {
             context.coordinator.lastResetColorTrigger = resetColorTrigger
             context.coordinator.handleColorReset(in: uiView)
@@ -266,6 +275,7 @@ struct RichTextEditor: UIViewRepresentable {
         var lastDateRequest: DateInsertionRequest?
         var lastTimeRequest: TimeInsertionRequest?
         var lastURLTrigger: URLInsertionRequest?
+        var lastPlainTextInsertionRequest: PlainTextInsertionRequest?
         var lastResetColorTrigger: UUID?
         weak var textView: UITextView?
         var pendingActiveColorFeedback: RichTextColor?
@@ -2047,6 +2057,25 @@ struct RichTextEditor: UIViewRepresentable {
             }
 
             return nil
+        }
+
+        func insertPlainText(_ text: String) {
+            guard let textView = textView else { return }
+            registerUndoSnapshot(for: textView, actionName: "Insert Text")
+            isProgrammaticUpdate = true
+
+            let insertionRange = textView.selectedRange
+            let fontAttrs = currentTypingAttributes(from: textView)
+            let attributed = NSAttributedString(string: text, attributes: fontAttrs)
+
+            textView.textStorage.insert(attributed, at: insertionRange.location)
+
+            let newCursorPosition = insertionRange.location + attributed.length
+            setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
+
+            applyTypingAttributes(to: textView)
+            pushTextToParent(textView.attributedText ?? NSAttributedString())
+            isProgrammaticUpdate = false
         }
 
     }

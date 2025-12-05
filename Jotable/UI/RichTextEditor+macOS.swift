@@ -109,6 +109,7 @@ struct RichTextEditor: NSViewRepresentable {
     @Binding var dateInsertionRequest: DateInsertionRequest?
     @Binding var timeInsertionRequest: TimeInsertionRequest?
     @Binding var insertURLTrigger: URLInsertionRequest?
+    @Binding var plainTextInsertionRequest: PlainTextInsertionRequest?
     @Binding var presentFormatMenuTrigger: UUID?
     @Binding var resetColorTrigger: UUID?
     @Binding var pastePlaintextTrigger: UUID?
@@ -279,6 +280,14 @@ struct RichTextEditor: NSViewRepresentable {
             }
         }
 
+        // Handle plain text insertion trigger (e.g., password generator)
+        if plainTextInsertionRequest?.id != context.coordinator.lastPlainTextInsertionRequest?.id {
+            context.coordinator.lastPlainTextInsertionRequest = plainTextInsertionRequest
+            if let request = plainTextInsertionRequest {
+                context.coordinator.insertPlainText(request.text)
+            }
+        }
+
         if presentFormatMenuTrigger != context.coordinator.lastFormatMenuTrigger {
             context.coordinator.lastFormatMenuTrigger = presentFormatMenuTrigger
             context.coordinator.presentNativeFormatPanel()
@@ -331,6 +340,7 @@ struct RichTextEditor: NSViewRepresentable {
         var lastFormatMenuTrigger: UUID?
         var lastResetColorTrigger: UUID?
         var lastPlaintextPasteTrigger: UUID?
+        var lastPlainTextInsertionRequest: PlainTextInsertionRequest?
         weak var textView: NSTextView?
         var pendingActiveColorFeedback: RichTextColor?
         var customTypingColor: NSColor?
@@ -1926,6 +1936,26 @@ struct RichTextEditor: NSViewRepresentable {
             DispatchQueue.main.async { [weak self] in
                 self?.parent.text = newText
                 self?.isProgrammaticUpdate = false
+            }
+        }
+
+        func insertPlainText(_ text: String) {
+            guard let textView = textView else { return }
+            registerUndoSnapshot(for: textView, actionName: "Insert Text")
+            isProgrammaticUpdate = true
+
+            let insertionRange = textView.selectedRange()
+            let fontAttrs = currentTypingAttributes(from: textView)
+            let attributed = NSAttributedString(string: text, attributes: fontAttrs)
+
+            textView.insertText(attributed, replacementRange: insertionRange)
+            textView.undoManager?.setActionName("Insert Text")
+            applyTypingAttributes(to: textView)
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let storage = textView.textStorage else { return }
+                self.parent.text = NSAttributedString(attributedString: storage)
+                self.isProgrammaticUpdate = false
             }
         }
 
