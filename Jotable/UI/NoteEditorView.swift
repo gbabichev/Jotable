@@ -68,12 +68,23 @@ struct NoteEditorView: View {
             }
             .onChange(of: tempURLData != nil) { _, hasData in
                 guard hasData else { return }
-                handlePendingURLData(tempURLData)
-            }
+            handlePendingURLData(tempURLData)
+        }
 #if !os(macOS)
             .onChange(of: linkEditRequest) { _, newValue in
                 guard newValue != nil else { return }
                 showingAddURLDialog = true
+            }
+#endif
+#if os(macOS)
+            .onReceive(NotificationCenter.default.publisher(for: .toggleBoldShortcut)) { _ in
+                isBold.toggle()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .toggleItalicShortcut)) { _ in
+                isItalic.toggle()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .toggleUnderlineShortcut)) { _ in
+                isUnderlined.toggle()
             }
 #endif
     }

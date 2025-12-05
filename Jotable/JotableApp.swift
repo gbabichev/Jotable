@@ -8,6 +8,12 @@ import SwiftUI
 import SwiftData
 import CloudKit
 
+extension Notification.Name {
+    static let toggleBoldShortcut = Notification.Name("toggleBoldShortcut")
+    static let toggleItalicShortcut = Notification.Name("toggleItalicShortcut")
+    static let toggleUnderlineShortcut = Notification.Name("toggleUnderlineShortcut")
+}
+
 // Environment key for tracking if an editor is active
 private struct EditorActiveKey: EnvironmentKey {
     static let defaultValue = false
@@ -101,6 +107,26 @@ struct JotableApp: App {
                     Label("Paste as Plaintext", systemImage: "doc.on.clipboard")
                 }
                 .keyboardShortcut("v", modifiers: [.command, .shift])
+                .disabled(!isEditorActive)
+            }
+
+            CommandGroup(after: .textFormatting) {
+                Button("Bold") {
+                    NotificationCenter.default.post(name: .toggleBoldShortcut, object: nil)
+                }
+                .keyboardShortcut("b", modifiers: [.command])
+                .disabled(!isEditorActive)
+
+                Button("Italic") {
+                    NotificationCenter.default.post(name: .toggleItalicShortcut, object: nil)
+                }
+                .keyboardShortcut("i", modifiers: [.command])
+                .disabled(!isEditorActive)
+
+                Button("Underline") {
+                    NotificationCenter.default.post(name: .toggleUnderlineShortcut, object: nil)
+                }
+                .keyboardShortcut("u", modifiers: [.command])
                 .disabled(!isEditorActive)
             }
         }

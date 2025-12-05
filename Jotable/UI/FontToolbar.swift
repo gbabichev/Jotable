@@ -103,6 +103,9 @@ struct FontToolbar: View {
                     Text("Bold")
                 }
             }
+            #if os(macOS)
+            .keyboardShortcut("b", modifiers: .command)
+            #endif
 
             Button {
                 isItalic.toggle()
@@ -112,6 +115,9 @@ struct FontToolbar: View {
                     Text("Italic")
                 }
             }
+            #if os(macOS)
+            .keyboardShortcut("i", modifiers: .command)
+            #endif
 
             Button {
                 isUnderlined.toggle()
