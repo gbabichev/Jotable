@@ -969,6 +969,29 @@ struct RichTextEditor: NSViewRepresentable {
                 return false
             }
 
+            // If the cursor is at the very start of a line that already has a list marker, let the default newline occur
+            let isAtLineStart = range.location == lineInfo.range.location
+            if isAtLineStart,
+               lineInfo.text.range(of: #"^\s*(?:-\s|•\s)"#, options: .regularExpression) != nil {
+                return false
+            }
+
+            // If the cursor is at the start of a numbered line, skip auto-numbering
+            if isAtLineStart,
+               lineInfo.text.range(of: #"^\s*\d+\.\s"#, options: .regularExpression) != nil {
+                return false
+            }
+
+            // If the cursor is at the start of a line that already has a checkbox attachment, let the default newline occur
+            if isAtLineStart,
+               lineInfo.range.location < attributedString.length,
+               attributedString.attribute(.attachment,
+                                          at: lineInfo.range.location,
+                                          longestEffectiveRange: nil,
+                                          in: lineInfo.range) is CheckboxTextAttachment {
+                return false
+            }
+
             // Check for checkbox pattern (attachments at start of line)
             if handleCheckboxLine(in: attributedString, textView: textView, at: range, lineRange: lineInfo.range) {
                 return true
@@ -1127,6 +1150,89 @@ struct RichTextEditor: NSViewRepresentable {
             isProgrammaticUpdate = false
         }
 
+        private func lineInfo(for insertionRange: NSRange, in textView: NSTextView) -> (lineStart: Int, lineRange: NSRange, lineContent: String)? {
+            guard let storage = textView.textStorage else {
+                return nil
+            }
+
+            let fullText = storage.string as NSString
+            let boundedLocation = min(insertionRange.location, fullText.length)
+
+            var lineStart = boundedLocation
+            while lineStart > 0 &&
+                    fullText.character(at: lineStart - 1) != 10 {
+                lineStart -= 1
+            }
+
+            var lineEnd = lineStart
+            while lineEnd < fullText.length &&
+                    fullText.character(at: lineEnd) != 10 {
+                lineEnd += 1
+            }
+
+            let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
+            guard lineRange.location + lineRange.length <= storage.length else { return nil }
+
+            let lineContent = storage.attributedSubstring(from: lineRange).string
+            return (lineStart, lineRange, lineContent)
+        }
+
+        private func existingListFormattingLength(at lineStart: Int, lineRange: NSRange, lineContent: String, in storage: NSTextStorage) -> Int {
+            var existingFormattingLength = 0
+
+            let whitespaceCount = leadingWhitespaceLength(in: lineContent)
+            let attachmentPosition = lineStart + whitespaceCount
+
+            if attachmentPosition < storage.length,
+               storage.attribute(.attachment, at: attachmentPosition, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment {
+                existingFormattingLength = whitespaceCount + 2 // leading spaces + checkbox + trailing space
+            }
+
+            if existingFormattingLength == 0 {
+                let contentAfterWhitespace = String(lineContent.dropFirst(whitespaceCount))
+
+                if let dashMatch = contentAfterWhitespace.range(of: #"^-\s"#, options: .regularExpression) {
+                    existingFormattingLength = whitespaceCount + contentAfterWhitespace.distance(from: contentAfterWhitespace.startIndex, to: dashMatch.upperBound)
+                } else if let bulletMatch = contentAfterWhitespace.range(of: #"^•\s"#, options: .regularExpression) {
+                    existingFormattingLength = whitespaceCount + contentAfterWhitespace.distance(from: contentAfterWhitespace.startIndex, to: bulletMatch.upperBound)
+                } else if let numberMatch = contentAfterWhitespace.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+                    existingFormattingLength = whitespaceCount + contentAfterWhitespace.distance(from: contentAfterWhitespace.startIndex, to: numberMatch.upperBound)
+                }
+            }
+
+            return existingFormattingLength
+        }
+
+        private func leadingWhitespaceLength(in lineContent: String) -> Int {
+            var count = 0
+            for char in lineContent {
+                if char == " " || char == "\t" {
+                    count += 1
+                } else {
+                    break
+                }
+            }
+            return count
+        }
+
+        private func skipListInsertionIfFormattingExists(at insertionRange: NSRange, in textView: NSTextView) -> Bool {
+            guard let storage = textView.textStorage,
+                  let (lineStart, lineRange, lineContent) = lineInfo(for: insertionRange, in: textView) else {
+                return false
+            }
+
+            let existingFormattingLength = existingListFormattingLength(at: lineStart, lineRange: lineRange, lineContent: lineContent, in: storage)
+            guard existingFormattingLength > 0 else { return false }
+
+            let formattingEnd = lineStart + existingFormattingLength
+            if insertionRange.location <= formattingEnd {
+                textView.setSelectedRange(NSRange(location: formattingEnd, length: 0))
+                return true
+            }
+
+            return false
+        }
+
         func insertUncheckedCheckbox() {
             guard let textView = textView,
                   let storage = textView.textStorage else {
@@ -1153,6 +1259,10 @@ struct RichTextEditor: NSViewRepresentable {
         private func insertCheckboxAtPosition(insertionRange: NSRange) {
             guard let textView = textView,
                   let storage = textView.textStorage else { return }
+
+            if skipListInsertionIfFormattingExists(at: insertionRange, in: textView) {
+                return
+            }
 
             let needsSpace = checkboxNeedsTrailingSpace(after: insertionRange.location, in: storage.string)
             let replacement = checkboxPrefix(includeSpace: needsSpace)
@@ -1221,28 +1331,13 @@ struct RichTextEditor: NSViewRepresentable {
                     continue
                 }
 
-                var existingFormattingLength = 0
-                if lineStart < mutableSelection.length,
-                   mutableSelection.attribute(NSAttributedString.Key.attachment,
-                                             at: lineStart,
-                                             longestEffectiveRange: nil,
-                                             in: lineRange) is CheckboxTextAttachment {
-                    existingFormattingLength = min(2, mutableSelection.length - lineStart)
-                }
-
-                if existingFormattingLength == 0 {
-                    if let dashMatch = lineContent.range(of: #"^-\s"#, options: .regularExpression) {
-                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: dashMatch.upperBound)
-                    } else if let bulletMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
-                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletMatch.upperBound)
-                    } else if let numberMatch = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
-                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: numberMatch.upperBound)
-                    }
-                }
+                let existingFormattingLength = existingListFormattingLength(at: lineStart,
+                                                                            lineRange: lineRange,
+                                                                            lineContent: lineContent,
+                                                                            in: storage)
 
                 if existingFormattingLength > 0 {
-                    let removalLength = min(existingFormattingLength, mutableSelection.length - lineStart)
-                    mutableSelection.deleteCharacters(in: NSRange(location: lineStart, length: removalLength))
+                    continue
                 }
 
                 let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
@@ -1319,6 +1414,10 @@ struct RichTextEditor: NSViewRepresentable {
         private func insertDashAtPosition(insertionRange: NSRange) {
             guard let textView = textView else { return }
 
+            if skipListInsertionIfFormattingExists(at: insertionRange, in: textView) {
+                return
+            }
+
             let dashText = "- "
             let fontAttrs = currentTypingAttributes(from: textView)
             let dashString = NSAttributedString(string: dashText, attributes: fontAttrs)
@@ -1394,31 +1493,14 @@ struct RichTextEditor: NSViewRepresentable {
                     continue
                 }
 
-                // Check for and remove existing formatting at the start of the line
-                var existingFormattingLength = 0
-
-                if lineStart < mutableSelection.length,
-                   mutableSelection.attribute(NSAttributedString.Key.attachment,
-                                             at: lineStart,
-                                             longestEffectiveRange: nil,
-                                             in: lineRange) is CheckboxTextAttachment {
-                    existingFormattingLength = min(2, mutableSelection.length - lineStart)
-                }
-
-                // If no checkbox, check for dash, bullet, or number patterns
-                if existingFormattingLength == 0 {
-                    if let dashMatch = lineContent.range(of: #"^-\s"#, options: .regularExpression) {
-                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: dashMatch.upperBound)
-                    } else if let bulletCharMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
-                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletCharMatch.upperBound)
-                    } else if let numberMatch = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
-                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: numberMatch.upperBound)
-                    }
-                }
+                // Skip lines that already have list-style formatting
+                let existingFormattingLength = existingListFormattingLength(at: lineStart,
+                                                                            lineRange: lineRange,
+                                                                            lineContent: lineContent,
+                                                                            in: storage)
 
                 if existingFormattingLength > 0 {
-                    let removalLength = min(existingFormattingLength, mutableSelection.length - lineStart)
-                    mutableSelection.deleteCharacters(in: NSRange(location: lineStart, length: removalLength))
+                    continue
                 }
 
                 mutableSelection.insert(NSAttributedString(attributedString: dashString), at: lineStart)
@@ -1474,6 +1556,10 @@ struct RichTextEditor: NSViewRepresentable {
 
         private func insertBulletAtPosition(insertionRange: NSRange) {
             guard let textView = textView else { return }
+
+            if skipListInsertionIfFormattingExists(at: insertionRange, in: textView) {
+                return
+            }
 
             let bulletText = "• "
             let fontAttrs = currentTypingAttributes(from: textView)
@@ -1545,29 +1631,13 @@ struct RichTextEditor: NSViewRepresentable {
                     continue
                 }
 
-                var existingFormattingLength = 0
-
-                if lineStart < mutableSelection.length,
-                   mutableSelection.attribute(NSAttributedString.Key.attachment,
-                                             at: lineStart,
-                                             longestEffectiveRange: nil,
-                                             in: lineRange) is CheckboxTextAttachment {
-                    existingFormattingLength = min(2, mutableSelection.length - lineStart)
-                }
-
-                if existingFormattingLength == 0 {
-                    if let dashMatch = lineContent.range(of: #"^-\s"#, options: .regularExpression) {
-                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: dashMatch.upperBound)
-                    } else if let bulletMatch = lineContent.range(of: #"^•\s"#, options: .regularExpression) {
-                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: bulletMatch.upperBound)
-                    } else if let numberMatch = lineContent.range(of: #"^\d+\.\s"#, options: .regularExpression) {
-                        existingFormattingLength = lineContent.distance(from: lineContent.startIndex, to: numberMatch.upperBound)
-                    }
-                }
+                let existingFormattingLength = existingListFormattingLength(at: lineStart,
+                                                                            lineRange: lineRange,
+                                                                            lineContent: lineContent,
+                                                                            in: storage)
 
                 if existingFormattingLength > 0 {
-                    let removalLength = min(existingFormattingLength, mutableSelection.length - lineStart)
-                    mutableSelection.deleteCharacters(in: NSRange(location: lineStart, length: removalLength))
+                    continue
                 }
 
                 let bulletString = NSAttributedString(string: bulletText, attributes: fontAttrs)
