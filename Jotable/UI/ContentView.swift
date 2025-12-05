@@ -19,6 +19,7 @@ struct ContentView: View {
     // Changed from timestamp to createdAt for stable sorting based on creation date
     @Query(sort: \Item.createdAt, order: .reverse) private var allItems: [Item]
     @Query(sort: \Category.sortOrder) private var categories: [Category]
+    @AppStorage("lastSelectedNoteID") private var lastSelectedNoteID: String = ""
 
     #if os(macOS)
     @Binding var pastePlaintextTrigger: UUID?
@@ -95,6 +96,11 @@ struct ContentView: View {
             .onChange(of: selectedItem) { _, newSelectedItem in
                 // Manage isEditorActive based on whether a note is selected
                 isEditorActive = newSelectedItem != nil
+                if let id = newSelectedItem?.id {
+                    lastSelectedNoteID = id.uuidString
+                } else {
+                    lastSelectedNoteID = ""
+                }
             }
             .onChange(of: sidebarSelection) { oldValue, newValue in
                 // Check if the newly selected item is a locked category
@@ -196,6 +202,17 @@ struct ContentView: View {
         }
         .onAppear {
             setupCloudKitNotifications()
+            restoreLastSelectedNoteIfNeeded()
+        }
+        .onChange(of: allItems) { _, _ in
+            // If no selection (e.g., after app relaunch) try to restore it
+            if selectedItem == nil {
+                restoreLastSelectedNoteIfNeeded()
+            } else if let current = selectedItem,
+                      !allItems.contains(where: { $0.id == current.id }) {
+                // Clear selection if the currently selected note was deleted externally
+                selectedItem = nil
+            }
         }
         .alert("Authentication Failed", isPresented: $showAuthError) {
             Button("OK") {
@@ -593,6 +610,15 @@ struct ContentView: View {
                 }
             }
         )
+    }
+
+    private func restoreLastSelectedNoteIfNeeded() {
+        guard selectedItem == nil, !lastSelectedNoteID.isEmpty else { return }
+
+        if let match = filteredItems.first(where: { $0.id.uuidString == lastSelectedNoteID }) ??
+            allItems.first(where: { $0.id.uuidString == lastSelectedNoteID }) {
+            selectedItem = match
+        }
     }
 
     private func setupCloudKitNotifications() {
