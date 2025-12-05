@@ -663,6 +663,18 @@ struct CategoryRowView: View {
 struct NoteRowView: View {
     let item: Item
     
+    private var previewText: String {
+        let trimmed = item.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Start writing..." }
+        
+        // Use the first non-empty line to avoid blank previews when the note starts with newlines
+        let firstNonEmptyLine = trimmed
+            .components(separatedBy: .newlines)
+            .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        
+        return firstNonEmptyLine ?? trimmed
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -684,9 +696,9 @@ struct NoteRowView: View {
                     .foregroundStyle(.secondary)
             }
             
-            Text(item.content.isEmpty ? "Start writing..." : item.content)
+            Text(previewText)
                 .font(.subheadline)
-                .foregroundStyle(item.content.isEmpty ? .tertiary : .secondary)
+                .foregroundStyle(previewText == "Start writing..." ? .tertiary : .secondary)
                 .lineLimit(1)
         }
         .padding(.vertical, 4)
