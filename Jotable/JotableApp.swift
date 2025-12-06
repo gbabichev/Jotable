@@ -12,6 +12,8 @@ extension Notification.Name {
     static let toggleBoldShortcut = Notification.Name("toggleBoldShortcut")
     static let toggleItalicShortcut = Notification.Name("toggleItalicShortcut")
     static let toggleUnderlineShortcut = Notification.Name("toggleUnderlineShortcut")
+    static let importNotesRequested = Notification.Name("importNotesRequested")
+    static let exportNotesRequested = Notification.Name("exportNotesRequested")
 }
 
 // Environment key for tracking if an editor is active
@@ -128,6 +130,21 @@ struct JotableApp: App {
                 }
                 .keyboardShortcut("u", modifiers: [.command])
                 .disabled(!isEditorActive)
+            }
+            CommandGroup(replacing: .importExport) {
+                Button(action: {
+                    NotificationCenter.default.post(name: .importNotesRequested, object: nil)
+                }) {
+                    Label("Import", systemImage: "square.and.arrow.down")
+                }
+                .keyboardShortcut("i", modifiers: [.command, .shift])
+
+                Button(action: {
+                    NotificationCenter.default.post(name: .exportNotesRequested, object: nil)
+                }) {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
             }
         }
         #endif

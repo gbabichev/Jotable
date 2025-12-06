@@ -7,6 +7,7 @@ import SwiftUI
 import SwiftData
 import CoreData
 import LocalAuthentication
+import UniformTypeIdentifiers
 
 // Selection type for the sidebar
 enum SidebarSelection: Hashable {
@@ -35,6 +36,15 @@ struct ContentView: View {
     @State private var showAuthError = false
     @State private var authErrorMessage = ""
     @State private var showingCategoryPickerForItem: Item?
+    #if os(macOS)
+    @State private var isExporting = false
+    @State private var exportDocument = NotesExportDocument(data: Data())
+    @State private var showExportAlert = false
+    @State private var exportError: String?
+    @State private var isImporting = false
+    @State private var importError: String?
+    @State private var importResultMessage: String?
+    #endif
 
     
     // Computed property to get the selected category for filtering
@@ -204,6 +214,14 @@ struct ContentView: View {
             setupCloudKitNotifications()
             restoreLastSelectedNoteIfNeeded()
         }
+        #if os(macOS)
+        .onReceive(NotificationCenter.default.publisher(for: .exportNotesRequested)) { _ in
+            showExportAlert = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .importNotesRequested)) { _ in
+            isImporting = true
+        }
+        #endif
         .onChange(of: allItems) { _, _ in
             // If no selection (e.g., after app relaunch) try to restore it
             if selectedItem == nil {
@@ -221,6 +239,54 @@ struct ContentView: View {
         } message: {
             Text(authErrorMessage)
         }
+        #if os(macOS)
+        .alert("Export Notes", isPresented: $showExportAlert) {
+            Button("Export", role: .none) {
+                startExport()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Everything will be exported as plain text, including private notes.")
+        }
+        .alert("Export Failed", isPresented: Binding(get: { exportError != nil }, set: { _ in exportError = nil })) {
+            Button("OK", role: .cancel) { exportError = nil }
+        } message: {
+            Text(exportError ?? "Unknown error")
+        }
+        .alert("Import Result", isPresented: Binding(get: { importResultMessage != nil }, set: { _ in importResultMessage = nil })) {
+            Button("OK", role: .cancel) { importResultMessage = nil }
+        } message: {
+            Text(importResultMessage ?? "")
+        }
+        .alert("Import Failed", isPresented: Binding(get: { importError != nil }, set: { _ in importError = nil })) {
+            Button("OK", role: .cancel) { importError = nil }
+        } message: {
+            Text(importError ?? "Unknown error")
+        }
+        .fileExporter(
+            isPresented: $isExporting,
+            document: exportDocument,
+            contentType: .json,
+            defaultFilename: "Jotable-Export"
+        ) { result in
+            if case let .failure(error) = result {
+                exportError = error.localizedDescription
+            }
+        }
+        .fileImporter(
+            isPresented: $isImporting,
+            allowedContentTypes: [.json],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                handleImport(from: url)
+            case .failure(let error):
+                importError = error.localizedDescription
+            }
+        }
+        #endif
     }
     
     // Shared sidebar content
@@ -647,6 +713,34 @@ struct ContentView: View {
             }
         }
     }
+
+    #if os(macOS)
+    private func startExport() {
+        do {
+            let data = try DataExportImport.exportAll(from: modelContext)
+            exportDocument = NotesExportDocument(data: data)
+            isExporting = true
+        } catch {
+            exportError = error.localizedDescription
+        }
+    }
+
+    private func handleImport(from url: URL) {
+        guard url.startAccessingSecurityScopedResource() else {
+            importError = "Unable to access selected file."
+            return
+        }
+        defer { url.stopAccessingSecurityScopedResource() }
+
+        do {
+            let data = try Data(contentsOf: url)
+            let result = try DataExportImport.importPackage(from: data, into: modelContext)
+            importResultMessage = "Imported \(result.importedCategories) categories and \(result.importedNotes) notes."
+        } catch {
+            importError = error.localizedDescription
+        }
+    }
+    #endif
 }
 
 // Separate view for category rows to ensure proper native behavior
