@@ -27,7 +27,7 @@ struct ContentView: View {
     #endif
     @Binding var isEditorActive: Bool
 
-    @State private var selectedItem: Item?
+    @State private var selectedItemIDs: Set<PersistentIdentifier> = []
     @State private var sidebarSelection: SidebarSelection? = .allNotes
     @State private var showingAddCategory = false
     @State private var categoryToEdit: Category?
@@ -44,6 +44,10 @@ struct ContentView: View {
     @State private var isImporting = false
     @State private var importError: String?
     @State private var importResultMessage: String?
+    #endif
+    #if os(iOS)
+    @Environment(\.editMode) private var editMode
+    private var isEditing: Bool { editMode?.wrappedValue.isEditing == true }
     #endif
 
     
@@ -95,6 +99,17 @@ struct ContentView: View {
         }.count
     }
     
+    private var primarySelectedItem: Item? {
+        #if os(iOS)
+        guard !isEditing, selectedItemIDs.count == 1, let selectedID = selectedItemIDs.first else { return nil }
+        #else
+        guard selectedItemIDs.count == 1, let selectedID = selectedItemIDs.first else { return nil }
+        #endif
+        return filteredItems.first { $0.persistentModelID == selectedID }
+    }
+
+    private var listSelectionBinding: Binding<Set<PersistentIdentifier>> { $selectedItemIDs }
+    
     var body: some View {
         NavigationSplitView {
             // Sidebar with categories
@@ -103,8 +118,9 @@ struct ContentView: View {
             }
             .listStyle(SidebarListStyle())
             .navigationTitle("Jotable")
-            .onChange(of: selectedItem) { _, newSelectedItem in
-                // Manage isEditorActive based on whether a note is selected
+            .onChange(of: selectedItemIDs) { _, _ in
+                let newSelectedItem = primarySelectedItem
+                // Manage isEditorActive based on whether a single note is selected
                 isEditorActive = newSelectedItem != nil
                 if let id = newSelectedItem?.id {
                     lastSelectedNoteID = id.uuidString
@@ -167,7 +183,7 @@ struct ContentView: View {
             }
         } content: {
             // Notes list with drag-to-reorder capability
-            List(selection: $selectedItem) {
+            List(selection: listSelectionBinding) {
                 notesListContent
             }
             .searchable(
@@ -178,16 +194,24 @@ struct ContentView: View {
             .navigationSubtitle("\(filteredItems.count) \(filteredItems.count == 1 ? "note" : "notes")")
             .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 400)
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    if !selectedItemIDs.isEmpty {
+                        Button(role: .destructive, action: deleteSelectedItems) {
+                            Label("Delete Selected", systemImage: "trash")
+                        }
+                    }
                     Button(action: addItem) {
                         Label("New Note", systemImage: "square.and.pencil")
                     }
+                    #if os(iOS)
+                    EditButton()
+                    #endif
                 }
             }
         } detail: {
             // Detail view wrapped in NavigationStack for proper navigation
             NavigationStack {
-                if let selectedItem {
+                if let selectedItem = primarySelectedItem {
                     #if os(macOS)
                     NoteEditorView(item: selectedItem, pastePlaintextTrigger: $pastePlaintextTrigger, isEditorActive: $isEditorActive)
                         .id(selectedItem.id) // Force view recreation when switching notes
@@ -223,15 +247,23 @@ struct ContentView: View {
         }
         #endif
         .onChange(of: allItems) { _, _ in
+            // Trim selection to still-present items
+            selectedItemIDs = Set(selectedItemIDs.filter { id in
+                allItems.contains(where: { $0.persistentModelID == id })
+            })
+
             // If no selection (e.g., after app relaunch) try to restore it
-            if selectedItem == nil {
+            if primarySelectedItem == nil {
                 restoreLastSelectedNoteIfNeeded()
-            } else if let current = selectedItem,
-                      !allItems.contains(where: { $0.id == current.id }) {
-                // Clear selection if the currently selected note was deleted externally
-                selectedItem = nil
             }
         }
+        #if os(iOS)
+        .onChange(of: isEditing) { _, editing in
+            if !editing {
+                selectedItemIDs.removeAll()
+            }
+        }
+        #endif
         .alert("Authentication Failed", isPresented: $showAuthError) {
             Button("OK") {
                 showAuthError = false
@@ -351,7 +383,7 @@ struct ContentView: View {
     private var notesListContent: some View {
         ForEach(filteredItems) { item in
             NoteRowView(item: item)
-                .tag(item)
+                .tag(item.persistentModelID)
                 .id(item.id)
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button(role: .destructive) {
@@ -363,7 +395,7 @@ struct ContentView: View {
                 .contextMenu {
                     Button {
                         // Select the item for editing
-                        selectedItem = item
+                        selectedItemIDs = [item.persistentModelID]
                     } label: {
                         Label("Edit", systemImage: "pencil")
                     }
@@ -396,8 +428,8 @@ struct ContentView: View {
         print("Deleting item: '\(item.title)'")
         
         // IMPORTANT: Clear selection BEFORE deleting to prevent crash
-        if selectedItem == item {
-            selectedItem = nil
+        if selectedItemIDs.contains(item.persistentModelID) {
+            selectedItemIDs.remove(item.persistentModelID)
             print("Cleared selection")
         }
         
@@ -415,7 +447,27 @@ struct ContentView: View {
             }
         }
     }
-    
+
+    private func deleteSelectedItems() {
+        let itemsToDelete = filteredItems.filter { selectedItemIDs.contains($0.persistentModelID) }
+        guard !itemsToDelete.isEmpty else { return }
+
+        selectedItemIDs.removeAll()
+
+        withAnimation {
+            for item in itemsToDelete {
+                modelContext.delete(item)
+            }
+
+            do {
+                try modelContext.save()
+                print("💾 Deleted \(itemsToDelete.count) selected items - CloudKit sync queued")
+            } catch {
+                print("❌ Failed to delete selected items: \(error)")
+            }
+        }
+    }
+
     // Manual reordering function - updates createdAt dates to maintain new order
     private func moveItems(from source: IndexSet, to destination: Int) {
         var reorderedItems = Array(filteredItems)
@@ -464,7 +516,7 @@ struct ContentView: View {
             // Clear selection if deleting selected category
             if case .category(let selectedCat) = sidebarSelection, selectedCat.id == category.id {
                 sidebarSelection = .allNotes
-                selectedItem = nil
+                selectedItemIDs.removeAll()
             }
             
             modelContext.delete(category)
@@ -491,7 +543,7 @@ struct ContentView: View {
                 // Clear selection if deleting selected category
                 if case .category(let selectedCat) = sidebarSelection, selectedCat.id == category.id {
                     sidebarSelection = .allNotes
-                    selectedItem = nil
+                    selectedItemIDs.removeAll()
                 }
                 
                 modelContext.delete(category)
@@ -597,7 +649,7 @@ struct ContentView: View {
 
     private func deleteEverything() {
         // Clear selection IMMEDIATELY and SYNCHRONOUSLY before any deletion
-        selectedItem = nil
+        selectedItemIDs.removeAll()
         sidebarSelection = .allNotes
 
         // Give SwiftUI a moment to process the selection change
@@ -641,7 +693,7 @@ struct ContentView: View {
             try modelContext.save()
             print("💾 New item created and saved - CloudKit sync queued")
             // Set selection immediately
-            selectedItem = newItem
+            selectedItemIDs = [newItem.persistentModelID]
         } catch {
             print("❌ Failed to save new item: \(error)")
         }
@@ -679,11 +731,11 @@ struct ContentView: View {
     }
 
     private func restoreLastSelectedNoteIfNeeded() {
-        guard selectedItem == nil, !lastSelectedNoteID.isEmpty else { return }
+        guard selectedItemIDs.isEmpty, !lastSelectedNoteID.isEmpty else { return }
 
         if let match = filteredItems.first(where: { $0.id.uuidString == lastSelectedNoteID }) ??
             allItems.first(where: { $0.id.uuidString == lastSelectedNoteID }) {
-            selectedItem = match
+            selectedItemIDs = [match.persistentModelID]
         }
     }
 
