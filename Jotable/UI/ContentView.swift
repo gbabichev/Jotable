@@ -195,11 +195,13 @@ struct ContentView: View {
             .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 400)
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
+                    #if os(macOS)
                     if !selectedItemIDs.isEmpty {
                         Button(role: .destructive, action: deleteSelectedItems) {
                             Label("Delete Selected", systemImage: "trash")
                         }
                     }
+                    #endif
                     Button(action: addItem) {
                         Label("New Note", systemImage: "square.and.pencil")
                     }
