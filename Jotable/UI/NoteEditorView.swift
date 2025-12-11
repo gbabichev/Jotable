@@ -279,15 +279,20 @@ struct NoteEditorView: View {
 
     private func removeCheckboxMarkerAttribute(_ attributedString: NSAttributedString) -> NSAttributedString {
         let mutable = NSMutableAttributedString(attributedString: attributedString)
-        let markerKey = NSAttributedString.Key(rawValue: "checkboxStateChanged")
+        let checkboxMarkerKey = NSAttributedString.Key(rawValue: "checkboxStateChanged")
+        let imageResizeMarkerKey = NSAttributedString.Key(rawValue: "imageResizeChanged")
 
         var pos = 0
         while pos < mutable.length {
             var range = NSRange()
             let attrs = mutable.attributes(at: pos, longestEffectiveRange: &range, in: NSRange(location: pos, length: mutable.length - pos))
 
-            if attrs[markerKey] != nil {
-                mutable.removeAttribute(markerKey, range: range)
+            if attrs[checkboxMarkerKey] != nil {
+                mutable.removeAttribute(checkboxMarkerKey, range: range)
+            }
+
+            if attrs[imageResizeMarkerKey] != nil {
+                mutable.removeAttribute(imageResizeMarkerKey, range: range)
             }
 
             pos = range.location + range.length
@@ -311,6 +316,20 @@ struct NoteEditorView: View {
                 let checkboxIsCheckedKey = NSAttributedString.Key(rawValue: "checkboxIsChecked")
                 mutable.addAttribute(checkboxIDKey, value: checkbox.checkboxID, range: range)
                 mutable.addAttribute(checkboxIsCheckedKey, value: NSNumber(value: checkbox.isChecked), range: range)
+            }
+
+            // Check if this position has a resizable image attachment
+            if let imageAttachment = attrs[NSAttributedString.Key.attachment] as? ResizableImageAttachment {
+                // Store image size as attributes so they survive archiving
+                if let customSize = imageAttachment.customSize {
+                    let imageSizeWidthKey = NSAttributedString.Key(rawValue: "imageSizeWidth")
+                    let imageSizeHeightKey = NSAttributedString.Key(rawValue: "imageSizeHeight")
+                    mutable.addAttribute(imageSizeWidthKey, value: NSNumber(value: Double(customSize.width)), range: range)
+                    mutable.addAttribute(imageSizeHeightKey, value: NSNumber(value: Double(customSize.height)), range: range)
+                }
+
+                let imageIDKey = NSAttributedString.Key(rawValue: "imageID")
+                mutable.addAttribute(imageIDKey, value: imageAttachment.imageID, range: range)
             }
 
             pos = range.location + range.length
@@ -341,6 +360,8 @@ struct NoteEditorView: View {
 
         let checkboxIDKey = NSAttributedString.Key(rawValue: "checkboxID")
         let checkboxIsCheckedKey = NSAttributedString.Key(rawValue: "checkboxIsChecked")
+        let imageSizeWidthKey = NSAttributedString.Key(rawValue: "imageSizeWidth")
+        let imageSizeHeightKey = NSAttributedString.Key(rawValue: "imageSizeHeight")
 
         var pos = 0
         while pos < mutable.length {
@@ -360,6 +381,23 @@ struct NoteEditorView: View {
                     if let stateData = try? JSONSerialization.data(withJSONObject: stateDict) {
                         checkbox.contents = stateData
                     }
+                }
+            }
+
+            // Check if this position has image size attributes
+            if let widthNum = attrs[imageSizeWidthKey] as? NSNumber,
+               let heightNum = attrs[imageSizeHeightKey] as? NSNumber {
+                let width = CGFloat(widthNum.doubleValue)
+                let height = CGFloat(heightNum.doubleValue)
+
+                // Check if there's a resizable image attachment at this position
+                if let imageAttachment = attrs[NSAttributedString.Key.attachment] as? ResizableImageAttachment {
+                    // Restore the custom size
+                    #if os(macOS)
+                    imageAttachment.customSize = NSSize(width: width, height: height)
+                    #else
+                    imageAttachment.customSize = CGSize(width: width, height: height)
+                    #endif
                 }
             }
 

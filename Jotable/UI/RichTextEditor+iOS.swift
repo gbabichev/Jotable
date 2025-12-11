@@ -2,8 +2,105 @@
 import SwiftUI
 import UIKit
 
-// Custom UITextView subclass to handle image pasting
+// Custom UITextView subclass to handle image pasting and pinch-to-zoom
 private class PastableTextView: UITextView {
+    private var imagePinchGesture: UIPinchGestureRecognizer?
+    private var pinchingAttachment: ResizableImageAttachment?
+    private var pinchingCharIndex: Int?
+    private var initialPinchSize: CGSize?
+
+    override init(frame: CGRect, textContainer: NSTextContainer?) {
+        super.init(frame: frame, textContainer: textContainer)
+        setupPinchGesture()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupPinchGesture()
+    }
+
+    private func setupPinchGesture() {
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+        addGestureRecognizer(pinch)
+        imagePinchGesture = pinch
+    }
+
+    @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        let layoutManager = layoutManager
+        let textContainer = textContainer
+        let storage = textStorage
+
+        switch gesture.state {
+        case .began:
+            // Find which image is being pinched
+            let location = gesture.location(in: self)
+            let textContainerOffset = CGPoint(x: textContainerInset.left, y: textContainerInset.top)
+            let locationInTextContainer = CGPoint(x: location.x - textContainerOffset.x,
+                                                  y: location.y - textContainerOffset.y)
+
+            let glyphIndex = layoutManager.glyphIndex(for: locationInTextContainer, in: textContainer)
+            let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+
+            if charIndex != NSNotFound && charIndex < storage.length {
+                if let attachment = storage.attribute(.attachment, at: charIndex, effectiveRange: nil) as? ResizableImageAttachment {
+                    pinchingAttachment = attachment
+                    pinchingCharIndex = charIndex
+                    initialPinchSize = attachment.customSize ?? attachment.image?.size
+                }
+            }
+
+        case .changed:
+            guard let attachment = pinchingAttachment,
+                  let initialSize = initialPinchSize,
+                  let charIndex = pinchingCharIndex else { return }
+
+            // Calculate new size based on pinch scale
+            let scale = gesture.scale
+            let newWidth = max(50, initialSize.width * scale)
+
+            // Maintain aspect ratio
+            guard let img = attachment.originalImage ?? attachment.image else { return }
+            let aspectRatio = img.size.height / img.size.width
+            let newHeight = newWidth * aspectRatio
+
+            // Update attachment size
+            attachment.customSize = CGSize(width: newWidth, height: newHeight)
+
+            // Force layout refresh
+            layoutManager.invalidateLayout(forCharacterRange: NSRange(location: charIndex, length: 1),
+                                          actualCharacterRange: nil)
+            layoutManager.ensureLayout(for: textContainer)
+
+            setNeedsDisplay()
+
+        case .ended, .cancelled:
+            if pinchingAttachment != nil {
+                // Add a marker attribute to force change detection
+                if storage.length > 0 {
+                    let updatedStorage = NSMutableAttributedString(attributedString: storage)
+                    updatedStorage.addAttribute(
+                        NSAttributedString.Key(rawValue: "imageResizeChanged"),
+                        value: NSNumber(value: Date().timeIntervalSince1970),
+                        range: NSRange(location: 0, length: 1)
+                    )
+
+                    // Replace the text storage content
+                    storage.setAttributedString(updatedStorage)
+
+                    // Notify delegates of the change
+                    delegate?.textViewDidChange?(self)
+                }
+            }
+
+            pinchingAttachment = nil
+            pinchingCharIndex = nil
+            initialPinchSize = nil
+
+        default:
+            break
+        }
+    }
+
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         if action == #selector(paste(_:)) {
             return UIPasteboard.general.image != nil || UIPasteboard.general.hasStrings
@@ -16,8 +113,8 @@ private class PastableTextView: UITextView {
 
         // Handle image paste
         if let image = pasteboard.image {
-            let attachment = NSTextAttachment()
-            attachment.image = image
+            // Create a resizable image attachment
+            let attachment = ResizableImageAttachment(image: image)
 
             // Scale image to reasonable size
             let maxWidth: CGFloat = 400
@@ -32,7 +129,7 @@ private class PastableTextView: UITextView {
                 imageSize = CGSize(width: imageSize.width * scale, height: maxHeight)
             }
 
-            attachment.bounds = CGRect(origin: .zero, size: imageSize)
+            attachment.customSize = imageSize
 
             let attributedString = NSAttributedString(attachment: attachment)
             let range = selectedRange

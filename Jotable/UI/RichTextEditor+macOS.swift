@@ -7,7 +7,15 @@ private final class DynamicColorTextView: NSTextView {
     var onCheckboxTap: ((Int) -> Void)?
     var onColorChange: (() -> Void)?
     var onFormatChange: (() -> Void)?
+    var onImageResize: ((ResizableImageAttachment) -> Void)?
     var isUnderlinedManually = false  // Track underline state for native menu toggles (which don't update typingAttributes)
+
+    // Image resize tracking
+    private var selectedImageAttachment: ResizableImageAttachment?
+    private var selectedImageCharIndex: Int?
+    private var isResizingImage = false
+    private var resizeStartPoint: NSPoint = .zero
+    private var resizeStartSize: NSSize = .zero
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -21,13 +29,93 @@ private final class DynamicColorTextView: NSTextView {
         }
 
         let localPoint = convert(event.locationInWindow, from: nil)
+
+        // Check for checkbox tap
         if event.clickCount == 1,
            let charIndex = checkboxCharacterIndex(at: localPoint) {
             onCheckboxTap?(charIndex)
             return
         }
 
+        // Check for image attachment click/resize
+        if let (attachment, charIndex, attachmentRect) = imageAttachmentInfo(at: localPoint) {
+            selectedImageAttachment = attachment
+            selectedImageCharIndex = charIndex
+
+            // Check if click is on resize handle (bottom-right corner)
+            let handleSize: CGFloat = 16
+            let handleRect = NSRect(x: attachmentRect.maxX - handleSize,
+                                   y: attachmentRect.maxY - handleSize,
+                                   width: handleSize,
+                                   height: handleSize)
+
+            if handleRect.contains(localPoint) {
+                isResizingImage = true
+                resizeStartPoint = event.locationInWindow
+                resizeStartSize = attachmentRect.size
+                return
+            }
+
+            // Just selecting the image
+            needsDisplay = true
+            return
+        }
+
+        // Clear image selection if clicking elsewhere
+        if selectedImageAttachment != nil {
+            selectedImageAttachment = nil
+            selectedImageCharIndex = nil
+            needsDisplay = true
+        }
+
         super.mouseDown(with: event)
+    }
+
+    override func paste(_ sender: Any?) {
+        let pasteboard = NSPasteboard.general
+
+        // Check if pasteboard contains an image
+        if let image = NSImage(pasteboard: pasteboard) {
+            // Create a resizable image attachment
+            let attachment = ResizableImageAttachment(image: image)
+
+            // Scale image to reasonable size if needed
+            let maxWidth: CGFloat = 400
+            let maxHeight: CGFloat = 400
+            let imageSize = image.size
+
+            var width = imageSize.width
+            var height = imageSize.height
+
+            if width > maxWidth || height > maxHeight {
+                let widthRatio = maxWidth / width
+                let heightRatio = maxHeight / height
+                let ratio = min(widthRatio, heightRatio)
+
+                width = width * ratio
+                height = height * ratio
+            }
+
+            attachment.customSize = NSSize(width: width, height: height)
+
+            // Create attributed string with the attachment
+            let attachmentString = NSAttributedString(attachment: attachment)
+
+            // Insert at current selection
+            if let textStorage = textStorage {
+                let selectedRange = self.selectedRange
+                textStorage.replaceCharacters(in: selectedRange, with: attachmentString)
+
+                // Move cursor after the inserted image
+                let newPosition = selectedRange.location + 1
+                setSelectedRange(NSRange(location: newPosition, length: 0))
+
+                didChangeText()
+            }
+        } else {
+            // Not an image, use default paste behavior
+            super.paste(sender)
+        }
     }
 
     override func changeColor(_ sender: Any?) {
@@ -64,6 +152,175 @@ private final class DynamicColorTextView: NSTextView {
 
         // Notify the coordinator to sync state
         onFormatChange?()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard isResizingImage,
+              let attachment = selectedImageAttachment,
+              let charIndex = selectedImageCharIndex,
+              let layoutManager = layoutManager,
+              let textContainer = textContainer,
+              textStorage != nil else {
+            super.mouseDragged(with: event)
+            return
+        }
+
+        let currentPoint = event.locationInWindow
+        let delta = NSPoint(x: currentPoint.x - resizeStartPoint.x,
+                           y: currentPoint.y - resizeStartPoint.y)
+
+        // Calculate new size
+        let newWidth = max(50, resizeStartSize.width + delta.x)
+
+        // Maintain aspect ratio
+        guard let img = attachment.originalImage ?? attachment.image else {
+            super.mouseDragged(with: event)
+            return
+        }
+        let aspectRatio = img.size.height / img.size.width
+        let newHeight = newWidth * aspectRatio
+
+        // Update attachment size
+        attachment.customSize = NSSize(width: newWidth, height: newHeight)
+
+        // Force layout refresh
+        layoutManager.invalidateLayout(forCharacterRange: NSRange(location: charIndex, length: 1),
+                                       actualCharacterRange: nil)
+        layoutManager.ensureLayout(for: textContainer)
+
+        needsDisplay = true
+        didChangeText()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if isResizingImage {
+            isResizingImage = false
+
+            // Add a marker attribute to force change detection
+            // since NSAttributedString.isEqual won't detect image size changes
+            if let storage = textStorage, storage.length > 0 {
+                let updatedStorage = NSMutableAttributedString(attributedString: storage)
+                updatedStorage.addAttribute(
+                    NSAttributedString.Key(rawValue: "imageResizeChanged"),
+                    value: NSNumber(value: Date().timeIntervalSince1970),
+                    range: NSRange(location: 0, length: 1)
+                )
+
+                // Replace the text storage content
+                storage.setAttributedString(updatedStorage)
+
+                if let attachment = selectedImageAttachment {
+                    onImageResize?(attachment)
+                }
+
+                didChangeText()
+            }
+        }
+        super.mouseUp(with: event)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        // Draw resize handles on selected image
+        guard selectedImageAttachment != nil,
+              let charIndex = selectedImageCharIndex,
+              let layoutManager = layoutManager,
+              let textContainer = textContainer else {
+            return
+        }
+
+        let glyphIndex = layoutManager.glyphIndexForCharacter(at: charIndex)
+        let glyphRect = layoutManager.boundingRect(forGlyphRange: NSRange(location: glyphIndex, length: 1),
+                                                    in: textContainer)
+        let textContainerOrigin = self.textContainerOrigin
+        let attachmentRect = glyphRect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+
+        // Draw selection border
+        NSColor.controlAccentColor.setStroke()
+        let borderPath = NSBezierPath(rect: attachmentRect)
+        borderPath.lineWidth = 2
+        borderPath.stroke()
+
+        // Draw resize handle with SF Symbol
+        let handleSize: CGFloat = 16
+        let handleRect = NSRect(x: attachmentRect.maxX - handleSize,
+                               y: attachmentRect.maxY - handleSize,
+                               width: handleSize,
+                               height: handleSize)
+
+        // Draw background circle
+        NSColor.controlAccentColor.withAlphaComponent(0.9).setFill()
+        let circlePath = NSBezierPath(ovalIn: handleRect)
+        circlePath.fill()
+
+        // Draw resize symbol
+        if let symbolImage = NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: "Resize") {
+            symbolImage.isTemplate = true
+
+            NSGraphicsContext.saveGraphicsState()
+            NSColor.white.set()
+
+            // Draw the symbol centered in the handle
+            let symbolRect = handleRect.insetBy(dx: 3, dy: 3)
+            symbolImage.draw(in: symbolRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+
+            NSGraphicsContext.restoreGraphicsState()
+        }
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+
+        // Add cursor rect for resize handle if image is selected
+        guard selectedImageAttachment != nil,
+              let charIndex = selectedImageCharIndex,
+              let layoutManager = layoutManager,
+              let textContainer = textContainer else {
+            return
+        }
+
+        let glyphIndex = layoutManager.glyphIndexForCharacter(at: charIndex)
+        let glyphRect = layoutManager.boundingRect(forGlyphRange: NSRange(location: glyphIndex, length: 1),
+                                                    in: textContainer)
+        let textContainerOrigin = self.textContainerOrigin
+        let attachmentRect = glyphRect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+
+        let handleSize: CGFloat = 16
+        let handleRect = NSRect(x: attachmentRect.maxX - handleSize,
+                               y: attachmentRect.maxY - handleSize,
+                               width: handleSize,
+                               height: handleSize)
+
+        addCursorRect(handleRect, cursor: .crosshair)
+    }
+
+    private func imageAttachmentInfo(at point: NSPoint) -> (attachment: ResizableImageAttachment, charIndex: Int, rect: NSRect)? {
+        guard let layoutManager = layoutManager,
+              let textContainer = textContainer,
+              let storage = textStorage else { return nil }
+
+        let textContainerOrigin = self.textContainerOrigin
+        let containerPoint = NSPoint(x: point.x - textContainerOrigin.x,
+                                     y: point.y - textContainerOrigin.y)
+
+        let glyphIndex = layoutManager.glyphIndex(for: containerPoint, in: textContainer)
+        let glyphRect = layoutManager.boundingRect(forGlyphRange: NSRange(location: glyphIndex, length: 1),
+                                                    in: textContainer)
+        let adjustedRect = glyphRect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+
+        guard adjustedRect.contains(point) else { return nil }
+
+        let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+        guard charIndex != NSNotFound, charIndex < storage.length else { return nil }
+
+        if let attachment = storage.attribute(NSAttributedString.Key.attachment,
+                                             at: charIndex,
+                                             effectiveRange: nil) as? ResizableImageAttachment {
+            return (attachment, charIndex, adjustedRect)
+        }
+
+        return nil
     }
 
     private func checkboxCharacterIndex(at point: NSPoint) -> Int? {
