@@ -1124,7 +1124,7 @@ struct RichTextEditor: UIViewRepresentable {
                 newCursorPosition = min(lineRange.location, textView.textStorage.length)
             } else {
                 // Content after checkbox - insert newline and new checkbox at cursor position
-                let newCheckbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
+                let newCheckbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false, fontPointSize: activeFontSize.rawValue)
                 let newCheckboxString = NSAttributedString(attachment: newCheckbox)
 
                 // Add font attributes for proper rendering
@@ -1315,7 +1315,7 @@ struct RichTextEditor: UIViewRepresentable {
                 return
             }
 
-            let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
+            let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false, fontPointSize: activeFontSize.rawValue)
             let checkboxString = NSAttributedString(attachment: checkbox)
 
             // Use textStorage to properly register with undo manager
@@ -1405,7 +1405,7 @@ struct RichTextEditor: UIViewRepresentable {
                 }
 
                 // Insert checkbox at the beginning of this line
-                let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
+                let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false, fontPointSize: activeFontSize.rawValue)
                 let checkboxString = NSAttributedString(attachment: checkbox)
 
                 guard lineStart <= textView.textStorage.length else { continue }

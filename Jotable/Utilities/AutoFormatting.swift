@@ -161,7 +161,12 @@ struct AutoFormatting {
         let uncheckedRegex = try? NSRegularExpression(pattern: uncheckedPattern, options: [])
         let uncheckedMatches = uncheckedRegex?.matches(in: string, options: [], range: NSRange(location: 0, length: string.count)) ?? []
         for match in uncheckedMatches {
-            let attachment = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
+            #if canImport(UIKit)
+            let fontSize = (spaceAttributes?[.font] as? UIFont)?.pointSize
+            #else
+            let fontSize = (spaceAttributes?[.font] as? NSFont)?.pointSize
+            #endif
+            let attachment = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false, fontPointSize: fontSize)
             replacements.append((match.range, attachment))
         }
 
@@ -169,7 +174,12 @@ struct AutoFormatting {
         let checkedRegex = try? NSRegularExpression(pattern: checkedPattern, options: [])
         let checkedMatches = checkedRegex?.matches(in: string, options: [], range: NSRange(location: 0, length: string.count)) ?? []
         for match in checkedMatches {
-            let attachment = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: true)
+            #if canImport(UIKit)
+            let fontSize = (spaceAttributes?[.font] as? UIFont)?.pointSize
+            #else
+            let fontSize = (spaceAttributes?[.font] as? NSFont)?.pointSize
+            #endif
+            let attachment = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: true, fontPointSize: fontSize)
             replacements.append((match.range, attachment))
         }
 

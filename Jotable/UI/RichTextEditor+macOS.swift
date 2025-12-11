@@ -1087,7 +1087,7 @@ struct RichTextEditor: NSViewRepresentable {
                 newCursorPosition = min(lineRange.location, storage.length)
             } else {
                 // Content after checkbox - add newline and new checkbox
-                let newCheckbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
+                let newCheckbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false, fontPointSize: activeFontSize.rawValue)
                 let newCheckboxString = NSAttributedString(attachment: newCheckbox)
 
                 // Add font attributes for proper rendering
@@ -1350,7 +1350,7 @@ struct RichTextEditor: NSViewRepresentable {
                     continue
                 }
 
-                let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
+                let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false, fontPointSize: activeFontSize.rawValue)
                 let checkboxString = NSAttributedString(attachment: checkbox)
                 mutableSelection.insert(checkboxString, at: lineStart)
 
@@ -1372,7 +1372,7 @@ struct RichTextEditor: NSViewRepresentable {
         }
 
         private func checkboxPrefix(includeSpace: Bool) -> NSAttributedString {
-            let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false)
+            let checkbox = CheckboxTextAttachment(checkboxID: UUID().uuidString, isChecked: false, fontPointSize: activeFontSize.rawValue)
             let prefix = NSMutableAttributedString(attachment: checkbox)
             if includeSpace {
                 prefix.append(NSAttributedString(string: " ", attributes: checkboxSpaceAttributes()))

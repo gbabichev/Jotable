@@ -70,6 +70,7 @@ struct JotableApp: App {
                         let descriptor = FetchDescriptor<Item>()
                         let items = try context.fetch(descriptor)
                         print("🚀 App launched - Found \(items.count) existing items")
+                        CheckboxMigrator.runIfNeeded(context: context)
                     } catch {
                         print("❌ Failed to fetch items on launch: \(error)")
                     }
@@ -88,6 +89,7 @@ struct JotableApp: App {
                         let descriptor = FetchDescriptor<Item>()
                         let items = try context.fetch(descriptor)
                         print("🚀 App launched - Found \(items.count) existing items")
+                        CheckboxMigrator.runIfNeeded(context: context)
                     } catch {
                         print("❌ Failed to fetch items on launch: \(error)")
                     }

@@ -15,13 +15,19 @@ class CheckboxTextAttachment: NSTextAttachment {
 
     nonisolated(unsafe) var checkboxID: String
     nonisolated(unsafe) var isChecked: Bool
+    nonisolated(unsafe) var fontPointSize: CGFloat?
 
-    init(checkboxID: String, isChecked: Bool) {
+    init(checkboxID: String, isChecked: Bool, fontPointSize: CGFloat? = nil) {
         self.checkboxID = checkboxID
         self.isChecked = isChecked
+        self.fontPointSize = fontPointSize
 
         // Store state as data so it survives serialization
-        let stateDict: [String: Any] = ["checkboxID": checkboxID, "isChecked": isChecked]
+        let stateDict: [String: Any] = [
+            "checkboxID": checkboxID,
+            "isChecked": isChecked,
+            "fontPointSize": fontPointSize as Any
+        ]
         let stateData = try? JSONSerialization.data(withJSONObject: stateDict)
 
         super.init(data: stateData, ofType: "com.betternotes.checkbox")
@@ -36,9 +42,11 @@ class CheckboxTextAttachment: NSTextAttachment {
            let checked = dict["isChecked"] as? Bool {
             self.checkboxID = id
             self.isChecked = checked
+            self.fontPointSize = dict["fontPointSize"] as? CGFloat
         } else {
             self.checkboxID = UUID().uuidString
             self.isChecked = false
+            self.fontPointSize = nil
         }
 
         super.init(data: contentData, ofType: uti)
@@ -48,10 +56,20 @@ class CheckboxTextAttachment: NSTextAttachment {
         // Decode our custom properties
         self.checkboxID = coder.decodeObject(of: NSString.self, forKey: "checkboxID") as String? ?? UUID().uuidString
         self.isChecked = coder.decodeBool(forKey: "isChecked")
+        if let decodedSize = coder.decodeObject(of: NSNumber.self, forKey: "fontPointSize") {
+            let value = CGFloat(decodedSize.doubleValue)
+            self.fontPointSize = value > 0 ? value : nil
+        } else {
+            self.fontPointSize = nil
+        }
 
 
         // Create state data to pass to super
-        let stateDict: [String: Any] = ["checkboxID": checkboxID, "isChecked": isChecked]
+        let stateDict: [String: Any] = [
+            "checkboxID": checkboxID,
+            "isChecked": isChecked,
+            "fontPointSize": fontPointSize as Any
+        ]
         let stateData = try? JSONSerialization.data(withJSONObject: stateDict)
 
         // Initialize with our data instead of letting super.init(coder:) call init(data:ofType:) with nil
@@ -62,9 +80,16 @@ class CheckboxTextAttachment: NSTextAttachment {
         // Encode our custom properties first
         coder.encode(checkboxID as NSString, forKey: "checkboxID")
         coder.encode(isChecked, forKey: "isChecked")
+        if let size = fontPointSize {
+            coder.encode(NSNumber(value: Double(size)), forKey: "fontPointSize")
+        }
 
         // Store state as data
-        let stateDict: [String: Any] = ["checkboxID": checkboxID, "isChecked": isChecked]
+        let stateDict: [String: Any] = [
+            "checkboxID": checkboxID,
+            "isChecked": isChecked,
+            "fontPointSize": fontPointSize as Any
+        ]
         if let stateData = try? JSONSerialization.data(withJSONObject: stateDict) {
             contents = stateData
         }
@@ -84,8 +109,9 @@ class CheckboxTextAttachment: NSTextAttachment {
     private nonisolated func computeCheckboxImage(size: CGSize) -> UIImage? {
         let systemName = isChecked ? "checkmark.square.fill" : "square"
 
-        // Create the symbol image with proper configuration and adaptive color
-        let config = UIImage.SymbolConfiguration(pointSize: size.width - 2, weight: .regular, scale: .medium)
+        // Snap to whole pixels to avoid blurry rendering when fonts are fractional
+        let snappedSide = max(10, floor(size.width))
+        let config = UIImage.SymbolConfiguration(pointSize: snappedSide - 2, weight: .regular, scale: .medium)
         guard let symbolImage = UIImage(systemName: systemName, withConfiguration: config) else {
             return nil
         }
@@ -107,15 +133,33 @@ class CheckboxTextAttachment: NSTextAttachment {
         return computeCheckboxImage(size: imageBounds.size)
     }
 
+    private nonisolated func checkboxMetrics(for lineFrag: CGRect) -> (side: CGFloat, baselineOffset: CGFloat) {
+        // Default values roughly match previous fixed sizing
+        let defaultSide: CGFloat = 20
+        let defaultOffset: CGFloat = -4
+
+        if let fontPointSize {
+            // Scale relative to stored point size; keep a cushion to look like a square glyph
+            let side = round(max(14, min(fontPointSize * 1.05, 34)))
+            let offset = -side * 0.2
+            return (side, offset)
+        }
+
+        // Use the proposed line fragment height as a proxy for the current font size.
+        // This avoids touching layout/text storage that may be incompatible with legacy notes.
+        if lineFrag.height > 0 {
+            let side = round(max(14, min(lineFrag.height, 28)))
+            let offset = -side * 0.2  // keep similar visual baseline as before
+            return (side, offset)
+        }
+
+        return (defaultSide, defaultOffset)
+    }
+
     // Override attachmentBounds to control the size and vertical alignment
     nonisolated override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: CGRect, glyphPosition position: CGPoint, characterIndex charIndex: Int) -> CGRect {
-        // Use a fixed checkbox size that's consistent and visible
-        let checkboxSize: CGFloat = 20
-
-        // Align to the baseline - negative offset moves it down
-        let verticalOffset: CGFloat = -4
-
-        return CGRect(x: 0, y: verticalOffset, width: checkboxSize, height: checkboxSize)
+        let metrics = checkboxMetrics(for: lineFrag)
+        return CGRect(x: 0, y: metrics.baselineOffset, width: metrics.side, height: metrics.side)
     }
 }
 
@@ -127,13 +171,19 @@ class CheckboxTextAttachment: NSTextAttachment {
 
     nonisolated(unsafe) var checkboxID: String
     nonisolated(unsafe) var isChecked: Bool
+    nonisolated(unsafe) var fontPointSize: CGFloat?
 
-    init(checkboxID: String, isChecked: Bool) {
+    init(checkboxID: String, isChecked: Bool, fontPointSize: CGFloat? = nil) {
         self.checkboxID = checkboxID
         self.isChecked = isChecked
+        self.fontPointSize = fontPointSize
 
         // Store state as data so it survives serialization
-        let stateDict: [String: Any] = ["checkboxID": checkboxID, "isChecked": isChecked]
+        let stateDict: [String: Any] = [
+            "checkboxID": checkboxID,
+            "isChecked": isChecked,
+            "fontPointSize": fontPointSize as Any
+        ]
         let stateData = try? JSONSerialization.data(withJSONObject: stateDict)
 
         super.init(data: stateData, ofType: "com.betternotes.checkbox")
@@ -148,9 +198,11 @@ class CheckboxTextAttachment: NSTextAttachment {
            let checked = dict["isChecked"] as? Bool {
             self.checkboxID = id
             self.isChecked = checked
+            self.fontPointSize = dict["fontPointSize"] as? CGFloat
         } else {
             self.checkboxID = UUID().uuidString
             self.isChecked = false
+            self.fontPointSize = nil
         }
 
         super.init(data: contentData, ofType: uti)
@@ -160,10 +212,20 @@ class CheckboxTextAttachment: NSTextAttachment {
         // Decode our custom properties
         self.checkboxID = coder.decodeObject(of: NSString.self, forKey: "checkboxID") as String? ?? UUID().uuidString
         self.isChecked = coder.decodeBool(forKey: "isChecked")
+        if let decodedNumber = coder.decodeObject(of: NSNumber.self, forKey: "fontPointSize") {
+            let value = CGFloat(decodedNumber.doubleValue)
+            self.fontPointSize = value > 0 ? value : nil
+        } else {
+            self.fontPointSize = nil
+        }
 
 
         // Create state data to pass to super
-        let stateDict: [String: Any] = ["checkboxID": checkboxID, "isChecked": isChecked]
+        let stateDict: [String: Any] = [
+            "checkboxID": checkboxID,
+            "isChecked": isChecked,
+            "fontPointSize": fontPointSize as Any
+        ]
         let stateData = try? JSONSerialization.data(withJSONObject: stateDict)
 
         // Initialize with our data instead of letting super.init(coder:) call init(data:ofType:) with nil
@@ -174,9 +236,16 @@ class CheckboxTextAttachment: NSTextAttachment {
         // Encode our custom properties first
         coder.encode(checkboxID as NSString, forKey: "checkboxID")
         coder.encode(isChecked, forKey: "isChecked")
+        if let size = fontPointSize {
+            coder.encode(NSNumber(value: Double(size)), forKey: "fontPointSize")
+        }
 
         // Store state as data
-        let stateDict: [String: Any] = ["checkboxID": checkboxID, "isChecked": isChecked]
+        let stateDict: [String: Any] = [
+            "checkboxID": checkboxID,
+            "isChecked": isChecked,
+            "fontPointSize": fontPointSize as Any
+        ]
         if let stateData = try? JSONSerialization.data(withJSONObject: stateDict) {
             contents = stateData
         }
@@ -217,7 +286,8 @@ class CheckboxTextAttachment: NSTextAttachment {
         // Create a proper bitmap image with actual pixel data at 2x resolution
         if let symbolImage = NSImage(systemSymbolName: systemName, accessibilityDescription: nil) {
             // Create a bitmap representation at 2x resolution
-            let pixelSize = NSSize(width: size.width * scale, height: size.height * scale)
+            let snappedSide = max(10, floor(size.width))
+            let pixelSize = NSSize(width: snappedSide * scale, height: snappedSide * scale)
             let bitmapRep = NSBitmapImageRep(
                 bitmapDataPlanes: nil,
                 pixelsWide: Int(pixelSize.width),
@@ -269,15 +339,30 @@ class CheckboxTextAttachment: NSTextAttachment {
         return computeCheckboxImage(size: imageBounds.size)
     }
 
+    private nonisolated func checkboxMetrics(for lineFrag: NSRect) -> (side: CGFloat, baselineOffset: CGFloat) {
+        // Defaults mirror the previous fixed sizing
+        let defaultSide: CGFloat = 15
+        let defaultOffset: CGFloat = -2
+
+        if let fontPointSize {
+            let side = round(max(12, min(fontPointSize * 1.05, 32)))
+            let offset = -side * 0.15
+            return (side, offset)
+        }
+
+        if lineFrag.height > 0 {
+            let side = round(max(12, min(lineFrag.height, 26)))
+            let offset = -side * 0.15  // roughly aligns like the previous -2 on 15pt
+            return (side, offset)
+        }
+
+        return (defaultSide, defaultOffset)
+    }
+
     // Override attachmentBounds to control the size and vertical alignment
     nonisolated override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: NSRect, glyphPosition position: NSPoint, characterIndex charIndex: Int) -> NSRect {
-        // Use a fixed checkbox size that's consistent and visible
-        let checkboxSize: CGFloat = 15
-
-        // Align to the baseline - negative offset moves it down
-        let verticalOffset: CGFloat = -2
-
-        return NSRect(x: 0, y: verticalOffset, width: checkboxSize, height: checkboxSize)
+        let metrics = checkboxMetrics(for: lineFrag)
+        return NSRect(x: 0, y: metrics.baselineOffset, width: metrics.side, height: metrics.side)
     }
 }
 
