@@ -364,10 +364,12 @@ struct RichTextEditor: NSViewRepresentable {
 
             let snapshot = NSAttributedString(attributedString: textSnapshot ?? textView.attributedString())
             let selection = selectionSnapshot ?? textView.selectedRange
-            let targetTextView = textView
+            weak var weakTextView = textView
 
             undoManager.registerUndo(withTarget: self) { [weak self] _ in
-                guard let self = self else { return }
+                guard let self = self,
+                      let targetTextView = weakTextView,
+                      targetTextView.window != nil else { return }
                 let currentText = targetTextView.attributedString()
                 let currentSelection = targetTextView.selectedRange
                 self.registerUndoSnapshot(for: targetTextView,
