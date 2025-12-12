@@ -37,6 +37,7 @@ struct ContentView: View {
     @State private var isRevertingSelection = false
     @State private var isAuthenticatedForPrivateAccess = false
     @State private var lastAuthenticationTime: Date?
+    @State private var hasShownNoAuthWarning = false
     @State private var showAuthError = false
     @State private var authErrorMessage = ""
     @State private var showingCategoryPickerForItem: Item?
@@ -318,7 +319,7 @@ struct ContentView: View {
             }
         }
         #endif
-        .alert("Authentication Failed", isPresented: $showAuthError) {
+        .alert("Authentication", isPresented: $showAuthError) {
             Button("OK") {
                 showAuthError = false
             }
@@ -655,9 +656,14 @@ struct ContentView: View {
         nonisolated(unsafe) let unsafeCompletion = completion
 
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &authError) else {
-            authErrorMessage = authError?.localizedDescription ?? "Device authentication not available"
-            showAuthError = true
-            completion(false)
+            // Device authentication not available - show warning once and allow access
+            if !hasShownNoAuthWarning {
+                authErrorMessage = "Device authentication is not set up. Private categories will be accessible without protection."
+                showAuthError = true
+                hasShownNoAuthWarning = true
+            }
+            // Allow access even without authentication
+            completion(true)
             return
         }
 
