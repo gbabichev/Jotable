@@ -17,6 +17,7 @@ enum SidebarSelection: Hashable {
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     // Changed from timestamp to createdAt for stable sorting based on creation date
     @Query(sort: \Item.createdAt, order: .reverse) private var allItems: [Item]
     @Query(sort: \Category.sortOrder) private var categories: [Category]
@@ -33,6 +34,9 @@ struct ContentView: View {
     @State private var categoryToEdit: Category?
     @State private var searchText = ""
     @State private var authenticatingCategoryID: PersistentIdentifier?
+    @State private var isRevertingSelection = false
+    @State private var isAuthenticatedForPrivateAccess = false
+    @State private var lastAuthenticationTime: Date?
     @State private var showAuthError = false
     @State private var authErrorMessage = ""
     @State private var showingCategoryPickerForItem: Item?
@@ -50,7 +54,18 @@ struct ContentView: View {
     private var isEditing: Bool { editMode?.wrappedValue.isEditing == true }
     #endif
 
-    
+    // Authentication timeout: 5 minutes
+    private let authenticationTimeoutInterval: TimeInterval = 5 * 60
+
+    // Check if authentication is still valid
+    private var isAuthenticationValid: Bool {
+        guard isAuthenticatedForPrivateAccess,
+              let lastAuthTime = lastAuthenticationTime else {
+            return false
+        }
+        return Date().timeIntervalSince(lastAuthTime) < authenticationTimeoutInterval
+    }
+
     // Computed property to get the selected category for filtering
     private var selectedCategory: Category? {
         switch sidebarSelection {
@@ -131,26 +146,45 @@ struct ContentView: View {
             .onChange(of: sidebarSelection) { oldValue, newValue in
                 // Check if the newly selected item is a locked category
                 if case .category(let category) = newValue, category.isPrivate {
+                    // If we're reverting to a previous selection, skip authentication
+                    if isRevertingSelection {
+                        isRevertingSelection = false
+                        return
+                    }
+
                     // If we just authenticated for this category, allow the selection
                     if authenticatingCategoryID == category.id {
                         authenticatingCategoryID = nil
                         return
                     }
 
+                    // If already authenticated and within timeout period, allow navigation
+                    if isAuthenticationValid {
+                        return
+                    }
+
+                    // Authentication expired or not authenticated - clear state and require auth
+                    isAuthenticatedForPrivateAccess = false
+                    lastAuthenticationTime = nil
+
                     // Revert selection while we authenticate
+                    isRevertingSelection = true
                     sidebarSelection = oldValue
                     authenticatingCategoryID = category.id
                     let categoryID = category.id
 
                     // Authenticate
-                    authenticateWithBiometrics(reason: "Authenticate to access this private category") { success in
+                    authenticateWithBiometrics(reason: "Authenticate to access private categories") { success in
                         DispatchQueue.main.async {
                             if success {
-                                // Mark as authenticated and allow selection
+                                // Mark as authenticated for private access and record time
+                                self.isAuthenticatedForPrivateAccess = true
+                                self.lastAuthenticationTime = Date()
                                 self.authenticatingCategoryID = categoryID
                                 self.sidebarSelection = newValue
                             } else {
                                 self.authenticatingCategoryID = nil
+                                self.isRevertingSelection = false
                             }
                         }
                     }
@@ -260,6 +294,21 @@ struct ContentView: View {
             // If no selection (e.g., after app relaunch) try to restore it
             if primarySelectedItem == nil {
                 restoreLastSelectedNoteIfNeeded()
+            }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            // When app becomes active, check if authentication has expired
+            if newPhase == .active {
+                if !isAuthenticationValid {
+                    // Authentication expired - clear it and revert to All Notes if viewing private category
+                    isAuthenticatedForPrivateAccess = false
+                    lastAuthenticationTime = nil
+
+                    if case .category(let category) = sidebarSelection, category.isPrivate {
+                        sidebarSelection = .allNotes
+                        selectedItemIDs.removeAll()
+                    }
+                }
             }
         }
         #if os(iOS)
