@@ -240,6 +240,9 @@ struct ContentView: View {
             setupCloudKitNotifications()
             restoreLastSelectedNoteIfNeeded()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .createNewNoteRequested)) { _ in
+            addItem()
+        }
         #if os(macOS)
         .onReceive(NotificationCenter.default.publisher(for: .exportNotesRequested)) { _ in
             showExportAlert = true
