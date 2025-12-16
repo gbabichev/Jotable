@@ -61,6 +61,20 @@ Just a clean, focused space for your thoughts.
 
 ## 📝 Changelog
 
+### 1.2.0
+- Added
+ - Password Generator Tool. 
+ - Last open note is now remembered, and re-open on app launch. 
+ - Multi note delete.
+ - Inserted images are now resizeable. 
+ - Added context menu for main app icon on iOS & macOS to quickly make a new note. 
+ - macOS: Keyboard shortcuts for Bolt, Italics. 
+
+ - Fixed
+  - Edge cases with text box insertion. 
+  - Preview will more effectively show the first text, not just the first line. 
+  - Authentication loop when jumping between private categories. 
+
 ### 1.1.1
 - Bugfixes with the Paste as Plaintext feature. 
 - Bugfixes with inserting Checkbox / Dash / Bullet / Numbers into lines with emojis & other characters. 
