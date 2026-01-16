@@ -941,16 +941,17 @@ struct NoteRowView: View {
                 
                 Spacer()
                 
+                Text(item.timestamp, format: .relative(presentation: .named))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
                 // Show category indicator
                 if let category = item.category {
                     Circle()
                         .fill(Color.fromString(category.color))
                         .frame(width: 8, height: 8)
+                        .padding(.leading, 4)
                 }
-                
-                Text(item.timestamp, format: .relative(presentation: .named))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
             }
             
             Text(previewText)
