@@ -238,12 +238,19 @@ struct ContentView: View {
                     }
                     #endif
                     #if os(iOS)
+                    if isEditing && !selectedItemIDs.isEmpty {
+                        Button(role: .destructive, action: deleteSelectedItems) {
+                            Label("Delete Selected", systemImage: "trash")
+                        }
+                    }
                     if !isEditing {
                         Button(action: addItem) {
                             Label("New Note", systemImage: "square.and.pencil")
                         }
                     }
-                    EditButton()
+                    if !allItems.isEmpty {
+                        EditButton()
+                    }
                     #else
                     Button(action: addItem) {
                         Label("New Note", systemImage: "square.and.pencil")
@@ -306,6 +313,12 @@ struct ContentView: View {
             selectedItemIDs = Set(selectedItemIDs.filter { id in
                 allItems.contains(where: { $0.persistentModelID == id })
             })
+
+            #if os(iOS)
+            if allItems.isEmpty {
+                editMode = .inactive
+            }
+            #endif
 
             // If no selection (e.g., after app relaunch) try to restore it
             if primarySelectedItem == nil {
