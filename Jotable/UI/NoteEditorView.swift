@@ -41,6 +41,7 @@ struct NoteEditorView: View {
     @State private var headerHeight: CGFloat = 0
     @State private var lastSyncedRichText: NSAttributedString?
     @State private var skipNextAttributedContentChange = false
+    @State private var isLoadingContent = false
 #if !os(macOS)
     @State private var linkEditRequest: LinkEditContext?
 #endif
@@ -199,6 +200,9 @@ struct NoteEditorView: View {
             loadContentIfNeeded()
         }
         .onChange(of: richText) { _, newWrapper in
+            if isLoadingContent {
+                return
+            }
             item.content = newWrapper.value.string
             item.attributedContent = archiveAttributedString(newWrapper.value)
             item.timestamp = Date()
@@ -248,10 +252,18 @@ struct NoteEditorView: View {
     private func loadContentIfNeeded() {
         if let data = item.attributedContent, let attributed = unarchiveAttributedString(data) {
             if !attributed.isEqual(to: richText.value) {
+                isLoadingContent = true
                 richText = AttributedTextWrapper(value: attributed)
+                DispatchQueue.main.async {
+                    isLoadingContent = false
+                }
             }
         } else if richText.value.string != item.content {
+            isLoadingContent = true
             richText = AttributedTextWrapper(value: NSAttributedString(string: item.content))
+            DispatchQueue.main.async {
+                isLoadingContent = false
+            }
         }
     }
 

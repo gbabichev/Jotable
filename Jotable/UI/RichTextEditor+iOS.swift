@@ -402,7 +402,7 @@ struct RichTextEditor: UIViewRepresentable {
 
             let snapshot = NSAttributedString(attributedString: textSnapshot ?? (textView.attributedText ?? NSAttributedString()))
             let selection = selectionSnapshot ?? textView.selectedRange
-            weak var weakTextView = textView
+            weak let weakTextView = textView
 
             undoManager.registerUndo(withTarget: self) { [weak self] _ in
                 guard let self = self,

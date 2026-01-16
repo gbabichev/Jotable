@@ -271,6 +271,12 @@ struct ContentView: View {
                 }
             }
         }
+#if DEBUG
+        .overlay(alignment: .bottomTrailing) {
+            BetaTag()
+                .padding(12)
+        }
+#endif
         .onAppear {
             setupCloudKitNotifications()
             restoreLastSelectedNoteIfNeeded()
