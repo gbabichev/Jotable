@@ -240,11 +240,6 @@ struct NoteEditorView: View {
                     resetColorTrigger: $resetColorTrigger
                 )
             }
-            
-            ToolbarItem(placement: .primaryAction) {
-
-            }
-            
         }
     }
 

@@ -281,9 +281,6 @@ struct ContentView: View {
                         Button("New Note", action: addItem)
                             .buttonStyle(.borderedProminent)
                     }
-                    .toolbar {
-                        Spacer()
-                    }
                 }
             }
         }
