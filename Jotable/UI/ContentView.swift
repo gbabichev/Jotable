@@ -51,8 +51,8 @@ struct ContentView: View {
     @State private var importResultMessage: String?
     #endif
     #if os(iOS)
-    @Environment(\.editMode) private var editMode
-    private var isEditing: Bool { editMode?.wrappedValue.isEditing == true }
+    @State private var editMode: EditMode = .inactive
+    private var isEditing: Bool { editMode.isEditing }
     #endif
 
     // Authentication timeout: 5 minutes
@@ -237,14 +237,23 @@ struct ContentView: View {
                         }
                     }
                     #endif
+                    #if os(iOS)
+                    if !isEditing {
+                        Button(action: addItem) {
+                            Label("New Note", systemImage: "square.and.pencil")
+                        }
+                    }
+                    EditButton()
+                    #else
                     Button(action: addItem) {
                         Label("New Note", systemImage: "square.and.pencil")
                     }
-                    #if os(iOS)
-                    EditButton()
                     #endif
                 }
             }
+            #if os(iOS)
+            .environment(\.editMode, $editMode)
+            #endif
         } detail: {
             // Detail view wrapped in NavigationStack for proper navigation
             NavigationStack {
