@@ -61,6 +61,17 @@ Just a clean, focused space for your thoughts.
 
 ## 📝 Changelog
 
+### 1.2.1
+- Added
+ - Additional "Hide from Home" option along with "Require FaceID" or "Require TouchID" depending on available biometrics. 
+
+- Changed
+ - Renamed "Lock Category" & "Unlock Category" to "Require FaceID".
+
+- Fixed
+ - Notes are no longer marked "updated" when they are just opened. 
+ - iOS now properly surfaces a "Delete" button when multipe notes are selected. 
+
 ### 1.2.0
 - Added
  - Password Generator Tool. 
