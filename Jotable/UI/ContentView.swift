@@ -440,8 +440,8 @@ struct ContentView: View {
                         togglePrivacy(for: category)
                     } label: {
                         Label(
-                            category.isPrivate ? "Disable Privacy" : "Enable Privacy",
-                            systemImage: category.isPrivate ? "eye" : "eye.slash"
+                            category.isPrivate ? "Unlock Category" : "Lock Category",
+                            systemImage: category.isPrivate ? "lock.open" : "lock"
                         )
                     }
 
@@ -900,7 +900,7 @@ struct CategoryRowView: View {
             }
 
             if isPrivate {
-                Image(systemName: "eye.slash.fill")
+                Image(systemName: "lock.fill")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
