@@ -50,6 +50,12 @@ struct CategoryPickerView: View {
                             .frame(width: 16, height: 16)
 
                         if category.isPrivate {
+                            Image(systemName: "lock.fill")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if category.isHiddenFromHome {
                             Image(systemName: "eye.slash.fill")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)

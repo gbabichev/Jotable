@@ -15,16 +15,24 @@ final class Category {
     var timestamp: Date = Date()       // Add default value
     var sortOrder: Int = 0             // Add default value
     var isPrivate: Bool = false        // Privacy/lock status
+    var isHiddenFromHome: Bool = false // Hide from All Notes without auth
 
     @Relationship(deleteRule: .nullify, inverse: \Item.category)
     var notes: [Item]? = []            // Make optional with default empty array
 
-    init(name: String, color: String = "blue", sortOrder: Int = 0, isPrivate: Bool = false) {
+    init(
+        name: String,
+        color: String = "blue",
+        sortOrder: Int = 0,
+        isPrivate: Bool = false,
+        isHiddenFromHome: Bool = false
+    ) {
         self.name = name
         self.color = color
         self.timestamp = Date()
         self.sortOrder = sortOrder
         self.isPrivate = isPrivate
+        self.isHiddenFromHome = isHiddenFromHome
     }
 }
 

@@ -13,6 +13,7 @@ struct ExportedCategory: Codable {
     let name: String
     let color: String
     let isPrivate: Bool
+    let isHiddenFromHome: Bool?
     let sortOrder: Int
     let createdAt: Date
 }
@@ -43,6 +44,7 @@ enum DataExportImport {
                 name: category.name,
                 color: category.color,
                 isPrivate: category.isPrivate,
+                isHiddenFromHome: category.isHiddenFromHome,
                 sortOrder: index,
                 createdAt: category.timestamp
             )
@@ -88,7 +90,8 @@ enum DataExportImport {
                 name: categoryData.name,
                 color: categoryData.color,
                 sortOrder: categoryData.sortOrder,
-                isPrivate: categoryData.isPrivate
+                isPrivate: categoryData.isPrivate,
+                isHiddenFromHome: categoryData.isHiddenFromHome ?? false
             )
             category.timestamp = categoryData.createdAt
             context.insert(category)

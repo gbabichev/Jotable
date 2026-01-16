@@ -81,17 +81,19 @@ struct ContentView: View {
     var filteredItems: [Item] {
         var items = allItems
 
-        // Get locked category IDs for filtering
+        // Get locked/hidden category IDs for filtering
         let lockedCategoryIDs = Set(categories.filter { $0.isPrivate }.compactMap { $0.id })
+        let hiddenCategoryIDs = Set(categories.filter { $0.isHiddenFromHome }.compactMap { $0.id })
 
         // If searching, ignore category scope (search across all notes)
         if searchText.isEmpty, let selectedCategory = selectedCategory {
             items = items.filter { $0.category == selectedCategory }
         } else {
-            // When viewing "All Notes" or searching, hide notes from locked categories
+            // When viewing "All Notes" or searching, hide notes from locked/hidden categories
             items = items.filter { item in
                 guard let category = item.category else { return true }
-                return !lockedCategoryIDs.contains(category.id)
+                return !lockedCategoryIDs.contains(category.id) &&
+                    !hiddenCategoryIDs.contains(category.id)
             }
         }
 
@@ -109,9 +111,11 @@ struct ContentView: View {
     // Count of notes visible without authenticating into locked categories
     private var unlockedNoteCount: Int {
         let lockedCategoryIDs = Set(categories.filter { $0.isPrivate }.compactMap { $0.id })
+        let hiddenCategoryIDs = Set(categories.filter { $0.isHiddenFromHome }.compactMap { $0.id })
         return allItems.filter { item in
             guard let category = item.category else { return true }
-            return !lockedCategoryIDs.contains(category.id)
+            return !lockedCategoryIDs.contains(category.id) &&
+                !hiddenCategoryIDs.contains(category.id)
         }.count
     }
     
@@ -411,7 +415,8 @@ struct ContentView: View {
                 title: "All Notes",
                 count: unlockedNoteCount,
                 color: nil,
-                isPrivate: false
+                isPrivate: false,
+                isHiddenFromHome: false
             )
             .tag(SidebarSelection.allNotes)
         }
@@ -424,7 +429,8 @@ struct ContentView: View {
                     title: category.name,
                     count: category.notes?.count ?? 0,
                     color: category.color,
-                    isPrivate: category.isPrivate
+                    isPrivate: category.isPrivate,
+                    isHiddenFromHome: category.isHiddenFromHome
                 )
                 .tag(SidebarSelection.category(category))
                 .contextMenu {
@@ -439,9 +445,19 @@ struct ContentView: View {
                     Button {
                         togglePrivacy(for: category)
                     } label: {
+                        let biometricUI = biometricToggleUI
                         Label(
-                            category.isPrivate ? "Unlock Category" : "Lock Category",
-                            systemImage: category.isPrivate ? "lock.open" : "lock"
+                            category.isPrivate ? biometricUI.disableTitle : biometricUI.enableTitle,
+                            systemImage: category.isPrivate ? biometricUI.disableIcon : biometricUI.enableIcon
+                        )
+                    }
+
+                    Button {
+                        toggleHiddenFromHome(for: category)
+                    } label: {
+                        Label(
+                            category.isHiddenFromHome ? "Show in Home" : "Hide from Home",
+                            systemImage: category.isHiddenFromHome ? "eye" : "eye.slash"
                         )
                     }
 
@@ -650,12 +666,28 @@ struct ContentView: View {
     }
 
     private func togglePrivacy(for category: Category) {
-        let actionDescription = category.isPrivate ? "disable privacy for this category" : "enable privacy for this category"
+        let ui = biometricToggleUI
+        let actionDescription = category.isPrivate ? ui.disableTitle.lowercased() : ui.enableTitle.lowercased()
         authenticateWithBiometrics(reason: "Authenticate to \(actionDescription)") { success in
             guard success else { return }
 
             category.isPrivate.toggle()
             self.saveCategory()
+        }
+    }
+
+    private var biometricToggleUI: (enableTitle: String, disableTitle: String, enableIcon: String, disableIcon: String) {
+        let context = LAContext()
+        var error: NSError?
+        _ = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
+
+        switch context.biometryType {
+        case .faceID:
+            return ("Require Face ID", "Turn Off Face ID", "faceid", "faceid")
+        case .touchID:
+            return ("Require Touch ID", "Turn Off Touch ID", "touchid", "touchid")
+        default:
+            return ("Require Authentication", "Turn Off Authentication", "lock", "lock.open")
         }
     }
 
@@ -669,6 +701,16 @@ struct ContentView: View {
                 authErrorMessage = "Failed to save privacy setting"
                 showAuthError = true
             }
+        }
+    }
+
+    private func toggleHiddenFromHome(for category: Category) {
+        category.isHiddenFromHome.toggle()
+        do {
+            try modelContext.save()
+            print("✅ Category hidden-from-home setting updated - CloudKit sync queued")
+        } catch {
+            print("❌ Failed to save hidden-from-home setting: \(error)")
         }
     }
 
@@ -887,6 +929,7 @@ struct CategoryRowView: View {
     let count: Int
     let color: String?
     let isPrivate: Bool
+    let isHiddenFromHome: Bool
 
     var body: some View {
         HStack {
@@ -901,6 +944,12 @@ struct CategoryRowView: View {
 
             if isPrivate {
                 Image(systemName: "lock.fill")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+
+            if isHiddenFromHome {
+                Image(systemName: "eye.slash.fill")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
