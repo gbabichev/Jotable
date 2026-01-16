@@ -326,6 +326,12 @@ struct ContentView: View {
                 restoreLastSelectedNoteIfNeeded()
             }
         }
+        .onChange(of: filteredItems) { _, _ in
+            // Trim selection to only items still visible in the list
+            selectedItemIDs = Set(selectedItemIDs.filter { id in
+                filteredItems.contains(where: { $0.persistentModelID == id })
+            })
+        }
         .onChange(of: scenePhase) { _, newPhase in
             // When app becomes active, check if authentication has expired
             if newPhase == .active {
