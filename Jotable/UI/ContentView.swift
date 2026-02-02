@@ -233,34 +233,17 @@ struct ContentView: View {
             .navigationSubtitle("\(filteredItems.count) \(filteredItems.count == 1 ? "note" : "notes")")
             .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 400)
             .toolbar {
-                ToolbarItemGroup(placement: .primaryAction) {
-                    #if os(macOS)
-                    if !selectedItemIDs.isEmpty {
-                        Button(role: .destructive, action: deleteSelectedItems) {
-                            Label("Delete Selected", systemImage: "trash")
-                        }
-                    }
-                    #endif
-                    #if os(iOS)
-                    if isEditing && !selectedItemIDs.isEmpty {
-                        Button(role: .destructive, action: deleteSelectedItems) {
-                            Label("Delete Selected", systemImage: "trash")
-                        }
-                    }
-                    if !isEditing {
-                        Button(action: addItem) {
-                            Label("New Note", systemImage: "square.and.pencil")
-                        }
-                    }
-                    if !allItems.isEmpty {
-                        EditButton()
-                    }
-                    #else
-                    Button(action: addItem) {
-                        Label("New Note", systemImage: "square.and.pencil")
-                    }
-                    #endif
-                }
+                NotesToolbar(
+                    isEditing: isEditing,
+                    filteredItems: filteredItems,
+                    selectedItemIDs: selectedItemIDs,
+                    allItemsIsEmpty: allItems.isEmpty,
+                    allFilteredItemsSelected: allFilteredItemsSelected,
+                    deleteSelectedItems: deleteSelectedItems,
+                    addItem: addItem,
+                    selectAllItems: selectAllItems,
+                    deselectAllItems: deselectAllItems
+                )
             }
             #if os(iOS)
             .environment(\.editMode, $editMode)
@@ -522,7 +505,9 @@ struct ContentView: View {
                 )
         }
         .onMove(perform: moveItems)
+        #if os(macOS)
         .onDelete(perform: deleteItems)
+        #endif
     }
     
     // Delete a single item
@@ -564,10 +549,28 @@ struct ContentView: View {
             do {
                 try modelContext.save()
                 print("💾 Deleted \(itemsToDelete.count) selected items - CloudKit sync queued")
+                #if os(iOS)
+                editMode = .inactive
+                #endif
             } catch {
                 print("❌ Failed to delete selected items: \(error)")
             }
         }
+    }
+
+    private func selectAllItems() {
+        selectedItemIDs = Set(filteredItems.map { $0.persistentModelID })
+    }
+
+    private func deselectAllItems() {
+        selectedItemIDs.removeAll()
+    }
+
+    private var allFilteredItemsSelected: Bool {
+        guard !filteredItems.isEmpty else { return false }
+        let selectedIDs = selectedItemIDs
+        return filteredItems.count == selectedIDs.count
+            && filteredItems.allSatisfy { selectedIDs.contains($0.persistentModelID) }
     }
 
     // Manual reordering function - updates createdAt dates to maintain new order
@@ -926,6 +929,61 @@ struct ContentView: View {
         }
     }
     #endif
+}
+
+private struct NotesToolbar: ToolbarContent {
+    let isEditing: Bool
+    let filteredItems: [Item]
+    let selectedItemIDs: Set<PersistentIdentifier>
+    let allItemsIsEmpty: Bool
+    let allFilteredItemsSelected: Bool
+    let deleteSelectedItems: () -> Void
+    let addItem: () -> Void
+    let selectAllItems: () -> Void
+    let deselectAllItems: () -> Void
+
+    var body: some ToolbarContent {
+        let showSelectAll = isEditing && !filteredItems.isEmpty
+        let showDeleteSelected = isEditing && !selectedItemIDs.isEmpty
+        let showNewNote = !isEditing
+
+        ToolbarItemGroup(placement: .primaryAction) {
+            #if os(macOS)
+            if !selectedItemIDs.isEmpty {
+                Button(role: .destructive, action: deleteSelectedItems) {
+                    Label("Delete Selected", systemImage: "trash")
+                }
+            }
+            #endif
+            #if os(iOS)
+            if showSelectAll {
+                let title = allFilteredItemsSelected ? "Deselect All" : "Select All"
+                let icon = allFilteredItemsSelected ? "minus.circle" : "checkmark.circle"
+                let action = allFilteredItemsSelected ? deselectAllItems : selectAllItems
+                Button(action: action) {
+                    Label(title, systemImage: icon)
+                }
+            }
+            if showDeleteSelected {
+                Button(role: .destructive, action: deleteSelectedItems) {
+                    Label("Delete Selected", systemImage: "trash")
+                }
+            }
+            if showNewNote {
+                Button(action: addItem) {
+                    Label("New Note", systemImage: "square.and.pencil")
+                }
+            }
+            if !allItemsIsEmpty {
+                EditButton()
+            }
+            #else
+            Button(action: addItem) {
+                Label("New Note", systemImage: "square.and.pencil")
+            }
+            #endif
+        }
+    }
 }
 
 // Separate view for category rows to ensure proper native behavior
