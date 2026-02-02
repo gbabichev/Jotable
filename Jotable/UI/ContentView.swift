@@ -52,8 +52,14 @@ struct ContentView: View {
     #endif
     #if os(iOS)
     @State private var editMode: EditMode = .inactive
-    private var isEditing: Bool { editMode.isEditing }
     #endif
+    private var isEditing: Bool {
+        #if os(iOS)
+        return editMode.isEditing
+        #else
+        return false
+        #endif
+    }
 
     // Authentication timeout: 5 minutes
     private let authenticationTimeoutInterval: TimeInterval = 5 * 60

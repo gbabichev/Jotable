@@ -7,6 +7,7 @@ private final class DynamicColorTextView: NSTextView {
     var onCheckboxTap: ((Int) -> Void)?
     var onColorChange: (() -> Void)?
     var onFormatChange: (() -> Void)?
+    var onPaste: (() -> Void)?
     var onImageResize: ((ResizableImageAttachment) -> Void)?
     var isUnderlinedManually = false  // Track underline state for native menu toggles (which don't update typingAttributes)
 
@@ -72,6 +73,7 @@ private final class DynamicColorTextView: NSTextView {
     }
 
     override func paste(_ sender: Any?) {
+        onPaste?()
         let pasteboard = NSPasteboard.general
 
         // Check if pasteboard contains an image
@@ -418,6 +420,9 @@ struct RichTextEditor: NSViewRepresentable {
         textView.onFormatChange = { [weak coordinator = context.coordinator] in
             coordinator?.handleFormatChange()
         }
+        textView.onPaste = { [weak coordinator = context.coordinator] in
+            coordinator?.handlePasteUndoSnapshot()
+        }
 
         // Mark initialization as complete after the textView is fully set up
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -430,7 +435,9 @@ struct RichTextEditor: NSViewRepresentable {
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = context.coordinator.textView else { return }
         let currentText = textView.attributedString()
+        let isEditingText = textView.window?.firstResponder === textView
         if !context.coordinator.isProgrammaticUpdate,
+           !isEditingText,
            !text.isEqual(to: currentText) {
             context.coordinator.isProgrammaticUpdate = true
 
@@ -621,7 +628,7 @@ struct RichTextEditor: NSViewRepresentable {
 
             let snapshot = NSAttributedString(attributedString: textSnapshot ?? textView.attributedString())
             let selection = selectionSnapshot ?? textView.selectedRange
-            weak var weakTextView = textView
+            weak let weakTextView = textView
 
             undoManager.registerUndo(withTarget: self) { [weak self] _ in
                 guard let self = self,
@@ -644,6 +651,11 @@ struct RichTextEditor: NSViewRepresentable {
             }
 
             undoManager.setActionName(actionName)
+        }
+
+        func handlePasteUndoSnapshot() {
+            guard let textView else { return }
+            registerUndoSnapshot(for: textView, actionName: "Paste")
         }
 
         func syncFormattingState(with textView: NSTextView) {
@@ -850,6 +862,15 @@ struct RichTextEditor: NSViewRepresentable {
             parent.text = updatedText
         }
 
+        func textView(_ textView: NSTextView,
+                      shouldChangeTextIn affectedCharRange: NSRange,
+                      replacementString: String?) -> Bool {
+            if let replacementString, replacementString.contains("\n") {
+                textView.breakUndoCoalescing()
+            }
+            return true
+        }
+
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView,
                   textView === self.textView else { return }
@@ -878,6 +899,7 @@ struct RichTextEditor: NSViewRepresentable {
             if selectedRange.length > 0,
                let storage = textView.textStorage {
                 isProgrammaticUpdate = true
+                registerUndoSnapshot(for: textView, actionName: "Color")
                 ColorMapping.applyColor(color, to: storage, range: selectedRange)
                 textView.setSelectedRange(selectedRange)
 
@@ -898,6 +920,7 @@ struct RichTextEditor: NSViewRepresentable {
             if selectedRange.length > 0,
                let storage = textView.textStorage {
                 isProgrammaticUpdate = true
+                registerUndoSnapshot(for: textView, actionName: "Font Size")
                 let fontAttrs: [NSAttributedString.Key: Any] = [
                     NSAttributedString.Key.font: NSFont.systemFont(ofSize: fontSize.rawValue),
                     ColorMapping.fontSizeKey: fontSize.rawValue
@@ -921,6 +944,7 @@ struct RichTextEditor: NSViewRepresentable {
             if selectedRange.length > 0,
                let storage = textView.textStorage {
                 isProgrammaticUpdate = true
+                registerUndoSnapshot(for: textView, actionName: "Highlight")
                 ColorMapping.applyHighlight(highlighter, to: storage, range: selectedRange)
                 textView.setSelectedRange(selectedRange)
 
@@ -1030,6 +1054,7 @@ struct RichTextEditor: NSViewRepresentable {
             if selectedRange.length > 0,
                let storage = textView.textStorage {
                 isProgrammaticUpdate = true
+                registerUndoSnapshot(for: textView, actionName: "Bold")
 
                 let styler = TextStyler(isBold: isBold, isItalic: isItalic, fontSize: activeFontSize)
                 let font = styler.buildFont()
@@ -1051,6 +1076,7 @@ struct RichTextEditor: NSViewRepresentable {
             if selectedRange.length > 0,
                let storage = textView.textStorage {
                 isProgrammaticUpdate = true
+                registerUndoSnapshot(for: textView, actionName: "Italic")
 
                 let styler = TextStyler(isBold: isBold, isItalic: isItalic, fontSize: activeFontSize)
                 let font = styler.buildFont()
@@ -1072,6 +1098,7 @@ struct RichTextEditor: NSViewRepresentable {
             if selectedRange.length > 0,
                let storage = textView.textStorage {
                 isProgrammaticUpdate = true
+                registerUndoSnapshot(for: textView, actionName: "Underline")
 
                 let underlineValue = isUnderlined ? NSUnderlineStyle.single.rawValue : 0
                 storage.addAttribute(NSAttributedString.Key.underlineStyle, value: underlineValue, range: selectedRange)
@@ -1096,6 +1123,7 @@ struct RichTextEditor: NSViewRepresentable {
             if selectedRange.length > 0,
                let storage = textView.textStorage {
                 isProgrammaticUpdate = true
+                registerUndoSnapshot(for: textView, actionName: "Strikethrough")
 
                 let strikethroughValue = isStrikethrough ? NSUnderlineStyle.single.rawValue : 0
                 storage.addAttribute(NSAttributedString.Key.strikethroughStyle, value: strikethroughValue, range: selectedRange)
