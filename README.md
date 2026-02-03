@@ -61,6 +61,13 @@ Just a clean, focused space for your thoughts.
 
 ## 📝 Changelog
 
+### 1.2.2
+- Fixed
+  - Undo not working properly in certain conditions. 
+  - Private categories can no longer be deleted without biometric authentication.
+- Improved
+  - iOS multi-note deletion experience.
+
 ### 1.2.1
 - Added
  - Additional "Hide from Home" option along with "Require FaceID" or "Require TouchID" depending on available biometrics. 

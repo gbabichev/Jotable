@@ -617,21 +617,27 @@ struct ContentView: View {
         }
     }
     
-    private func deleteCategory(_ category: Category) {
+    private func deleteCategoryInternal(_ category: Category) {
+        // Move all notes in this category to "no category"
+        for note in category.notes ?? [] {
+            note.category = nil
+        }
+
+        // Clear selection if deleting selected category
+        if case .category(let selectedCat) = sidebarSelection, selectedCat.id == category.id {
+            sidebarSelection = .allNotes
+            selectedItemIDs.removeAll()
+        }
+
+        modelContext.delete(category)
+    }
+
+    private func performCategoryDeletes(_ categoriesToDelete: [Category]) {
         withAnimation {
-            // Move all notes in this category to "no category"
-            for note in category.notes ?? [] {
-                note.category = nil
+            for category in categoriesToDelete {
+                deleteCategoryInternal(category)
             }
-            
-            // Clear selection if deleting selected category
-            if case .category(let selectedCat) = sidebarSelection, selectedCat.id == category.id {
-                sidebarSelection = .allNotes
-                selectedItemIDs.removeAll()
-            }
-            
-            modelContext.delete(category)
-            
+
             do {
                 try modelContext.save()
                 print("💾 Category deleted successfully - CloudKit sync queued")
@@ -640,32 +646,27 @@ struct ContentView: View {
             }
         }
     }
-    
-    private func deleteCategories(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                let category = categories[index]
-                
-                // Move all notes in this category to "no category"
-                for note in category.notes ?? [] {
-                    note.category = nil
-                }
-                
-                // Clear selection if deleting selected category
-                if case .category(let selectedCat) = sidebarSelection, selectedCat.id == category.id {
-                    sidebarSelection = .allNotes
-                    selectedItemIDs.removeAll()
-                }
-                
-                modelContext.delete(category)
+
+    private func deleteCategory(_ category: Category) {
+        deleteCategories([category])
+    }
+
+    private func deleteCategories(_ categoriesToDelete: [Category]) {
+        guard !categoriesToDelete.isEmpty else { return }
+        let requiresAuth = categoriesToDelete.contains(where: { $0.isPrivate })
+        if requiresAuth {
+            authenticateWithBiometrics(reason: "Authenticate to delete private categories") { success in
+                guard success else { return }
+                self.performCategoryDeletes(categoriesToDelete)
             }
-            
-            do {
-                try modelContext.save()
-            } catch {
-                print("Failed to delete category: \(error)")
-            }
+        } else {
+            performCategoryDeletes(categoriesToDelete)
         }
+    }
+
+    private func deleteCategories(offsets: IndexSet) {
+        let categoriesToDelete = offsets.map { categories[$0] }
+        deleteCategories(categoriesToDelete)
     }
 
     private func beginEditing(_ category: Category) {
