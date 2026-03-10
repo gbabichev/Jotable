@@ -143,6 +143,107 @@ struct AutoFormatting {
         return "\n\(bulletPrefix)"
     }
 
+    /// Returns true when an empty bullet line should terminate an existing list.
+    /// Standalone empty bullets should be left alone so Enter behaves like a normal newline.
+    static func shouldRemoveEmptyBulletLine(lineText: String, fullText: String, lineRange: NSRange) -> Bool {
+        let bulletPrefix: String
+
+        if lineText.hasPrefix("- ") {
+            bulletPrefix = "- "
+        } else if lineText.hasPrefix("• ") {
+            bulletPrefix = "• "
+        } else {
+            return false
+        }
+
+        let currentContent = String(lineText.dropFirst(bulletPrefix.count))
+            .trimmingCharacters(in: .whitespaces)
+        guard currentContent.isEmpty, lineRange.location > 0 else {
+            return false
+        }
+
+        let nsText = fullText as NSString
+        let previousLineLookupLocation = lineRange.location - 1
+        let previousLineRange = nsText.lineRange(for: NSRange(location: previousLineLookupLocation, length: 0))
+        let previousLineText = nsText.substring(with: previousLineRange)
+            .trimmingCharacters(in: .newlines)
+
+        guard previousLineText.hasPrefix(bulletPrefix) else {
+            return false
+        }
+
+        let previousContent = String(previousLineText.dropFirst(bulletPrefix.count))
+            .trimmingCharacters(in: .whitespaces)
+        return !previousContent.isEmpty
+    }
+
+    /// Returns true when an empty numbered line should terminate an existing numbered list.
+    static func shouldRemoveEmptyNumberedLine(lineText: String, fullText: String, lineRange: NSRange) -> Bool {
+        guard let currentMatch = lineText.range(of: #"^\d+\.\s"#, options: .regularExpression) else {
+            return false
+        }
+
+        let currentContent = String(lineText[currentMatch.upperBound...])
+            .trimmingCharacters(in: .whitespaces)
+        guard currentContent.isEmpty, lineRange.location > 0 else {
+            return false
+        }
+
+        let nsText = fullText as NSString
+        let previousLineLookupLocation = lineRange.location - 1
+        let previousLineRange = nsText.lineRange(for: NSRange(location: previousLineLookupLocation, length: 0))
+        let previousLineText = nsText.substring(with: previousLineRange)
+            .trimmingCharacters(in: .newlines)
+
+        guard let previousMatch = previousLineText.range(of: #"^\d+\.\s"#, options: .regularExpression) else {
+            return false
+        }
+
+        let previousContent = String(previousLineText[previousMatch.upperBound...])
+            .trimmingCharacters(in: .whitespaces)
+        return !previousContent.isEmpty
+    }
+
+    /// Returns true when an empty checkbox line should terminate an existing checkbox list.
+    static func shouldRemoveEmptyCheckboxLine(in attributedString: NSAttributedString, lineRange: NSRange) -> Bool {
+        guard lineRange.location > 0, lineRange.location < attributedString.length else {
+            return false
+        }
+
+        guard attributedString.attribute(.attachment, at: lineRange.location, longestEffectiveRange: nil, in: lineRange) is CheckboxTextAttachment else {
+            return false
+        }
+
+        let currentContentStart = min(lineRange.location + 1, attributedString.length)
+        let currentContentRange = NSRange(
+            location: currentContentStart,
+            length: max(0, NSMaxRange(lineRange) - currentContentStart)
+        )
+        let currentContent = attributedString.attributedSubstring(from: currentContentRange).string
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard currentContent.isEmpty else {
+            return false
+        }
+
+        let fullText = attributedString.string as NSString
+        let previousLineLookupLocation = lineRange.location - 1
+        let previousLineRange = fullText.lineRange(for: NSRange(location: previousLineLookupLocation, length: 0))
+
+        guard previousLineRange.location < attributedString.length,
+              attributedString.attribute(.attachment, at: previousLineRange.location, longestEffectiveRange: nil, in: previousLineRange) is CheckboxTextAttachment else {
+            return false
+        }
+
+        let previousContentStart = min(previousLineRange.location + 1, attributedString.length)
+        let previousContentRange = NSRange(
+            location: previousContentStart,
+            length: max(0, NSMaxRange(previousLineRange) - previousContentStart)
+        )
+        let previousContent = attributedString.attributedSubstring(from: previousContentRange).string
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return !previousContent.isEmpty
+    }
+
     /// Detects and converts checkbox patterns "[ ]" and "[x]" or "[X]" to CheckboxTextAttachment
     /// Returns true if checkboxes were found and converted
     static func convertCheckboxPatterns(in attributedString: NSMutableAttributedString, spaceAttributes: [NSAttributedString.Key: Any]? = nil) -> Bool {

@@ -100,13 +100,11 @@ struct NoteEditorView: View {
 
                 if hasChanged {
                     let snapshot = NSAttributedString(attributedString: newValue)
-                    richText = AttributedTextWrapper(value: snapshot)
-                    lastSyncedRichText = snapshot
+                    scheduleRichTextStateSync(snapshot)
                 } else if !newValue.isEqual(to: richText.value) {
                     // Even if string is the same, if attachments differ (e.g., checkbox state), update
                     let snapshot = NSAttributedString(attributedString: newValue)
-                    richText = AttributedTextWrapper(value: snapshot)
-                    lastSyncedRichText = snapshot
+                    scheduleRichTextStateSync(snapshot)
                 }
             }
         )
@@ -259,6 +257,13 @@ struct NoteEditorView: View {
             DispatchQueue.main.async {
                 isLoadingContent = false
             }
+        }
+    }
+
+    private func scheduleRichTextStateSync(_ snapshot: NSAttributedString) {
+        DispatchQueue.main.async {
+            richText = AttributedTextWrapper(value: snapshot)
+            lastSyncedRichText = snapshot
         }
     }
 

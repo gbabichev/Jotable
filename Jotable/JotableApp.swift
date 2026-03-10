@@ -203,6 +203,7 @@ struct JotableApp: App {
         .modelContainer(Self.sharedModelContainer)
         #if os(macOS)
         .commands {
+            SidebarCommands()
             CommandGroup(replacing: .appInfo) {
                 Button("About Jotable") {
                     isAboutPresented = true

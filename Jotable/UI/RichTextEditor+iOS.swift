@@ -1149,6 +1149,15 @@ struct RichTextEditor: UIViewRepresentable {
 
             // Check for numbered list pattern with renumbering
             if let result = AutoFormatting.handleNumberedListWithRenumbering(lineText: lineInfo.text, fullText: plainText, insertionIndex: range.location) {
+                if result.newText == "\n",
+                   !AutoFormatting.shouldRemoveEmptyNumberedLine(
+                        lineText: lineInfo.text,
+                        fullText: plainText,
+                        lineRange: lineInfo.range
+                   ) {
+                    return true
+                }
+
                 registerUndoSnapshot(for: textView, actionName: "Insert Number")
                 isProgrammaticUpdate = true
 
@@ -1183,6 +1192,14 @@ struct RichTextEditor: UIViewRepresentable {
 
             // Check for bullet point pattern
             if let newText = AutoFormatting.handleBulletPoint(lineText: lineInfo.text) {
+                if newText == "\n",
+                   !AutoFormatting.shouldRemoveEmptyBulletLine(
+                        lineText: lineInfo.text,
+                        fullText: plainText,
+                        lineRange: lineInfo.range
+                   ) {
+                    return true
+                }
                 return applyAutoFormat(newText, to: textView, at: range, lineRange: lineInfo.range)
             }
 
@@ -1208,6 +1225,11 @@ struct RichTextEditor: UIViewRepresentable {
             let remainingRange = NSRange(location: contentStartsAfter, length: lineRange.location + lineRange.length - contentStartsAfter)
             let contentAfter = attributedString.attributedSubstring(from: remainingRange).string
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if contentAfter.isEmpty,
+               !AutoFormatting.shouldRemoveEmptyCheckboxLine(in: attributedString, lineRange: lineRange) {
+                return false
+            }
 
             registerUndoSnapshot(for: textView, actionName: "Insert Checkbox")
             isProgrammaticUpdate = true
