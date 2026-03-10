@@ -398,6 +398,9 @@ struct ContentView: View {
             }
         }
         #endif
+        #if os(macOS)
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        #endif
     }
     
     // Shared sidebar content
