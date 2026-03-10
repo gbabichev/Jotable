@@ -32,6 +32,33 @@ extension EnvironmentValues {
     }
 }
 
+private enum AppActionRouter {
+    static let newNoteURL = URL(string: "jotable://newNote")!
+
+    static func requestNewNote() {
+        #if os(macOS)
+        NSApp.activate(ignoringOtherApps: true)
+
+        if let existingWindow = NSApp.windows.first(where: { $0.canBecomeMain }) {
+            existingWindow.makeKeyAndOrderFront(nil)
+            NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
+            return
+        }
+
+        if !NSWorkspace.shared.open(newNoteURL) {
+            NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
+        }
+        #else
+        NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
+        #endif
+    }
+
+    static func handleIncomingURL(_ url: URL) {
+        guard url.absoluteString == newNoteURL.absoluteString else { return }
+        NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
+    }
+}
+
 #if os(macOS)
 class MacAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
@@ -43,13 +70,17 @@ class MacAppDelegate: NSObject, NSApplicationDelegate {
             keyEquivalent: ""
         )
         newNoteItem.target = self
+        newNoteItem.image = NSImage(
+            systemSymbolName: "square.and.pencil",
+            accessibilityDescription: "New Note"
+        )
         dockMenu.addItem(newNoteItem)
 
         return dockMenu
     }
 
     @objc func createNewNote() {
-        NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
+        AppActionRouter.requestNewNote()
     }
 }
 #endif
@@ -64,7 +95,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             if shortcutItem.type == "com.jotable.newNote" {
                 // Post notification after a short delay to ensure ContentView is ready
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
+                    AppActionRouter.requestNewNote()
                 }
             }
         }
@@ -78,7 +109,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 class SceneDelegate: NSObject, UIWindowSceneDelegate {
     func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
         if shortcutItem.type == "com.jotable.newNote" {
-            NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
+            AppActionRouter.requestNewNote()
             completionHandler(true)
         } else {
             completionHandler(false)
@@ -126,11 +157,8 @@ struct JotableApp: App {
         WindowGroup {
             #if os(macOS)
             ContentView(pastePlaintextTrigger: $pastePlaintextTrigger, isEditorActive: $isEditorActive)
-                .handlesExternalEvents(preferring: Set(arrayLiteral: "newNote"), allowing: Set(arrayLiteral: "*"))
                 .onOpenURL { url in
-                    if url.absoluteString == "jotable://newNote" {
-                        NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
-                    }
+                    AppActionRouter.handleIncomingURL(url)
                 }
                 .frame(minWidth: 800, minHeight: 400)
                 .onAppear {
@@ -153,9 +181,7 @@ struct JotableApp: App {
             #else
             ContentView(isEditorActive: $isEditorActive)
                 .onOpenURL { url in
-                    if url.absoluteString == "jotable://newNote" {
-                        NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
-                    }
+                    AppActionRouter.handleIncomingURL(url)
                 }
                 .onAppear {
                     // Debug: Print items on app launch
@@ -171,6 +197,9 @@ struct JotableApp: App {
                 }
             #endif
         }
+        #if os(macOS)
+        .handlesExternalEvents(matching: Set(arrayLiteral: "newNote"))
+        #endif
         .modelContainer(Self.sharedModelContainer)
         #if os(macOS)
         .commands {
@@ -181,7 +210,7 @@ struct JotableApp: App {
             }
             CommandGroup(replacing: .newItem) {
                 Button("New Note") {
-                    NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
+                    AppActionRouter.requestNewNote()
                 }
                 .keyboardShortcut("n", modifiers: [.command])
             }
