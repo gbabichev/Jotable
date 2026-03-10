@@ -8,6 +8,7 @@ private class PastableTextView: UITextView {
     private var pinchingAttachment: ResizableImageAttachment?
     private var pinchingCharIndex: Int?
     private var initialPinchSize: CGSize?
+    private var hasPendingImageResizeCommit = false
 
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
@@ -45,7 +46,7 @@ private class PastableTextView: UITextView {
                 if let attachment = storage.attribute(.attachment, at: charIndex, effectiveRange: nil) as? ResizableImageAttachment {
                     pinchingAttachment = attachment
                     pinchingCharIndex = charIndex
-                    initialPinchSize = attachment.customSize ?? attachment.image?.size
+                    initialPinchSize = attachment.customSize ?? attachment.preferredDisplaySize(maxWidth: availableImageWidth())
                 }
             }
 
@@ -56,41 +57,21 @@ private class PastableTextView: UITextView {
 
             // Calculate new size based on pinch scale
             let scale = gesture.scale
-            let newWidth = max(50, initialSize.width * scale)
-
-            // Maintain aspect ratio
-            guard let img = attachment.originalImage ?? attachment.image else { return }
-            let aspectRatio = img.size.height / img.size.width
-            let newHeight = newWidth * aspectRatio
-
-            // Update attachment size
-            attachment.customSize = CGSize(width: newWidth, height: newHeight)
+            attachment.customSize = attachment.resizedDisplaySize(
+                for: initialSize.width * scale,
+                maxWidth: availableImageWidth()
+            )
 
             // Force layout refresh
             layoutManager.invalidateLayout(forCharacterRange: NSRange(location: charIndex, length: 1),
                                           actualCharacterRange: nil)
             layoutManager.ensureLayout(for: textContainer)
 
+            hasPendingImageResizeCommit = true
             setNeedsDisplay()
 
         case .ended, .cancelled:
-            if pinchingAttachment != nil {
-                // Add a marker attribute to force change detection
-                if storage.length > 0 {
-                    let updatedStorage = NSMutableAttributedString(attributedString: storage)
-                    updatedStorage.addAttribute(
-                        NSAttributedString.Key(rawValue: "imageResizeChanged"),
-                        value: NSNumber(value: Date().timeIntervalSince1970),
-                        range: NSRange(location: 0, length: 1)
-                    )
-
-                    // Replace the text storage content
-                    storage.setAttributedString(updatedStorage)
-
-                    // Notify delegates of the change
-                    delegate?.textViewDidChange?(self)
-                }
-            }
+            commitImageResizeIfNeeded()
 
             pinchingAttachment = nil
             pinchingCharIndex = nil
@@ -103,7 +84,7 @@ private class PastableTextView: UITextView {
 
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         if action == #selector(paste(_:)) {
-            return UIPasteboard.general.image != nil || UIPasteboard.general.hasStrings
+            return pasteboardImage() != nil || UIPasteboard.general.hasStrings
         }
         return super.canPerformAction(action, withSender: sender)
     }
@@ -111,44 +92,150 @@ private class PastableTextView: UITextView {
     override func paste(_ sender: Any?) {
         let pasteboard = UIPasteboard.general
 
+        if let attachmentData = pasteboard.items.first?[ImageAttachmentPasteboard.attachmentType] as? Data,
+           let attachment = ImageAttachmentPasteboard.attachment(from: attachmentData) {
+            insertImageAttachment(attachment)
+            return
+        }
+
         // Handle image paste
-        if let image = pasteboard.image {
+        if let image = pasteboardImage() {
             // Create a resizable image attachment
-            let attachment = ResizableImageAttachment(image: image)
-
-            // Scale image to reasonable size
-            let maxWidth: CGFloat = 400
-            let maxHeight: CGFloat = 400
-            var imageSize = image.size
-            if imageSize.width > maxWidth {
-                let scale = maxWidth / imageSize.width
-                imageSize = CGSize(width: maxWidth, height: imageSize.height * scale)
-            }
-            if imageSize.height > maxHeight {
-                let scale = maxHeight / imageSize.height
-                imageSize = CGSize(width: imageSize.width * scale, height: maxHeight)
-            }
-
-            attachment.customSize = imageSize
-
-            let attributedString = NSAttributedString(attachment: attachment)
-            let range = selectedRange
-
-            if let mutableText = attributedText?.mutableCopy() as? NSMutableAttributedString {
-                mutableText.insert(attributedString, at: range.location)
-                attributedText = mutableText
-
-                let newCursorPosition = range.location + 1
-                selectedRange = NSRange(location: newCursorPosition, length: 0)
-
-                // Notify delegates of the change
-                delegate?.textViewDidChange?(self)
-            }
+            let attachment = ResizableImageAttachment(
+                image: image,
+                customSize: ResizableImageAttachment.fittedDisplaySize(
+                    for: image.size,
+                    maxWidth: availableImageWidth()
+                )
+            )
+            insertImageAttachment(attachment)
             return
         }
 
         // Fall back to default paste for text
         super.paste(sender)
+    }
+
+    override func copy(_ sender: Any?) {
+        guard let attachment = selectedResizableImageAttachment() else {
+            super.copy(sender)
+            return
+        }
+
+        var item: [String: Any] = [:]
+        if let attachmentData = ImageAttachmentPasteboard.archivedData(for: attachment) {
+            item[ImageAttachmentPasteboard.attachmentType] = attachmentData
+        }
+
+        if let image = attachment.originalImage ?? attachment.image,
+           let pngData = image.pngData() {
+            item["public.png"] = pngData
+        }
+
+        guard !item.isEmpty else {
+            super.copy(sender)
+            return
+        }
+
+        UIPasteboard.general.setItems([item], options: [:])
+    }
+
+    private func insertImageAttachment(_ attachment: ResizableImageAttachment) {
+        let range = selectedRange
+        let insertion = imageInsertionPayload(for: attachment, selectedRange: range)
+        let storage = textStorage
+
+        storage.beginEditing()
+        storage.replaceCharacters(in: range, with: insertion.attributedString)
+        storage.endEditing()
+
+        selectedRange = NSRange(location: insertion.nextCursorLocation, length: 0)
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.delegate?.textViewDidChange?(self)
+        }
+    }
+
+    private func pasteboardImage() -> UIImage? {
+        let pasteboard = UIPasteboard.general
+
+        for item in pasteboard.items {
+            if let pngData = item["public.png"] as? Data,
+               let image = UIImage(data: pngData) {
+                return image
+            }
+
+            if let jpegData = item["public.jpeg"] as? Data,
+               let image = UIImage(data: jpegData) {
+                return image
+            }
+
+            if let tiffData = item["public.tiff"] as? Data,
+               let image = UIImage(data: tiffData) {
+                return image
+            }
+        }
+
+        return pasteboard.image
+    }
+
+    private func availableImageWidth() -> CGFloat {
+        let contentWidth = bounds.width - textContainerInset.left - textContainerInset.right - (textContainer.lineFragmentPadding * 2)
+        if contentWidth.isFinite, contentWidth > 0 {
+            return max(ResizableImageAttachment.minimumDisplayWidth, contentWidth)
+        }
+        return ResizableImageAttachment.maximumDisplayWidth
+    }
+
+    private func imageInsertionPayload(for attachment: ResizableImageAttachment, selectedRange: NSRange) -> (attributedString: NSAttributedString, nextCursorLocation: Int) {
+        let storageString = textStorage.string as NSString
+        let insertionEnd = selectedRange.location + selectedRange.length
+        let newlineAttributes = typingAttributes
+
+        let mutable = NSMutableAttributedString()
+        if selectedRange.location > 0,
+           storageString.character(at: selectedRange.location - 1) != 10 {
+            mutable.append(NSAttributedString(string: "\n", attributes: newlineAttributes))
+        }
+
+        mutable.append(NSAttributedString(attachment: attachment))
+
+        let shouldAppendTrailingNewline =
+            (insertionEnd < storageString.length && storageString.character(at: insertionEnd) != 10) ||
+            insertionEnd == storageString.length
+        if shouldAppendTrailingNewline {
+            mutable.append(NSAttributedString(string: "\n", attributes: newlineAttributes))
+        }
+
+        return (mutable, selectedRange.location + mutable.length)
+    }
+
+    private func commitImageResizeIfNeeded() {
+        guard hasPendingImageResizeCommit else { return }
+        hasPendingImageResizeCommit = false
+
+        let storage = textStorage
+        guard storage.length > 0 else { return }
+
+        let markerKey = NSAttributedString.Key(rawValue: "imageResizeChanged")
+        storage.addAttribute(markerKey, value: NSNumber(value: Date().timeIntervalSince1970), range: NSRange(location: 0, length: 1))
+
+        if let charIndex = pinchingCharIndex {
+            storage.edited(.editedAttributes, range: NSRange(location: charIndex, length: 1), changeInLength: 0)
+        }
+
+        delegate?.textViewDidChange?(self)
+    }
+
+    private func selectedResizableImageAttachment() -> ResizableImageAttachment? {
+        let selection = selectedRange
+        guard selection.length == 1,
+              selection.location < textStorage.length else {
+            return nil
+        }
+
+        return textStorage.attribute(.attachment, at: selection.location, effectiveRange: nil) as? ResizableImageAttachment
     }
 }
 

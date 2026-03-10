@@ -1042,9 +1042,15 @@ struct CategoryRowView: View {
 
 struct NoteRowView: View {
     let item: Item
+    private let attachmentPreviewToken = "Image"
     
     private var previewText: String {
-        let trimmed = item.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = item.content.replacingOccurrences(
+            of: "\u{FFFC}+",
+            with: attachmentPreviewToken,
+            options: .regularExpression
+        )
+        let trimmed = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "Start writing..." }
         
         // Use the first non-empty line to avoid blank previews when the note starts with newlines

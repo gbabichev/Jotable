@@ -7,11 +7,95 @@
 
 import Foundation
 
+enum ImageAttachmentPasteboard {
+    private struct Payload: Codable {
+        let imageID: String
+        let imageData: Data
+        let customWidth: Double?
+        let customHeight: Double?
+    }
+
+    static let attachmentType = "com.georgebabichev.jotable.resizable-image-attachment"
+
+    static func archivedData(for attachment: ResizableImageAttachment) -> Data? {
+        #if canImport(AppKit)
+        guard let image = attachment.originalImage ?? attachment.image,
+              let imageData = image.tiffRepresentation else {
+            return nil
+        }
+
+        let payload = Payload(
+            imageID: attachment.imageID,
+            imageData: imageData,
+            customWidth: attachment.customSize.map { Double($0.width) },
+            customHeight: attachment.customSize.map { Double($0.height) }
+        )
+        #else
+        guard let image = attachment.originalImage ?? attachment.image,
+              let imageData = image.pngData() else {
+            return nil
+        }
+
+        let payload = Payload(
+            imageID: attachment.imageID,
+            imageData: imageData,
+            customWidth: attachment.customSize.map { Double($0.width) },
+            customHeight: attachment.customSize.map { Double($0.height) }
+        )
+        #endif
+
+        return try? JSONEncoder().encode(payload)
+    }
+
+    static func attachment(from data: Data) -> ResizableImageAttachment? {
+        guard let payload = try? JSONDecoder().decode(Payload.self, from: data) else {
+            return nil
+        }
+
+        #if canImport(AppKit)
+        guard let image = NSImage(data: payload.imageData) else {
+            return nil
+        }
+
+        let customSize = payload.customWidth.flatMap { width in
+            payload.customHeight.map { height in
+                NSSize(width: CGFloat(width), height: CGFloat(height))
+            }
+        } ?? ResizableImageAttachment.fittedDisplaySize(for: image.size)
+
+        return ResizableImageAttachment(
+            image: image,
+            imageID: payload.imageID,
+            customSize: customSize
+        )
+        #else
+        guard let image = UIImage(data: payload.imageData) else {
+            return nil
+        }
+
+        let customSize = payload.customWidth.flatMap { width in
+            payload.customHeight.map { height in
+                CGSize(width: CGFloat(width), height: CGFloat(height))
+            }
+        } ?? ResizableImageAttachment.fittedDisplaySize(for: image.size)
+
+        return ResizableImageAttachment(
+            image: image,
+            imageID: payload.imageID,
+            customSize: customSize
+        )
+        #endif
+    }
+}
+
 #if canImport(AppKit)
 import AppKit
 
 class ResizableImageAttachment: NSTextAttachment {
     nonisolated override static var supportsSecureCoding: Bool { return true }
+    nonisolated static let minimumDisplayWidth: CGFloat = 80
+    nonisolated static let maximumDisplayWidth: CGFloat = 640
+    nonisolated static let maximumDisplayHeight: CGFloat = 640
 
     nonisolated(unsafe) var imageID: String
     nonisolated(unsafe) var customSize: NSSize?
@@ -87,38 +171,86 @@ class ResizableImageAttachment: NSTextAttachment {
         image = tempImage
     }
 
+    nonisolated func preferredDisplaySize(maxWidth: CGFloat? = nil) -> NSSize {
+        guard let img = originalImage ?? image else {
+            return NSSize(width: 100, height: 100)
+        }
+
+        return Self.fittedSize(
+            for: img.size,
+            maxWidth: Self.effectiveMaximumWidth(using: maxWidth),
+            maxHeight: Self.maximumDisplayHeight
+        )
+    }
+
+    nonisolated static func fittedDisplaySize(for imageSize: NSSize, maxWidth: CGFloat? = nil) -> NSSize {
+        Self.fittedSize(
+            for: imageSize,
+            maxWidth: Self.effectiveMaximumWidth(using: maxWidth),
+            maxHeight: Self.maximumDisplayHeight
+        )
+    }
+
+    nonisolated func resizedDisplaySize(for proposedWidth: CGFloat, maxWidth: CGFloat? = nil) -> NSSize {
+        guard let img = originalImage ?? image else {
+            let fallbackWidth = max(Self.minimumDisplayWidth, proposedWidth)
+            return NSSize(width: fallbackWidth, height: fallbackWidth)
+        }
+
+        let boundedWidth = min(max(Self.minimumDisplayWidth, proposedWidth), Self.effectiveMaximumWidth(using: maxWidth))
+        let aspectRatio = img.size.height / max(img.size.width, 1)
+        let proposedSize = NSSize(width: boundedWidth, height: boundedWidth * aspectRatio)
+
+        return Self.fittedSize(
+            for: proposedSize,
+            maxWidth: Self.effectiveMaximumWidth(using: maxWidth),
+            maxHeight: Self.maximumDisplayHeight
+        )
+    }
+
     nonisolated override func attachmentBounds(for textContainer: NSTextContainer?,
                                               proposedLineFragment lineFrag: NSRect,
                                               glyphPosition position: NSPoint,
                                               characterIndex charIndex: Int) -> NSRect {
-        guard let img = originalImage ?? image else {
-            return NSRect(x: 0, y: 0, width: 100, height: 100)
+        let availableWidth = textContainer.map {
+            max(Self.minimumDisplayWidth, $0.size.width - ($0.lineFragmentPadding * 2))
+        }
+        let size = customSize.map { Self.fittedSize(for: $0, maxWidth: Self.effectiveMaximumWidth(using: availableWidth), maxHeight: Self.maximumDisplayHeight) }
+            ?? preferredDisplaySize(maxWidth: availableWidth)
+        return NSRect(origin: .zero, size: size)
+    }
+
+    private nonisolated static func effectiveMaximumWidth(using proposedWidth: CGFloat?) -> CGFloat {
+        let fallback = Self.maximumDisplayWidth
+        guard let proposedWidth else { return fallback }
+        return max(Self.minimumDisplayWidth, min(Self.maximumDisplayWidth, proposedWidth))
+    }
+
+    private nonisolated static func fittedSize(for size: NSSize, maxWidth: CGFloat, maxHeight: CGFloat) -> NSSize {
+        let safeWidth = max(size.width, 1)
+        let safeHeight = max(size.height, 1)
+        var width = safeWidth
+        var height = safeHeight
+
+        let widthRatio = maxWidth / safeWidth
+        let heightRatio = maxHeight / safeHeight
+        let downscaleRatio = min(widthRatio, heightRatio, 1)
+        width *= downscaleRatio
+        height *= downscaleRatio
+
+        if width < Self.minimumDisplayWidth {
+            let upscaleRatio = Self.minimumDisplayWidth / width
+            width *= upscaleRatio
+            height *= upscaleRatio
         }
 
-        let imageSize = img.size
-
-        // Use custom size if set, otherwise calculate a reasonable default
-        if let customSize = customSize {
-            return NSRect(x: 0, y: 0, width: customSize.width, height: customSize.height)
+        if height > maxHeight {
+            let finalRatio = maxHeight / height
+            width *= finalRatio
+            height *= finalRatio
         }
 
-        // Default: scale image to fit width with max dimensions
-        let maxWidth: CGFloat = 400
-        let maxHeight: CGFloat = 400
-
-        var width = imageSize.width
-        var height = imageSize.height
-
-        if width > maxWidth || height > maxHeight {
-            let widthRatio = maxWidth / width
-            let heightRatio = maxHeight / height
-            let ratio = min(widthRatio, heightRatio)
-
-            width = width * ratio
-            height = height * ratio
-        }
-
-        return NSRect(x: 0, y: 0, width: width, height: height)
+        return NSSize(width: width, height: height)
     }
 }
 
@@ -248,6 +380,9 @@ import UIKit
 
 class ResizableImageAttachment: NSTextAttachment {
     nonisolated override static var supportsSecureCoding: Bool { return true }
+    nonisolated static let minimumDisplayWidth: CGFloat = 80
+    nonisolated static let maximumDisplayWidth: CGFloat = 640
+    nonisolated static let maximumDisplayHeight: CGFloat = 640
 
     nonisolated(unsafe) var imageID: String
     nonisolated(unsafe) var customSize: CGSize?
@@ -323,38 +458,86 @@ class ResizableImageAttachment: NSTextAttachment {
         image = tempImage
     }
 
+    nonisolated func preferredDisplaySize(maxWidth: CGFloat? = nil) -> CGSize {
+        guard let img = originalImage ?? image else {
+            return CGSize(width: 100, height: 100)
+        }
+
+        return Self.fittedSize(
+            for: img.size,
+            maxWidth: Self.effectiveMaximumWidth(using: maxWidth),
+            maxHeight: Self.maximumDisplayHeight
+        )
+    }
+
+    nonisolated static func fittedDisplaySize(for imageSize: CGSize, maxWidth: CGFloat? = nil) -> CGSize {
+        Self.fittedSize(
+            for: imageSize,
+            maxWidth: Self.effectiveMaximumWidth(using: maxWidth),
+            maxHeight: Self.maximumDisplayHeight
+        )
+    }
+
+    nonisolated func resizedDisplaySize(for proposedWidth: CGFloat, maxWidth: CGFloat? = nil) -> CGSize {
+        guard let img = originalImage ?? image else {
+            let fallbackWidth = max(Self.minimumDisplayWidth, proposedWidth)
+            return CGSize(width: fallbackWidth, height: fallbackWidth)
+        }
+
+        let boundedWidth = min(max(Self.minimumDisplayWidth, proposedWidth), Self.effectiveMaximumWidth(using: maxWidth))
+        let aspectRatio = img.size.height / max(img.size.width, 1)
+        let proposedSize = CGSize(width: boundedWidth, height: boundedWidth * aspectRatio)
+
+        return Self.fittedSize(
+            for: proposedSize,
+            maxWidth: Self.effectiveMaximumWidth(using: maxWidth),
+            maxHeight: Self.maximumDisplayHeight
+        )
+    }
+
     nonisolated override func attachmentBounds(for textContainer: NSTextContainer?,
                                               proposedLineFragment lineFrag: CGRect,
                                               glyphPosition position: CGPoint,
                                               characterIndex charIndex: Int) -> CGRect {
-        guard let img = originalImage ?? image else {
-            return CGRect(x: 0, y: 0, width: 100, height: 100)
+        let availableWidth = textContainer.map {
+            max(Self.minimumDisplayWidth, $0.size.width - ($0.lineFragmentPadding * 2))
+        }
+        let size = customSize.map { Self.fittedSize(for: $0, maxWidth: Self.effectiveMaximumWidth(using: availableWidth), maxHeight: Self.maximumDisplayHeight) }
+            ?? preferredDisplaySize(maxWidth: availableWidth)
+        return CGRect(origin: .zero, size: size)
+    }
+
+    private nonisolated static func effectiveMaximumWidth(using proposedWidth: CGFloat?) -> CGFloat {
+        let fallback = Self.maximumDisplayWidth
+        guard let proposedWidth else { return fallback }
+        return max(Self.minimumDisplayWidth, min(Self.maximumDisplayWidth, proposedWidth))
+    }
+
+    private nonisolated static func fittedSize(for size: CGSize, maxWidth: CGFloat, maxHeight: CGFloat) -> CGSize {
+        let safeWidth = max(size.width, 1)
+        let safeHeight = max(size.height, 1)
+        var width = safeWidth
+        var height = safeHeight
+
+        let widthRatio = maxWidth / safeWidth
+        let heightRatio = maxHeight / safeHeight
+        let downscaleRatio = min(widthRatio, heightRatio, 1)
+        width *= downscaleRatio
+        height *= downscaleRatio
+
+        if width < Self.minimumDisplayWidth {
+            let upscaleRatio = Self.minimumDisplayWidth / width
+            width *= upscaleRatio
+            height *= upscaleRatio
         }
 
-        let imageSize = img.size
-
-        // Use custom size if set, otherwise calculate a reasonable default
-        if let customSize = customSize {
-            return CGRect(x: 0, y: 0, width: customSize.width, height: customSize.height)
+        if height > maxHeight {
+            let finalRatio = maxHeight / height
+            width *= finalRatio
+            height *= finalRatio
         }
 
-        // Default: scale image to fit width with max dimensions
-        let maxWidth: CGFloat = 400
-        let maxHeight: CGFloat = 400
-
-        var width = imageSize.width
-        var height = imageSize.height
-
-        if width > maxWidth || height > maxHeight {
-            let widthRatio = maxWidth / width
-            let heightRatio = maxHeight / height
-            let ratio = min(widthRatio, heightRatio)
-
-            width = width * ratio
-            height = height * ratio
-        }
-
-        return CGRect(x: 0, y: 0, width: width, height: height)
+        return CGSize(width: width, height: height)
     }
 }
 

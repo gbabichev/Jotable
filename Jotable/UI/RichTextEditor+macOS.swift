@@ -15,6 +15,7 @@ private final class DynamicColorTextView: NSTextView {
     private var selectedImageAttachment: ResizableImageAttachment?
     private var selectedImageCharIndex: Int?
     private var isResizingImage = false
+    private var hasPendingImageResizeCommit = false
     private var resizeStartPoint: NSPoint = .zero
     private var resizeStartSize: NSSize = .zero
 
@@ -40,17 +41,14 @@ private final class DynamicColorTextView: NSTextView {
 
         // Check for image attachment click/resize
         if let (attachment, charIndex, attachmentRect) = imageAttachmentInfo(at: localPoint) {
-            selectedImageAttachment = attachment
-            selectedImageCharIndex = charIndex
+            window?.makeFirstResponder(self)
+            selectImageAttachment(attachment, at: charIndex)
 
             // Check if click is on resize handle (bottom-right corner)
-            let handleSize: CGFloat = 16
-            let handleRect = NSRect(x: attachmentRect.maxX - handleSize,
-                                   y: attachmentRect.maxY - handleSize,
-                                   width: handleSize,
-                                   height: handleSize)
+            let handleRect = resizeHandleRect(for: attachmentRect)
+            let hitRect = handleRect.insetBy(dx: -6, dy: -6)
 
-            if handleRect.contains(localPoint) {
+            if hitRect.contains(localPoint) {
                 isResizingImage = true
                 resizeStartPoint = event.locationInWindow
                 resizeStartSize = attachmentRect.size
@@ -62,61 +60,72 @@ private final class DynamicColorTextView: NSTextView {
             return
         }
 
-        // Clear image selection if clicking elsewhere
-        if selectedImageAttachment != nil {
-            selectedImageAttachment = nil
-            selectedImageCharIndex = nil
-            needsDisplay = true
-        }
-
         super.mouseDown(with: event)
+        clearSelectedImageSelection()
     }
 
     override func paste(_ sender: Any?) {
         onPaste?()
         let pasteboard = NSPasteboard.general
 
+        if let attachmentData = pasteboard.data(forType: NSPasteboard.PasteboardType(ImageAttachmentPasteboard.attachmentType)),
+           let attachment = ImageAttachmentPasteboard.attachment(from: attachmentData) {
+            if attachment.customSize == nil {
+                attachment.customSize = attachment.preferredDisplaySize(maxWidth: availableImageWidth())
+            }
+
+            let selectedRange = self.selectedRange
+            let insertion = imageInsertionPayload(for: attachment, selectedRange: selectedRange)
+
+            if let textStorage = textStorage {
+                textStorage.replaceCharacters(in: selectedRange, with: insertion.attributedString)
+                setSelectedRange(insertion.selectedRange)
+                selectImageAttachment(attachment, at: insertion.selectedRange.location)
+                didChangeText()
+            }
+            return
+        }
+
         // Check if pasteboard contains an image
         if let image = NSImage(pasteboard: pasteboard) {
             // Create a resizable image attachment
             let attachment = ResizableImageAttachment(image: image)
-
-            // Scale image to reasonable size if needed
-            let maxWidth: CGFloat = 400
-            let maxHeight: CGFloat = 400
-            let imageSize = image.size
-
-            var width = imageSize.width
-            var height = imageSize.height
-
-            if width > maxWidth || height > maxHeight {
-                let widthRatio = maxWidth / width
-                let heightRatio = maxHeight / height
-                let ratio = min(widthRatio, heightRatio)
-
-                width = width * ratio
-                height = height * ratio
-            }
-
-            attachment.customSize = NSSize(width: width, height: height)
+            attachment.customSize = attachment.preferredDisplaySize(maxWidth: availableImageWidth())
 
             // Create attributed string with the attachment
-            let attachmentString = NSAttributedString(attachment: attachment)
+            let selectedRange = self.selectedRange
+            let insertion = imageInsertionPayload(for: attachment, selectedRange: selectedRange)
 
             // Insert at current selection
             if let textStorage = textStorage {
-                let selectedRange = self.selectedRange
-                textStorage.replaceCharacters(in: selectedRange, with: attachmentString)
-
-                // Move cursor after the inserted image
-                let newPosition = selectedRange.location + 1
-                setSelectedRange(NSRange(location: newPosition, length: 0))
+                textStorage.replaceCharacters(in: selectedRange, with: insertion.attributedString)
+                setSelectedRange(insertion.selectedRange)
+                selectImageAttachment(attachment, at: insertion.selectedRange.location)
 
                 didChangeText()
             }
         } else {
             // Not an image, use default paste behavior
             super.paste(sender)
+        }
+    }
+
+    override func copy(_ sender: Any?) {
+        guard let attachment = selectedResizableImageAttachment() else {
+            super.copy(sender)
+            return
+        }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+
+        if let attachmentData = ImageAttachmentPasteboard.archivedData(for: attachment) {
+            pasteboard.setData(attachmentData, forType: NSPasteboard.PasteboardType(ImageAttachmentPasteboard.attachmentType))
+        }
+
+        if let image = attachment.originalImage ?? attachment.image,
+           let tiffData = image.tiffRepresentation {
+            pasteboard.setData(tiffData, forType: .tiff)
         }
     }
 
@@ -172,52 +181,31 @@ private final class DynamicColorTextView: NSTextView {
                            y: currentPoint.y - resizeStartPoint.y)
 
         // Calculate new size
-        let newWidth = max(50, resizeStartSize.width + delta.x)
-
-        // Maintain aspect ratio
-        guard let img = attachment.originalImage ?? attachment.image else {
-            super.mouseDragged(with: event)
-            return
-        }
-        let aspectRatio = img.size.height / img.size.width
-        let newHeight = newWidth * aspectRatio
-
-        // Update attachment size
-        attachment.customSize = NSSize(width: newWidth, height: newHeight)
+        let newWidth = resizeStartSize.width + delta.x
+        attachment.customSize = attachment.resizedDisplaySize(
+            for: newWidth,
+            maxWidth: availableImageWidth()
+        )
 
         // Force layout refresh
         layoutManager.invalidateLayout(forCharacterRange: NSRange(location: charIndex, length: 1),
                                        actualCharacterRange: nil)
         layoutManager.ensureLayout(for: textContainer)
+        layoutManager.invalidateDisplay(forCharacterRange: NSRange(location: charIndex, length: 1))
 
+        hasPendingImageResizeCommit = true
         needsDisplay = true
-        didChangeText()
+        window?.invalidateCursorRects(for: self)
     }
 
     override func mouseUp(with event: NSEvent) {
         if isResizingImage {
             isResizingImage = false
-
-            // Add a marker attribute to force change detection
-            // since NSAttributedString.isEqual won't detect image size changes
-            if let storage = textStorage, storage.length > 0 {
-                let updatedStorage = NSMutableAttributedString(attributedString: storage)
-                updatedStorage.addAttribute(
-                    NSAttributedString.Key(rawValue: "imageResizeChanged"),
-                    value: NSNumber(value: Date().timeIntervalSince1970),
-                    range: NSRange(location: 0, length: 1)
-                )
-
-                // Replace the text storage content
-                storage.setAttributedString(updatedStorage)
-
-                if let attachment = selectedImageAttachment {
-                    onImageResize?(attachment)
-                }
-
-                didChangeText()
-            }
+            commitImageResizeIfNeeded()
+        } else if hasPendingImageResizeCommit {
+            commitImageResizeIfNeeded()
         }
+
         super.mouseUp(with: event)
     }
 
@@ -245,11 +233,7 @@ private final class DynamicColorTextView: NSTextView {
         borderPath.stroke()
 
         // Draw resize handle with SF Symbol
-        let handleSize: CGFloat = 16
-        let handleRect = NSRect(x: attachmentRect.maxX - handleSize,
-                               y: attachmentRect.maxY - handleSize,
-                               width: handleSize,
-                               height: handleSize)
+        let handleRect = resizeHandleRect(for: attachmentRect)
 
         // Draw background circle
         NSColor.controlAccentColor.withAlphaComponent(0.9).setFill()
@@ -288,13 +272,111 @@ private final class DynamicColorTextView: NSTextView {
         let textContainerOrigin = self.textContainerOrigin
         let attachmentRect = glyphRect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
 
-        let handleSize: CGFloat = 16
-        let handleRect = NSRect(x: attachmentRect.maxX - handleSize,
-                               y: attachmentRect.maxY - handleSize,
-                               width: handleSize,
-                               height: handleSize)
+        let handleRect = resizeHandleRect(for: attachmentRect)
 
         addCursorRect(handleRect, cursor: .crosshair)
+    }
+
+    private func resizeHandleRect(for attachmentRect: NSRect) -> NSRect {
+        let handleSize: CGFloat = 18
+        return NSRect(
+            x: attachmentRect.maxX - handleSize,
+            y: attachmentRect.maxY - handleSize,
+            width: handleSize,
+            height: handleSize
+        )
+    }
+
+    private func availableImageWidth() -> CGFloat {
+        guard let textContainer else {
+            return ResizableImageAttachment.maximumDisplayWidth
+        }
+
+        return max(
+            ResizableImageAttachment.minimumDisplayWidth,
+            textContainer.size.width - (textContainer.lineFragmentPadding * 2)
+        )
+    }
+
+    private func imageInsertionPayload(for attachment: ResizableImageAttachment, selectedRange: NSRange) -> (attributedString: NSAttributedString, selectedRange: NSRange) {
+        let storageString = (textStorage?.string ?? "") as NSString
+        let insertionEnd = selectedRange.location + selectedRange.length
+        let newlineAttributes = typingAttributes
+
+        let mutable = NSMutableAttributedString()
+
+        if selectedRange.location > 0,
+           storageString.character(at: selectedRange.location - 1) != 10 {
+            mutable.append(NSAttributedString(string: "\n", attributes: newlineAttributes))
+        }
+
+        let imageOffset = mutable.length
+        mutable.append(NSAttributedString(attachment: attachment))
+
+        if insertionEnd < storageString.length,
+           storageString.character(at: insertionEnd) != 10 {
+            mutable.append(NSAttributedString(string: "\n", attributes: newlineAttributes))
+        } else if insertionEnd == storageString.length {
+            mutable.append(NSAttributedString(string: "\n", attributes: newlineAttributes))
+        }
+
+        let imageRange = NSRange(location: selectedRange.location + imageOffset, length: 1)
+        return (mutable, imageRange)
+    }
+
+    private func selectImageAttachment(_ attachment: ResizableImageAttachment, at charIndex: Int) {
+        selectedImageAttachment = attachment
+        selectedImageCharIndex = charIndex
+        if selectedRange.location != charIndex || selectedRange.length != 1 {
+            setSelectedRange(NSRange(location: charIndex, length: 1))
+        }
+        needsDisplay = true
+        window?.invalidateCursorRects(for: self)
+    }
+
+    private func clearSelectedImageSelection() {
+        guard selectedImageAttachment != nil || selectedImageCharIndex != nil else {
+            return
+        }
+
+        selectedImageAttachment = nil
+        selectedImageCharIndex = nil
+        needsDisplay = true
+        window?.invalidateCursorRects(for: self)
+    }
+
+    private func commitImageResizeIfNeeded() {
+        guard hasPendingImageResizeCommit,
+              let storage = textStorage,
+              storage.length > 0 else {
+            hasPendingImageResizeCommit = false
+            return
+        }
+
+        hasPendingImageResizeCommit = false
+        let markerKey = NSAttributedString.Key(rawValue: "imageResizeChanged")
+        storage.addAttribute(markerKey, value: NSNumber(value: Date().timeIntervalSince1970), range: NSRange(location: 0, length: 1))
+
+        if let charIndex = selectedImageCharIndex {
+            storage.edited(.editedAttributes, range: NSRange(location: charIndex, length: 1), changeInLength: 0)
+        }
+
+        if let attachment = selectedImageAttachment {
+            onImageResize?(attachment)
+        }
+
+        didChangeText()
+    }
+
+    private func selectedResizableImageAttachment() -> ResizableImageAttachment? {
+        let selection = selectedRange
+        guard selection.length == 1,
+              let storage = textStorage,
+              selection.location < storage.length else {
+            return nil
+        }
+
+        return storage.attribute(.attachment, at: selection.location, effectiveRange: nil) as? ResizableImageAttachment
     }
 
     private func imageAttachmentInfo(at point: NSPoint) -> (attachment: ResizableImageAttachment, charIndex: Int, rect: NSRect)? {
