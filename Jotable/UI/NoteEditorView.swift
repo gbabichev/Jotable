@@ -87,6 +87,9 @@ struct NoteEditorView: View {
                 isUnderlined.toggle()
             }
 #endif
+            .onReceive(NotificationCenter.default.publisher(for: .openPasswordGeneratorRequested)) { _ in
+                showingPasswordGenerator = true
+            }
     }
 
     private var richTextEditorView: some View {

@@ -20,10 +20,18 @@ extension Notification.Name {
     static let exportNotesRequested = Notification.Name("exportNotesRequested")
     #endif
     static let createNewNoteRequested = Notification.Name("createNewNoteRequested")
+    static let openPasswordGeneratorRequested = Notification.Name("openPasswordGeneratorRequested")
 }
 
 private enum AppActionRouter {
     static let newNoteURL = URL(string: "jotable://newNote")!
+    static let generatePasswordURL = URL(string: "jotable://generatePassword")!
+
+    private static func postPasswordGeneratorRequest(after delay: TimeInterval = 0.15) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            NotificationCenter.default.post(name: .openPasswordGeneratorRequested, object: nil)
+        }
+    }
 
     static func requestNewNote() {
         #if os(macOS)
@@ -43,9 +51,34 @@ private enum AppActionRouter {
         #endif
     }
 
-    static func handleIncomingURL(_ url: URL) {
-        guard url.absoluteString == newNoteURL.absoluteString else { return }
+    static func requestPasswordGenerator() {
+        #if os(macOS)
+        NSApp.activate(ignoringOtherApps: true)
+
+        if let existingWindow = NSApp.windows.first(where: { $0.canBecomeMain }) {
+            existingWindow.makeKeyAndOrderFront(nil)
+            NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
+            postPasswordGeneratorRequest()
+            return
+        }
+
+        if !NSWorkspace.shared.open(generatePasswordURL) {
+            NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
+            postPasswordGeneratorRequest()
+        }
+        #else
         NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
+        postPasswordGeneratorRequest()
+        #endif
+    }
+
+    static func handleIncomingURL(_ url: URL) {
+        if url.absoluteString == newNoteURL.absoluteString {
+            NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
+        } else if url.absoluteString == generatePasswordURL.absoluteString {
+            NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
+            postPasswordGeneratorRequest()
+        }
     }
 }
 
@@ -66,11 +99,27 @@ class MacAppDelegate: NSObject, NSApplicationDelegate {
         )
         dockMenu.addItem(newNoteItem)
 
+        let generatePasswordItem = NSMenuItem(
+            title: "Generate Password",
+            action: #selector(openPasswordGenerator),
+            keyEquivalent: ""
+        )
+        generatePasswordItem.target = self
+        generatePasswordItem.image = NSImage(
+            systemSymbolName: "key.fill",
+            accessibilityDescription: "Generate Password"
+        )
+        dockMenu.addItem(generatePasswordItem)
+
         return dockMenu
     }
 
     @objc func createNewNote() {
         AppActionRouter.requestNewNote()
+    }
+
+    @objc func openPasswordGenerator() {
+        AppActionRouter.requestPasswordGenerator()
     }
 }
 #endif
@@ -188,7 +237,7 @@ struct JotableApp: App {
             #endif
         }
         #if os(macOS)
-        .handlesExternalEvents(matching: Set(arrayLiteral: "newNote"))
+        .handlesExternalEvents(matching: Set(arrayLiteral: "newNote", "generatePassword"))
         #endif
         .modelContainer(Self.sharedModelContainer)
         #if os(macOS)
