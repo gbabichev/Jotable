@@ -16,6 +16,14 @@
 			<key>UIApplicationShortcutItemIconType</key>
 			<string>UIApplicationShortcutIconTypeCompose</string>
 		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.jotable.generatePassword</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Generate Password</string>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>key.fill</string>
+		</dict>
 	</array>
 	<key>CFBundleURLTypes</key>
 	<array>

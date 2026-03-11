@@ -131,26 +131,38 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
         // Handle shortcut item when app launches
         if let shortcutItem = options.shortcutItem {
-            if shortcutItem.type == "com.jotable.newNote" {
-                // Post notification after a short delay to ensure ContentView is ready
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    AppActionRouter.requestNewNote()
-                }
-            }
+            handleShortcutItem(shortcutItem)
         }
 
         let configuration = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
         configuration.delegateClass = SceneDelegate.self
         return configuration
     }
+
+    private func handleShortcutItem(_ shortcutItem: UIApplicationShortcutItem) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            switch shortcutItem.type {
+            case "com.jotable.newNote":
+                AppActionRouter.requestNewNote()
+            case "com.jotable.generatePassword":
+                AppActionRouter.requestPasswordGenerator()
+            default:
+                break
+            }
+        }
+    }
 }
 
 class SceneDelegate: NSObject, UIWindowSceneDelegate {
     func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
-        if shortcutItem.type == "com.jotable.newNote" {
+        switch shortcutItem.type {
+        case "com.jotable.newNote":
             AppActionRouter.requestNewNote()
             completionHandler(true)
-        } else {
+        case "com.jotable.generatePassword":
+            AppActionRouter.requestPasswordGenerator()
+            completionHandler(true)
+        default:
             completionHandler(false)
         }
     }
