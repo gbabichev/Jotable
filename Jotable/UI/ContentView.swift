@@ -287,6 +287,7 @@ struct ContentView: View {
                     ToolbarItem(placement: .automatic) {
                         CloudSyncToolbarIndicator()
                     }
+                    //ToolbarSpacer(.fixed, placement: .automatic)
                 }
 
                 #if os(iOS)
@@ -1473,6 +1474,7 @@ private struct CloudSyncToolbarIndicator: View {
                 .font(.system(size: 17, weight: .medium))
                 .rotationEffect(.degrees(isRotating ? 360 : 0))
                 .frame(width: 24, height: 24, alignment: .center)
+                .padding(.horizontal, 4)
                 .onAppear {
                     guard !isRotating else { return }
                     withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
