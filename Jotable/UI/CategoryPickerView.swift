@@ -20,6 +20,12 @@ struct CategoryPickerView: View {
 
     @Binding var selectedCategory: Category?
 
+    private var selectableCategories: [Category] {
+        categories
+            .filter { !$0.isSystemTrash }
+            .sorted(by: { $0.name < $1.name })
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -43,7 +49,7 @@ struct CategoryPickerView: View {
                 }
 
                 // Categories
-                ForEach(categories.sorted(by: { $0.name < $1.name })) { category in
+                ForEach(selectableCategories) { category in
                     HStack {
                         Circle()
                             .fill(Color.fromString(category.color))

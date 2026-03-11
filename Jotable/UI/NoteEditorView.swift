@@ -482,6 +482,21 @@ private struct NoteHeaderView: View {
         self.onHeaderHeightChange = onHeaderHeightChange
     }
 
+    private var categorySelectionBinding: Binding<Category?> {
+        Binding(
+            get: { item.category?.isSystemTrash == true ? nil : item.category },
+            set: { newCategory in
+                item.category = newCategory
+
+                if item.isInTrash {
+                    item.previousCategory = nil
+                    item.trashedAt = nil
+                    item.timestamp = Date()
+                }
+            }
+        )
+    }
+
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             TextField("Note Title", text: $item.title)
@@ -518,7 +533,7 @@ private struct NoteHeaderView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 8)
             .cornerRadius(6)
-            .categoryPickerPresenter(isPresented: $showingCategoryPicker, selectedCategory: $item.category)
+            .categoryPickerPresenter(isPresented: $showingCategoryPicker, selectedCategory: categorySelectionBinding)
         }
         .background(
             GeometryReader { geometry in

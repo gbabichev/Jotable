@@ -16,16 +16,21 @@ final class Category {
     var sortOrder: Int = 0             // Add default value
     var isPrivate: Bool = false        // Privacy/lock status
     var isHiddenFromHome: Bool = false // Hide from All Notes without auth
+    var isSystemTrash: Bool = false
 
     @Relationship(deleteRule: .nullify, inverse: \Item.category)
     var notes: [Item]? = []            // Make optional with default empty array
+
+    @Relationship(deleteRule: .nullify, inverse: \Item.previousCategory)
+    var previouslyCategorizedNotes: [Item]? = []
 
     init(
         name: String,
         color: String = "blue",
         sortOrder: Int = 0,
         isPrivate: Bool = false,
-        isHiddenFromHome: Bool = false
+        isHiddenFromHome: Bool = false,
+        isSystemTrash: Bool = false
     ) {
         self.name = name
         self.color = color
@@ -33,7 +38,12 @@ final class Category {
         self.sortOrder = sortOrder
         self.isPrivate = isPrivate
         self.isHiddenFromHome = isHiddenFromHome
+        self.isSystemTrash = isSystemTrash
     }
+}
+
+extension Category {
+    static let trashName = "Trash"
 }
 
 extension Color {

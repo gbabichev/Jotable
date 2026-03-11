@@ -20,6 +20,8 @@ final class Item {
 
     // Category relationship - already optional, good!
     var category: Category?
+    var previousCategory: Category?
+    var trashedAt: Date?
 
     init(timestamp: Date = Date(), title: String = "", content: String = "") {
         let now = Date()
@@ -30,5 +32,13 @@ final class Item {
         self.content = content
         self.attributedContent = nil
         self.category = nil
+        self.previousCategory = nil
+        self.trashedAt = nil
+    }
+}
+
+extension Item {
+    var isInTrash: Bool {
+        trashedAt != nil
     }
 }

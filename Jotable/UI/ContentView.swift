@@ -12,6 +12,7 @@ import UniformTypeIdentifiers
 // Selection type for the sidebar
 enum SidebarSelection: Hashable {
     case allNotes
+    case trash
     case category(Category)
 }
 
@@ -76,10 +77,40 @@ struct ContentView: View {
     // Computed property to get the selected category for filtering
     private var selectedCategory: Category? {
         switch sidebarSelection {
-        case .allNotes, .none:
+        case .allNotes, .trash, .none:
             return nil
         case .category(let category):
             return category
+        }
+    }
+
+    private var trashCategory: Category? {
+        categories.first(where: { $0.isSystemTrash })
+    }
+
+    private var visibleCategories: [Category] {
+        categories.filter { !$0.isSystemTrash }
+    }
+
+    private var isViewingTrash: Bool {
+        if case .trash = sidebarSelection {
+            return true
+        }
+        return false
+    }
+
+    private var trashItemCount: Int {
+        allItems.filter { $0.isInTrash }.count
+    }
+
+    private var currentNavigationTitle: String {
+        switch sidebarSelection {
+        case .trash:
+            return Category.trashName
+        case .category(let category):
+            return category.name
+        case .allNotes, .none:
+            return "All Notes"
         }
     }
     
@@ -88,18 +119,25 @@ struct ContentView: View {
         var items = allItems
 
         // Get locked/hidden category IDs for filtering
-        let lockedCategoryIDs = Set(categories.filter { $0.isPrivate }.compactMap { $0.id })
-        let hiddenCategoryIDs = Set(categories.filter { $0.isHiddenFromHome }.compactMap { $0.id })
+        let lockedCategoryIDs = Set(visibleCategories.filter { $0.isPrivate }.compactMap { $0.id })
+        let hiddenCategoryIDs = Set(visibleCategories.filter { $0.isHiddenFromHome }.compactMap { $0.id })
 
-        // If searching, ignore category scope (search across all notes)
-        if searchText.isEmpty, let selectedCategory = selectedCategory {
-            items = items.filter { $0.category == selectedCategory }
+        if isViewingTrash {
+            items = items.filter { $0.isInTrash }
         } else {
-            // When viewing "All Notes" or searching, hide notes from locked/hidden categories
-            items = items.filter { item in
-                guard let category = item.category else { return true }
-                return !lockedCategoryIDs.contains(category.id) &&
-                    !hiddenCategoryIDs.contains(category.id)
+            items = items.filter { !$0.isInTrash }
+
+            // If searching, ignore category scope (search across all notes)
+            if searchText.isEmpty, let selectedCategory = selectedCategory {
+                items = items.filter { $0.category == selectedCategory }
+            } else {
+                // When viewing "All Notes" or searching, hide notes from locked/hidden categories
+                items = items.filter { item in
+                    guard let category = item.category else { return true }
+                    return !category.isSystemTrash &&
+                        !lockedCategoryIDs.contains(category.id) &&
+                        !hiddenCategoryIDs.contains(category.id)
+                }
             }
         }
 
@@ -116,11 +154,13 @@ struct ContentView: View {
 
     // Count of notes visible without authenticating into locked categories
     private var unlockedNoteCount: Int {
-        let lockedCategoryIDs = Set(categories.filter { $0.isPrivate }.compactMap { $0.id })
-        let hiddenCategoryIDs = Set(categories.filter { $0.isHiddenFromHome }.compactMap { $0.id })
+        let lockedCategoryIDs = Set(visibleCategories.filter { $0.isPrivate }.compactMap { $0.id })
+        let hiddenCategoryIDs = Set(visibleCategories.filter { $0.isHiddenFromHome }.compactMap { $0.id })
         return allItems.filter { item in
+            guard !item.isInTrash else { return false }
             guard let category = item.category else { return true }
-            return !lockedCategoryIDs.contains(category.id) &&
+            return !category.isSystemTrash &&
+                !lockedCategoryIDs.contains(category.id) &&
                 !hiddenCategoryIDs.contains(category.id)
         }.count
     }
@@ -235,7 +275,7 @@ struct ContentView: View {
                 text: $searchText,
                 prompt: "Search notes"
             )
-            .navigationTitle(selectedCategory?.name ?? "All Notes")
+            .navigationTitle(currentNavigationTitle)
             .navigationSubtitle("\(filteredItems.count) \(filteredItems.count == 1 ? "note" : "notes")")
             .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 400)
             .toolbar {
@@ -245,6 +285,8 @@ struct ContentView: View {
                     selectedItemIDs: selectedItemIDs,
                     allItemsIsEmpty: allItems.isEmpty,
                     allFilteredItemsSelected: allFilteredItemsSelected,
+                    deleteSelectedLabel: isViewingTrash ? "Delete Forever" : "Trash Selected",
+                    deleteSelectedSystemImage: isViewingTrash ? "trash.slash" : "trash",
                     deleteSelectedItems: deleteSelectedItems,
                     addItem: addItem,
                     selectAllItems: selectAllItems,
@@ -284,6 +326,8 @@ struct ContentView: View {
         }
 #endif
         .onAppear {
+            ensureTrashCategoryExists()
+            purgeExpiredTrash()
             setupCloudKitNotifications()
             restoreLastSelectedNoteIfNeeded()
         }
@@ -324,6 +368,8 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, newPhase in
             // When app becomes active, check if authentication has expired
             if newPhase == .active {
+                ensureTrashCategoryExists()
+                purgeExpiredTrash()
                 if !isAuthenticationValid {
                     // Authentication expired - clear it and revert to All Notes if viewing private category
                     isAuthenticatedForPrivateAccess = false
@@ -417,11 +463,21 @@ struct ContentView: View {
                 isHiddenFromHome: false
             )
             .tag(SidebarSelection.allNotes)
+
+            CategoryRowView(
+                icon: "trash",
+                title: Category.trashName,
+                count: trashItemCount,
+                color: nil,
+                isPrivate: false,
+                isHiddenFromHome: false
+            )
+            .tag(SidebarSelection.trash)
         }
         
         // Categories section
         Section("Categories") {
-            ForEach(categories) { category in
+            ForEach(visibleCategories) { category in
                 CategoryRowView(
                     icon: nil,
                     title: category.name,
@@ -476,36 +532,62 @@ struct ContentView: View {
     @ViewBuilder
     private var notesListContent: some View {
         ForEach(filteredItems) { item in
-            NoteRowView(item: item)
+            NoteRowView(item: item, isTrashContext: isViewingTrash)
                 .tag(item.persistentModelID)
                 .id(item.id)
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button(role: .destructive) {
                         deleteItem(item)
                     } label: {
-                        Label("Delete", systemImage: "trash")
+                        Label(item.isInTrash ? "Delete Forever" : "Move to Trash", systemImage: "trash")
+                    }
+                }
+                .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                    if item.isInTrash {
+                        Button {
+                            restoreItemFromTrash(item)
+                        } label: {
+                            Label("Restore", systemImage: "arrow.uturn.backward")
+                        }
+                        .tint(.green)
                     }
                 }
                 .contextMenu {
-                    Button {
-                        // Select the item for editing
-                        selectedItemIDs = [item.persistentModelID]
-                    } label: {
-                        Label("Edit", systemImage: "pencil")
-                    }
+                    if item.isInTrash {
+                        Button {
+                            restoreItemFromTrash(item)
+                        } label: {
+                            Label("Restore", systemImage: "arrow.uturn.backward")
+                        }
 
-                    Button {
-                        showingCategoryPickerForItem = item
-                    } label: {
-                        Label("Edit Category", systemImage: "folder")
-                    }
+                        Divider()
 
-                    Divider()
+                        Button(role: .destructive) {
+                            permanentlyDeleteItem(item)
+                        } label: {
+                            Label("Delete Forever", systemImage: "trash")
+                        }
+                    } else {
+                        Button {
+                            // Select the item for editing
+                            selectedItemIDs = [item.persistentModelID]
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
+                        }
 
-                    Button(role: .destructive) {
-                        deleteItem(item)
-                    } label: {
-                        Label("Delete", systemImage: "trash")
+                        Button {
+                            showingCategoryPickerForItem = item
+                        } label: {
+                            Label("Edit Category", systemImage: "folder")
+                        }
+
+                        Divider()
+
+                        Button(role: .destructive) {
+                            moveItemToTrash(item)
+                        } label: {
+                            Label("Move to Trash", systemImage: "trash")
+                        }
                     }
                 }
                 .categoryPickerPresenter(
@@ -521,49 +603,21 @@ struct ContentView: View {
     
     // Delete a single item
     private func deleteItem(_ item: Item) {
-        print("Deleting item: '\(item.title)'")
-        
-        // IMPORTANT: Clear selection BEFORE deleting to prevent crash
-        if selectedItemIDs.contains(item.persistentModelID) {
-            selectedItemIDs.remove(item.persistentModelID)
-            print("Cleared selection")
-        }
-        
-        // Delete after a brief delay to ensure UI updates
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            withAnimation {
-                modelContext.delete(item)
-                
-                do {
-                    try modelContext.save()
-                    print("💾 Item deleted and saved successfully - CloudKit sync queued")
-                } catch {
-                    print("❌ Failed to save after deletion: \(error)")
-                }
-            }
+        if item.isInTrash {
+            permanentlyDeleteItem(item)
+        } else {
+            moveItemToTrash(item)
         }
     }
 
     private func deleteSelectedItems() {
-        let itemsToDelete = filteredItems.filter { selectedItemIDs.contains($0.persistentModelID) }
-        guard !itemsToDelete.isEmpty else { return }
+        let itemsToProcess = filteredItems.filter { selectedItemIDs.contains($0.persistentModelID) }
+        guard !itemsToProcess.isEmpty else { return }
 
-        selectedItemIDs.removeAll()
-
-        withAnimation {
-            for item in itemsToDelete {
-                modelContext.delete(item)
-            }
-
-            do {
-                try modelContext.save()
-                print("💾 Deleted \(itemsToDelete.count) selected items - CloudKit sync queued")
-                #if os(iOS)
-                editMode = .inactive
-                #endif
-            } catch {
-                print("❌ Failed to delete selected items: \(error)")
-            }
+        if isViewingTrash {
+            permanentlyDeleteItems(itemsToProcess)
+        } else {
+            moveItemsToTrash(itemsToProcess)
         }
     }
 
@@ -604,7 +658,7 @@ struct ContentView: View {
     
     // Manual category reordering function
     private func moveCategories(from source: IndexSet, to destination: Int) {
-        var reorderedCategories = Array(categories)
+        var reorderedCategories = Array(visibleCategories)
         reorderedCategories.move(fromOffsets: source, toOffset: destination)
         
         // Update sort order for all categories
@@ -624,6 +678,10 @@ struct ContentView: View {
         // Move all notes in this category to "no category"
         for note in category.notes ?? [] {
             note.category = nil
+        }
+
+        for note in allItems where note.previousCategory == category {
+            note.previousCategory = nil
         }
 
         // Clear selection if deleting selected category
@@ -668,7 +726,7 @@ struct ContentView: View {
     }
 
     private func deleteCategories(offsets: IndexSet) {
-        let categoriesToDelete = offsets.map { categories[$0] }
+        let categoriesToDelete = offsets.map { visibleCategories[$0] }
         deleteCategories(categoriesToDelete)
     }
 
@@ -846,11 +904,11 @@ struct ContentView: View {
     }
 
     private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                let itemToDelete = filteredItems[index]
-                deleteItem(itemToDelete)
-            }
+        let itemsToDelete = offsets.map { filteredItems[$0] }
+        if isViewingTrash {
+            permanentlyDeleteItems(itemsToDelete)
+        } else {
+            moveItemsToTrash(itemsToDelete)
         }
     }
 
@@ -912,6 +970,193 @@ struct ContentView: View {
         }
     }
 
+    private func fetchTrashCategory() -> Category? {
+        let descriptor = FetchDescriptor<Category>(
+            predicate: #Predicate { $0.isSystemTrash == true }
+        )
+        return try? modelContext.fetch(descriptor).first
+    }
+
+    private func ensureTrashCategoryExists() {
+        guard trashCategory == nil, fetchTrashCategory() == nil else { return }
+
+        let trash = Category(
+            name: Category.trashName,
+            color: "gray",
+            sortOrder: (visibleCategories.map(\.sortOrder).max() ?? -1) + 1,
+            isSystemTrash: true
+        )
+        modelContext.insert(trash)
+
+        do {
+            try modelContext.save()
+        } catch {
+            print("❌ Failed to create Trash category: \(error)")
+        }
+    }
+
+    private func resolvedTrashCategory() -> Category? {
+        if let trashCategory {
+            return trashCategory
+        }
+
+        if let storedTrashCategory = fetchTrashCategory() {
+            return storedTrashCategory
+        }
+
+        let trash = Category(
+            name: Category.trashName,
+            color: "gray",
+            sortOrder: (visibleCategories.map(\.sortOrder).max() ?? -1) + 1,
+            isSystemTrash: true
+        )
+        modelContext.insert(trash)
+
+        do {
+            try modelContext.save()
+            return trash
+        } catch {
+            print("❌ Failed to create Trash category: \(error)")
+            modelContext.delete(trash)
+            return nil
+        }
+    }
+
+    private func moveItemToTrash(_ item: Item) {
+        guard !item.isInTrash else { return }
+        guard let trash = resolvedTrashCategory() else { return }
+
+        if selectedItemIDs.contains(item.persistentModelID) {
+            selectedItemIDs.remove(item.persistentModelID)
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            withAnimation {
+                item.previousCategory = item.category?.isSystemTrash == true ? nil : item.category
+                item.category = trash
+                item.trashedAt = Date()
+                item.timestamp = Date()
+
+                do {
+                    try modelContext.save()
+                    print("💾 Item moved to Trash and saved successfully - CloudKit sync queued")
+                } catch {
+                    print("❌ Failed to move item to Trash: \(error)")
+                }
+            }
+        }
+    }
+
+    private func moveItemsToTrash(_ items: [Item]) {
+        guard !items.isEmpty else { return }
+        guard let trash = resolvedTrashCategory() else { return }
+
+        selectedItemIDs.removeAll()
+
+        withAnimation {
+            for item in items where !item.isInTrash {
+                item.previousCategory = item.category?.isSystemTrash == true ? nil : item.category
+                item.category = trash
+                item.trashedAt = Date()
+                item.timestamp = Date()
+            }
+
+            do {
+                try modelContext.save()
+                print("💾 Moved \(items.count) items to Trash - CloudKit sync queued")
+                #if os(iOS)
+                editMode = .inactive
+                #endif
+            } catch {
+                print("❌ Failed to move selected items to Trash: \(error)")
+            }
+        }
+    }
+
+    private func permanentlyDeleteItem(_ item: Item) {
+        if selectedItemIDs.contains(item.persistentModelID) {
+            selectedItemIDs.remove(item.persistentModelID)
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            withAnimation {
+                modelContext.delete(item)
+
+                do {
+                    try modelContext.save()
+                    print("💾 Item permanently deleted and saved successfully - CloudKit sync queued")
+                } catch {
+                    print("❌ Failed to permanently delete item: \(error)")
+                }
+            }
+        }
+    }
+
+    private func permanentlyDeleteItems(_ items: [Item]) {
+        guard !items.isEmpty else { return }
+
+        selectedItemIDs.removeAll()
+
+        withAnimation {
+            for item in items {
+                modelContext.delete(item)
+            }
+
+            do {
+                try modelContext.save()
+                print("💾 Permanently deleted \(items.count) items - CloudKit sync queued")
+                #if os(iOS)
+                editMode = .inactive
+                #endif
+            } catch {
+                print("❌ Failed to permanently delete selected items: \(error)")
+            }
+        }
+    }
+
+    private func restoreItemFromTrash(_ item: Item) {
+        guard item.isInTrash else { return }
+
+        withAnimation {
+            let restoreCategory = item.previousCategory?.isSystemTrash == true ? nil : item.previousCategory
+            item.category = restoreCategory
+            item.previousCategory = nil
+            item.trashedAt = nil
+            item.timestamp = Date()
+
+            do {
+                try modelContext.save()
+                print("💾 Item restored from Trash - CloudKit sync queued")
+            } catch {
+                print("❌ Failed to restore item from Trash: \(error)")
+            }
+        }
+    }
+
+    private func purgeExpiredTrash() {
+        let cutoffDate = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date.distantPast
+        let expiredItems = allItems.filter { item in
+            guard let trashedAt = item.trashedAt else { return false }
+            return trashedAt <= cutoffDate
+        }
+
+        guard !expiredItems.isEmpty else { return }
+
+        for item in expiredItems {
+            if selectedItemIDs.contains(item.persistentModelID) {
+                selectedItemIDs.remove(item.persistentModelID)
+            }
+            modelContext.delete(item)
+        }
+
+        do {
+            try modelContext.save()
+            print("💾 Purged \(expiredItems.count) expired Trash items")
+        } catch {
+            print("❌ Failed to purge expired Trash items: \(error)")
+        }
+    }
+
     #if os(macOS)
     private func startExport() {
         do {
@@ -947,6 +1192,8 @@ private struct NotesToolbar: ToolbarContent {
     let selectedItemIDs: Set<PersistentIdentifier>
     let allItemsIsEmpty: Bool
     let allFilteredItemsSelected: Bool
+    let deleteSelectedLabel: String
+    let deleteSelectedSystemImage: String
     let deleteSelectedItems: () -> Void
     let addItem: () -> Void
     let selectAllItems: () -> Void
@@ -961,7 +1208,7 @@ private struct NotesToolbar: ToolbarContent {
             #if os(macOS)
             if !selectedItemIDs.isEmpty {
                 Button(role: .destructive, action: deleteSelectedItems) {
-                    Label("Delete Selected", systemImage: "trash")
+                    Label(deleteSelectedLabel, systemImage: deleteSelectedSystemImage)
                 }
             }
             #endif
@@ -976,7 +1223,7 @@ private struct NotesToolbar: ToolbarContent {
             }
             if showDeleteSelected {
                 Button(role: .destructive, action: deleteSelectedItems) {
-                    Label("Delete Selected", systemImage: "trash")
+                    Label(deleteSelectedLabel, systemImage: deleteSelectedSystemImage)
                 }
             }
             if showNewNote {
@@ -1042,7 +1289,9 @@ struct CategoryRowView: View {
 
 struct NoteRowView: View {
     let item: Item
+    let isTrashContext: Bool
     private let attachmentPreviewToken = "Image"
+    private let trashRetentionDays = 30
     
     private var previewText: String {
         let normalized = item.content.replacingOccurrences(
@@ -1060,6 +1309,31 @@ struct NoteRowView: View {
         
         return firstNonEmptyLine ?? trimmed
     }
+
+    private var trashExpiryDate: Date? {
+        guard let trashedAt = item.trashedAt else { return nil }
+        return Calendar.current.date(byAdding: .day, value: trashRetentionDays, to: trashedAt)
+    }
+
+    private var trashCountdownText: String? {
+        guard let trashExpiryDate else { return nil }
+        let today = Calendar.current.startOfDay(for: Date())
+        let expiryDay = Calendar.current.startOfDay(for: trashExpiryDate)
+        let remainingDays = Calendar.current.dateComponents([.day], from: today, to: expiryDay).day ?? 0
+
+        if remainingDays <= 0 {
+            return "Expires today"
+        }
+        if remainingDays == 1 {
+            return "1 day left"
+        }
+        return "\(remainingDays)d left"
+    }
+
+    private var trashDeletionDateText: String? {
+        guard let trashExpiryDate else { return nil }
+        return "Deletes \(trashExpiryDate.formatted(.dateTime.month(.abbreviated).day()))"
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1069,13 +1343,25 @@ struct NoteRowView: View {
                     .lineLimit(1)
                 
                 Spacer()
-                
-                Text(item.timestamp, format: .relative(presentation: .named))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+
+                if isTrashContext, let trashCountdownText {
+                    Text(trashCountdownText)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule()
+                                .fill(Color.orange.opacity(0.12))
+                        )
+                } else {
+                    Text(item.timestamp, format: .relative(presentation: .named))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
 
                 // Show category indicator
-                if let category = item.category {
+                if !isTrashContext, let category = item.category {
                     Circle()
                         .fill(Color.fromString(category.color))
                         .frame(width: 8, height: 8)
@@ -1087,6 +1373,12 @@ struct NoteRowView: View {
                 .font(.subheadline)
                 .foregroundStyle(previewText == "Start writing..." ? .tertiary : .secondary)
                 .lineLimit(1)
+
+            if isTrashContext, let trashDeletionDateText {
+                Text(trashDeletionDateText)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())

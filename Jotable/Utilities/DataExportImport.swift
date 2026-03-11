@@ -14,6 +14,7 @@ struct ExportedCategory: Codable {
     let color: String
     let isPrivate: Bool
     let isHiddenFromHome: Bool?
+    let isSystemTrash: Bool?
     let sortOrder: Int
     let createdAt: Date
 }
@@ -24,6 +25,8 @@ struct ExportedNote: Codable {
     let createdAt: Date
     let timestamp: Date
     let categoryIndex: Int?
+    let previousCategoryIndex: Int?
+    let trashedAt: Date?
     let attributedContentBase64: String?
 }
 
@@ -45,6 +48,7 @@ enum DataExportImport {
                 color: category.color,
                 isPrivate: category.isPrivate,
                 isHiddenFromHome: category.isHiddenFromHome,
+                isSystemTrash: category.isSystemTrash,
                 sortOrder: index,
                 createdAt: category.timestamp
             )
@@ -64,6 +68,8 @@ enum DataExportImport {
                 createdAt: note.createdAt,
                 timestamp: note.timestamp,
                 categoryIndex: categoryIndex,
+                previousCategoryIndex: note.previousCategory.flatMap { categoryIndexMap[$0.persistentModelID] },
+                trashedAt: note.trashedAt,
                 attributedContentBase64: attributedBase64
             )
         }
@@ -91,7 +97,8 @@ enum DataExportImport {
                 color: categoryData.color,
                 sortOrder: categoryData.sortOrder,
                 isPrivate: categoryData.isPrivate,
-                isHiddenFromHome: categoryData.isHiddenFromHome ?? false
+                isHiddenFromHome: categoryData.isHiddenFromHome ?? false,
+                isSystemTrash: categoryData.isSystemTrash ?? false
             )
             category.timestamp = categoryData.createdAt
             context.insert(category)
@@ -108,6 +115,10 @@ enum DataExportImport {
             if let categoryIndex = noteData.categoryIndex, categoryIndex < createdCategories.count {
                 note.category = createdCategories[categoryIndex]
             }
+            if let previousCategoryIndex = noteData.previousCategoryIndex, previousCategoryIndex < createdCategories.count {
+                note.previousCategory = createdCategories[previousCategoryIndex]
+            }
+            note.trashedAt = noteData.trashedAt
             if let base64 = noteData.attributedContentBase64, let attributedData = Data(base64Encoded: base64) {
                 note.attributedContent = attributedData
             }
