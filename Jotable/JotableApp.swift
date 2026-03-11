@@ -110,18 +110,13 @@ class SceneDelegate: NSObject, UIWindowSceneDelegate {
 
 @main
 struct JotableApp: App {
-    private enum ModelContainerLoadState {
-        case available(ModelContainer)
-        case failed(String)
-    }
-
     #if os(macOS)
     @NSApplicationDelegateAdaptor(MacAppDelegate.self) var macAppDelegate
     #else
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     #endif
 
-    private static let modelContainerLoadState: ModelContainerLoadState = {
+    static let sharedModelContainer: ModelContainer = {
 
         // RESET DATA FIRST - before trying to create container
         //resetDataStore()
@@ -135,10 +130,10 @@ struct JotableApp: App {
             )
             let container = try ModelContainer(for: schema, configurations: [config])
             print("✅ Model container created successfully with CloudKit")
-            return .available(container)
+            return container
         } catch {
             print("❌ Failed to create ModelContainer: \(error)")
-            return .failed(error.localizedDescription)
+            fatalError("Could not create ModelContainer: \(error)")
         }
     }()
 
@@ -150,11 +145,52 @@ struct JotableApp: App {
 
     var body: some Scene {
         WindowGroup {
-            rootView(for: Self.modelContainerLoadState)
+            #if os(macOS)
+            ContentView(pastePlaintextTrigger: $pastePlaintextTrigger, isEditorActive: $isEditorActive)
+                .onOpenURL { url in
+                    AppActionRouter.handleIncomingURL(url)
+                }
+                .frame(minWidth: 800, minHeight: 400)
+                .onAppear {
+                    // Debug: Print items on app launch
+                    let context = Self.sharedModelContainer.mainContext
+                    do {
+                        let descriptor = FetchDescriptor<Item>()
+                        let items = try context.fetch(descriptor)
+                        print("🚀 App launched - Found \(items.count) existing items")
+                        CheckboxMigrator.runIfNeeded(context: context)
+                    } catch {
+                        print("❌ Failed to fetch items on launch: \(error)")
+                    }
+                }
+                .overlay {
+                    if isAboutPresented {
+                        AboutOverlayView(isPresented: $isAboutPresented)
+                    }
+                }
+            #else
+            ContentView(isEditorActive: $isEditorActive)
+                .onOpenURL { url in
+                    AppActionRouter.handleIncomingURL(url)
+                }
+                .onAppear {
+                    // Debug: Print items on app launch
+                    let context = Self.sharedModelContainer.mainContext
+                    do {
+                        let descriptor = FetchDescriptor<Item>()
+                        let items = try context.fetch(descriptor)
+                        print("🚀 App launched - Found \(items.count) existing items")
+                        CheckboxMigrator.runIfNeeded(context: context)
+                    } catch {
+                        print("❌ Failed to fetch items on launch: \(error)")
+                    }
+                }
+            #endif
         }
         #if os(macOS)
         .handlesExternalEvents(matching: Set(arrayLiteral: "newNote"))
         #endif
+        .modelContainer(Self.sharedModelContainer)
         #if os(macOS)
         .commands {
             SidebarCommands()
@@ -215,96 +251,5 @@ struct JotableApp: App {
             }
         }
         #endif
-    }
-
-    @ViewBuilder
-    private func rootView(for state: ModelContainerLoadState) -> some View {
-        switch state {
-        case .available(let container):
-            mainContentView(container: container)
-        case .failed(let errorMessage):
-            ModelContainerFailureView(errorMessage: errorMessage)
-                .frame(minWidth: 480, minHeight: 320)
-        }
-    }
-
-    @ViewBuilder
-    private func mainContentView(container: ModelContainer) -> some View {
-        #if os(macOS)
-        ContentView(pastePlaintextTrigger: $pastePlaintextTrigger, isEditorActive: $isEditorActive)
-            .onOpenURL { url in
-                AppActionRouter.handleIncomingURL(url)
-            }
-            .frame(minWidth: 800, minHeight: 400)
-            .onAppear {
-                runStartupDiagnostics(using: container)
-            }
-            .overlay {
-                if isAboutPresented {
-                    AboutOverlayView(isPresented: $isAboutPresented)
-                }
-            }
-            .modelContainer(container)
-        #else
-        ContentView(isEditorActive: $isEditorActive)
-            .onOpenURL { url in
-                AppActionRouter.handleIncomingURL(url)
-            }
-            .onAppear {
-                runStartupDiagnostics(using: container)
-            }
-            .modelContainer(container)
-        #endif
-    }
-
-    private func runStartupDiagnostics(using container: ModelContainer) {
-        let context = container.mainContext
-        do {
-            let descriptor = FetchDescriptor<Item>()
-            let items = try context.fetch(descriptor)
-            print("🚀 App launched - Found \(items.count) existing items")
-            CheckboxMigrator.runIfNeeded(context: context)
-        } catch {
-            print("❌ Failed to fetch items on launch: \(error)")
-        }
-    }
-}
-
-private struct ModelContainerFailureView: View {
-    let errorMessage: String
-
-    private var backgroundColor: Color {
-        #if os(macOS)
-        Color(nsColor: .windowBackgroundColor)
-        #else
-        Color(uiColor: .systemBackground)
-        #endif
-    }
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "exclamationmark.icloud")
-                .font(.system(size: 36))
-                .foregroundStyle(.secondary)
-
-            Text("Jotable couldn’t open your library.")
-                .font(.title3.weight(.semibold))
-
-            Text("The local SwiftData or iCloud-backed store failed to load. Your app didn’t crash, but editing is unavailable until the store opens successfully.")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 420)
-
-            Text(errorMessage)
-                .font(.footnote.monospaced())
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .padding(12)
-                .frame(maxWidth: 420, alignment: .leading)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(backgroundColor)
     }
 }
