@@ -1,10 +1,10 @@
+#if os(macOS)
 import Foundation
 import SwiftData
 import SwiftUI
 import UniformTypeIdentifiers
 
 struct ExportPackage: Codable {
-    let exportedAt: Date
     let categories: [ExportedCategory]
     let notes: [ExportedNote]
 }
@@ -71,7 +71,6 @@ enum DataExportImport {
         }
 
         let package = ExportPackage(
-            exportedAt: Date(),
             categories: exportedCategories,
             notes: exportedNotes
         )
@@ -140,3 +139,4 @@ struct NotesExportDocument: FileDocument {
         FileWrapper(regularFileWithContents: data)
     }
 }
+#endif

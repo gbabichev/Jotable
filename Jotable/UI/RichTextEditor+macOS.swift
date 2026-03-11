@@ -690,7 +690,6 @@ struct RichTextEditor: NSViewRepresentable {
         weak var textView: NSTextView?
         var pendingActiveColorFeedback: RichTextColor?
         var customTypingColor: NSColor?
-        var hasCustomTypingColor: Bool { customTypingColor != nil }
         var skipNextColorSampling = false
         var isSyncingFormattingState = false  // Prevent applyTypingAttributes during format sync
 
@@ -1107,7 +1106,7 @@ struct RichTextEditor: NSViewRepresentable {
             applyTypingAttributes(to: textView, highlightOverride: highlight)
         }
 
-        private func currentTypingAttributes(from textView: NSTextView?, highlightOverride: HighlighterColor? = nil) -> [NSAttributedString.Key: Any] {
+        private func currentTypingAttributes(from _: NSTextView?, highlightOverride: HighlighterColor? = nil) -> [NSAttributedString.Key: Any] {
             let components = effectiveColorComponents()
             let usingAutomatic = customTypingColor == nil && activeColor == .automatic
             let targetHighlight = highlightOverride ?? activeHighlighter
@@ -1530,25 +1529,6 @@ struct RichTextEditor: NSViewRepresentable {
             isProgrammaticUpdate = false
 
             return true
-        }
-
-        private func renumberLinesInTextView(_ textView: NSTextView, positions: [(range: NSRange, newNumber: Int)]) {
-            guard let storage = textView.textStorage else {
-                return
-            }
-
-            isProgrammaticUpdate = true
-
-            // Process renumbering in reverse order to avoid position shifting
-            for (range, newNumber) in positions.reversed() {
-                let newNumberText = "\(newNumber). "
-                let fontAttrs = currentTypingAttributes(from: textView)
-                let newNumberString = NSAttributedString(string: newNumberText, attributes: fontAttrs)
-                storage.replaceCharacters(in: range, with: newNumberString)
-            }
-
-            parent.text = NSAttributedString(attributedString: storage)
-            isProgrammaticUpdate = false
         }
 
         private func lineInfo(for insertionRange: NSRange, in textView: NSTextView) -> (lineStart: Int, lineRange: NSRange, lineContent: String)? {

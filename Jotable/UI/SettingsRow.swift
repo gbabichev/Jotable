@@ -8,6 +8,7 @@
 import SwiftUI
 // MARK: - Reusable building blocks
 
+#if os(iOS)
 struct SettingsRow<Control: View>: View {
     let title: String
     let subtitle: String?
@@ -38,3 +39,4 @@ struct SettingsRow<Control: View>: View {
         }
     }
 }
+#endif

@@ -7,38 +7,6 @@ import AppKit
 
 /// Handles auto-formatting features like auto-numbering, bullets, and checkboxes
 struct AutoFormatting {
-    /// Detects if a line starts with a number pattern (e.g., "1. ", "2. ")
-    /// Returns the next numbered line if content exists, or nil to remove numbering if blank
-    static func handleNumberedList(lineText: String) -> String? {
-        // Pattern: one or more digits followed by ". "
-        guard let match = lineText.range(of: #"^(\d+)\.\s"#, options: .regularExpression) else {
-            return nil
-        }
-
-        // Get the matched text (e.g., "1. ")
-        let matchedText = String(lineText[match])
-
-        // Extract just the number part by removing the ". " suffix
-        let numberPartWithDot = String(matchedText.dropLast(2))  // Remove ". "
-
-        // Get the text after the number pattern
-        let contentStart = match.upperBound
-        let contentAfterNumber = String(lineText[contentStart...]).trimmingCharacters(in: .whitespaces)
-
-        // If the line is blank after the number, return just newline (removes numbering)
-        if contentAfterNumber.isEmpty {
-            return "\n"
-        }
-
-        // Convert to Int and increment
-        if let number = Int(numberPartWithDot) {
-            let nextNumber = number + 1
-            return "\n\(nextNumber). "
-        }
-
-        return nil
-    }
-
     /// Detects if a line starts with a number pattern and handles renumbering of subsequent lines
     /// This version has access to the full text to renumber properly
     static func handleNumberedListWithRenumbering(lineText: String, fullText: String, insertionIndex: Int) -> (newText: String, renumberPositions: [(range: NSRange, newNumber: Int)])? {
@@ -246,6 +214,7 @@ struct AutoFormatting {
 
     /// Detects and converts checkbox patterns "[ ]" and "[x]" or "[X]" to CheckboxTextAttachment
     /// Returns true if checkboxes were found and converted
+    #if os(macOS)
     static func convertCheckboxPatterns(in attributedString: NSMutableAttributedString, spaceAttributes: [NSAttributedString.Key: Any]? = nil) -> Bool {
         var foundCheckbox = false
         let string = attributedString.string
@@ -309,6 +278,7 @@ struct AutoFormatting {
 
         return foundCheckbox
     }
+    #endif
 
     /// Gets information about the line containing the given range
     static func getLineInfo(for range: NSRange, in text: String) -> (range: NSRange, text: String)? {

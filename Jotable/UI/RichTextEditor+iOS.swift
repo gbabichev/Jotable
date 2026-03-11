@@ -4,7 +4,6 @@ import UIKit
 
 // Custom UITextView subclass to handle image pasting and pinch-to-zoom
 private class PastableTextView: UITextView {
-    private var imagePinchGesture: UIPinchGestureRecognizer?
     private var pinchingAttachment: ResizableImageAttachment?
     private var pinchingCharIndex: Int?
     private var initialPinchSize: CGSize?
@@ -23,7 +22,6 @@ private class PastableTextView: UITextView {
     private func setupPinchGesture() {
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
         addGestureRecognizer(pinch)
-        imagePinchGesture = pinch
     }
 
     @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
@@ -939,7 +937,7 @@ struct RichTextEditor: UIViewRepresentable {
             }
         }
 
-        private func currentTypingAttributes(from textView: UITextView?) -> [NSAttributedString.Key: Any] {
+        private func currentTypingAttributes(from _: UITextView?) -> [NSAttributedString.Key: Any] {
             let components = effectiveColorComponents()
             let usingAutomatic = customTypingColor == nil && activeColor == .automatic
 
@@ -1387,26 +1385,6 @@ struct RichTextEditor: UIViewRepresentable {
             return false  // We handled it
         }
 
-        private func renumberLinesInTextView(_ textView: UITextView, positions: [(range: NSRange, newNumber: Int)]) {
-            guard let mutableText = textView.attributedText?.mutableCopy() as? NSMutableAttributedString else {
-                return
-            }
-
-            isProgrammaticUpdate = true
-
-            // Process renumbering in reverse order to avoid position shifting
-            for (range, newNumber) in positions.reversed() {
-                let newNumberText = "\(newNumber). "
-                let fontAttrs = currentTypingAttributes(from: textView)
-                let newNumberString = NSAttributedString(string: newNumberText, attributes: fontAttrs)
-                mutableText.replaceCharacters(in: range, with: newNumberString)
-            }
-
-            textView.attributedText = mutableText
-            pushTextToParent(mutableText)
-            isProgrammaticUpdate = false
-        }
-
         private func lineInfo(for insertionRange: NSRange, in textView: UITextView) -> (lineStart: Int, lineRange: NSRange, lineContent: String)? {
             let fullText = textView.textStorage.string as NSString
             let boundedLocation = min(insertionRange.location, fullText.length)
@@ -1501,7 +1479,7 @@ struct RichTextEditor: UIViewRepresentable {
 
                 if lines.count > 1 {
                     // We have multiple lines - process each one
-                    insertCheckboxForMultipleLines(range: selectedRange, lines: lines)
+                    insertCheckboxForMultipleLines(range: selectedRange)
                 } else {
                     // Single line selected - use original behavior
                     insertCheckboxAtPosition(insertionRange: selectedRange)
@@ -1552,7 +1530,7 @@ struct RichTextEditor: UIViewRepresentable {
             textView.selectedRange = NSRange(location: newCursorPosition, length: 0)
         }
 
-        private func insertCheckboxForMultipleLines(range: NSRange, lines: [String]) {
+        private func insertCheckboxForMultipleLines(range: NSRange) {
             guard let textView = textView else { return }
             let baseFont = UIFont.systemFont(ofSize: activeFontSize.rawValue)
             let spaceAttrs: [NSAttributedString.Key: Any] = [.font: baseFont]
@@ -1656,7 +1634,7 @@ struct RichTextEditor: UIViewRepresentable {
 
                 if lines.count > 1 {
                     // Multiple lines selected
-                    insertDashForMultipleLines(range: selectedRange, lines: lines)
+                    insertDashForMultipleLines(range: selectedRange)
                 } else {
                     // Single line selected - use original behavior
                     insertDashAtPosition(insertionRange: selectedRange)
@@ -1690,7 +1668,7 @@ struct RichTextEditor: UIViewRepresentable {
             setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
         }
 
-        private func insertDashForMultipleLines(range: NSRange, lines: [String]) {
+        private func insertDashForMultipleLines(range: NSRange) {
             guard let textView = textView else { return }
             let fontAttrs = currentTypingAttributes(from: textView)
             let dashText = "- "
@@ -1785,7 +1763,7 @@ struct RichTextEditor: UIViewRepresentable {
 
                 if lines.count > 1 {
                     // Multiple lines selected
-                    insertBulletForMultipleLines(range: selectedRange, lines: lines)
+                    insertBulletForMultipleLines(range: selectedRange)
                 } else {
                     // Single line selected - use original behavior
                     insertBulletAtPosition(insertionRange: selectedRange)
@@ -1818,7 +1796,7 @@ struct RichTextEditor: UIViewRepresentable {
             setCursorPosition(NSRange(location: newCursorPosition, length: 0), in: textView)
         }
 
-        private func insertBulletForMultipleLines(range: NSRange, lines: [String]) {
+        private func insertBulletForMultipleLines(range: NSRange) {
             guard let textView = textView else { return }
             let fontAttrs = currentTypingAttributes(from: textView)
             let bulletText = "• "
@@ -1908,7 +1886,7 @@ struct RichTextEditor: UIViewRepresentable {
 
                 if lines.count > 1 {
                     // Multiple lines selected
-                    insertNumberingForMultipleLines(range: selectedRange, lines: lines)
+                    insertNumberingForMultipleLines(range: selectedRange)
                 } else {
                     // Single line selected - use original behavior
                     insertNumberingAtPosition(insertionRange: selectedRange)
@@ -1991,7 +1969,7 @@ struct RichTextEditor: UIViewRepresentable {
             }
         }
 
-        private func insertNumberingForMultipleLines(range: NSRange, lines: [String]) {
+        private func insertNumberingForMultipleLines(range: NSRange) {
             guard let textView = textView else { return }
             let fontAttrs = currentTypingAttributes(from: textView)
             let fullText = textView.textStorage.string as NSString
@@ -2256,9 +2234,9 @@ struct RichTextEditor: UIViewRepresentable {
                     let displayText = attributed.attributedSubstring(from: effectiveRange).string
                     let snapshot = LinkEditContext(
                         id: UUID(),
-                        range: LinkRangeSnapshot(location: effectiveRange.location, length: effectiveRange.length),
                         urlString: url.absoluteString,
-                        displayText: displayText
+                        displayText: displayText,
+                        range: LinkRangeSnapshot(location: effectiveRange.location, length: effectiveRange.length)
                     )
                     return snapshot
                 }

@@ -13,9 +13,11 @@ struct LinkRangeSnapshot: Equatable {
 /// Represents a pending link edit request coming from the platform editor.
 struct LinkEditContext: Equatable, Identifiable {
     let id: UUID
-    let range: LinkRangeSnapshot
     let urlString: String
     let displayText: String
+    #if !os(macOS)
+    let range: LinkRangeSnapshot
+    #endif
 }
 
 /// Payload used to insert or replace a link in the text editor.

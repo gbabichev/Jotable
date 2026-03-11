@@ -44,15 +44,6 @@ enum TimeInsertionFormat: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var menuTitle: String {
-        switch self {
-        case .twentyFourHour:
-            return "HH:MM"
-        case .twelveHour:
-            return "hh:mm:AM/PM"
-        }
-    }
-
     func formattedTime(from date: Date = Date()) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale.current

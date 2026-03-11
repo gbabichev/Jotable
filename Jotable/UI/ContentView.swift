@@ -289,6 +289,7 @@ struct ContentView: View {
                     }
                 }
 
+                #if os(iOS)
                 NotesToolbar(
                     isEditing: isEditing,
                     filteredItems: filteredItems,
@@ -302,6 +303,17 @@ struct ContentView: View {
                     selectAllItems: selectAllItems,
                     deselectAllItems: deselectAllItems
                 )
+                #else
+                NotesToolbar(
+                    isEditing: isEditing,
+                    filteredItems: filteredItems,
+                    selectedItemIDs: selectedItemIDs,
+                    deleteSelectedLabel: isViewingTrash ? "Delete Forever" : "Trash Selected",
+                    deleteSelectedSystemImage: isViewingTrash ? "trash.slash" : "trash",
+                    deleteSelectedItems: deleteSelectedItems,
+                    addItem: addItem
+                )
+                #endif
             }
             #if os(iOS)
             .environment(\.editMode, $editMode)
@@ -634,6 +646,7 @@ struct ContentView: View {
         }
     }
 
+    #if os(iOS)
     private func selectAllItems() {
         selectedItemIDs = Set(filteredItems.map { $0.persistentModelID })
     }
@@ -648,6 +661,7 @@ struct ContentView: View {
         return filteredItems.count == selectedIDs.count
             && filteredItems.allSatisfy { selectedIDs.contains($0.persistentModelID) }
     }
+    #endif
 
     // Manual reordering function - updates createdAt dates to maintain new order
     private func moveItems(from source: IndexSet, to destination: Int) {
@@ -916,6 +930,7 @@ struct ContentView: View {
         }
     }
 
+    #if os(macOS)
     private func deleteItems(offsets: IndexSet) {
         let itemsToDelete = offsets.map { filteredItems[$0] }
         if isViewingTrash {
@@ -924,6 +939,7 @@ struct ContentView: View {
             moveItemsToTrash(itemsToDelete)
         }
     }
+    #endif
 
     private func createPresentedBinding(for item: Item) -> Binding<Bool> {
         Binding(
@@ -1245,14 +1261,18 @@ private struct NotesToolbar: ToolbarContent {
     let isEditing: Bool
     let filteredItems: [Item]
     let selectedItemIDs: Set<PersistentIdentifier>
+    #if os(iOS)
     let allItemsIsEmpty: Bool
     let allFilteredItemsSelected: Bool
+    #endif
     let deleteSelectedLabel: String
     let deleteSelectedSystemImage: String
     let deleteSelectedItems: () -> Void
     let addItem: () -> Void
+    #if os(iOS)
     let selectAllItems: () -> Void
     let deselectAllItems: () -> Void
+    #endif
 
     var body: some ToolbarContent {
         let showSelectAll = isEditing && !filteredItems.isEmpty

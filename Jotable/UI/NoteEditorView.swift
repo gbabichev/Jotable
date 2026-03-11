@@ -10,7 +10,6 @@ struct NoteEditorView: View {
     @Bindable var item: Item
     @Environment(\.modelContext) private var modelContext
     @FocusState private var isTitleFocused: Bool
-    @State private var showingCategoryPicker = false
     #if os(macOS)
     @Binding var pastePlaintextTrigger: UUID?
     #endif
@@ -549,7 +548,7 @@ private struct NoteHeaderView: View {
 
 #if os(macOS)
 private extension View {
-    func addURLSheet(isPresented: Binding<Bool>, tempURLData: Binding<(String, String)?>) -> some View {
+    func addURLSheet(isPresented _: Binding<Bool>, tempURLData _: Binding<(String, String)?>) -> some View {
         self
     }
 

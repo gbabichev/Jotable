@@ -33,6 +33,7 @@ struct PasswordGeneratorView: View {
 #endif
     }
 
+    #if os(iOS)
     private var iosBody: some View {
         NavigationStack {
             ScrollView {
@@ -165,6 +166,7 @@ struct PasswordGeneratorView: View {
             }
         }
     }
+    #endif
 
 #if os(macOS)
     private var macBody: some View {
@@ -517,12 +519,14 @@ struct PasswordGeneratorView: View {
     }
 #endif
 
+    #if os(iOS)
     private func sectionHeader(_ title: String) -> some View {
         Text(title.uppercased())
             .font(.caption)
             .fontWeight(.semibold)
             .foregroundStyle(.secondary)
     }
+    #endif
 
     private var isGeneratorDisabled: Bool {
         mode == .strong && !(includeUppercase || includeLowercase || includeNumbers || includeSymbols)

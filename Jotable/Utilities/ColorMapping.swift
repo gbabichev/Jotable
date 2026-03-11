@@ -362,6 +362,7 @@ struct ColorMapping {
         identifier.hasPrefix(customPrefix)
     }
 
+    #if os(macOS)
     static func matchingRichTextColor(for color: PlatformColor) -> RichTextColor? {
 #if os(macOS)
         guard let match = matchingColorID(for: color) else { return nil }
@@ -370,4 +371,5 @@ struct ColorMapping {
 #endif
         return RichTextColor.from(id: match)
     }
+    #endif
 }

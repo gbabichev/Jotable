@@ -12,24 +12,14 @@ import AppKit
 #endif
 
 extension Notification.Name {
+    #if os(macOS)
     static let toggleBoldShortcut = Notification.Name("toggleBoldShortcut")
     static let toggleItalicShortcut = Notification.Name("toggleItalicShortcut")
     static let toggleUnderlineShortcut = Notification.Name("toggleUnderlineShortcut")
     static let importNotesRequested = Notification.Name("importNotesRequested")
     static let exportNotesRequested = Notification.Name("exportNotesRequested")
+    #endif
     static let createNewNoteRequested = Notification.Name("createNewNoteRequested")
-}
-
-// Environment key for tracking if an editor is active
-private struct EditorActiveKey: EnvironmentKey {
-    static let defaultValue = false
-}
-
-extension EnvironmentValues {
-    var isEditorActive: Bool {
-        get { self[EditorActiveKey.self] }
-        set { self[EditorActiveKey.self] = newValue }
-    }
 }
 
 private enum AppActionRouter {
