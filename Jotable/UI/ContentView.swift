@@ -131,11 +131,11 @@ struct ContentView: View {
         } else {
             items = items.filter { !$0.isInTrash }
 
-            // If searching, ignore category scope (search across all notes)
-            if searchText.isEmpty, let selectedCategory = selectedCategory {
+            // When a category is explicitly selected, keep search scoped to that category.
+            if let selectedCategory = selectedCategory {
                 items = items.filter { $0.category == selectedCategory }
             } else {
-                // When viewing "All Notes" or searching, hide notes from locked/hidden categories
+                // In All Notes, hide notes from locked/hidden/system categories.
                 items = items.filter { item in
                     guard let category = item.category else { return true }
                     return !category.isSystemTrash &&
