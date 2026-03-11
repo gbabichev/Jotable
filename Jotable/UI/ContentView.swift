@@ -43,6 +43,9 @@ struct ContentView: View {
     @State private var authErrorMessage = ""
     @State private var showingCategoryPickerForItem: Item?
     @State private var activeCloudSyncEventIDs: Set<UUID> = []
+    @State private var cloudKitEventObserver: NSObjectProtocol?
+    @State private var isCloudSyncIndicatorVisible = false
+    @State private var cloudSyncHideWorkItem: DispatchWorkItem?
     #if os(macOS)
     @State private var isExporting = false
     @State private var exportDocument = NotesExportDocument(data: Data())
@@ -115,10 +118,6 @@ struct ContentView: View {
         }
     }
 
-    private var isCloudSyncInProgress: Bool {
-        !activeCloudSyncEventIDs.isEmpty
-    }
-    
     // Filtered items based on selected category and search
     var filteredItems: [Item] {
         var items = allItems
@@ -284,12 +283,9 @@ struct ContentView: View {
             .navigationSubtitle("\(filteredItems.count) \(filteredItems.count == 1 ? "note" : "notes")")
             .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 400)
             .toolbar {
-                if isCloudSyncInProgress {
+                if isCloudSyncIndicatorVisible {
                     ToolbarItem(placement: .automatic) {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                            .help("Syncing with iCloud")
-                            .accessibilityLabel("Syncing with iCloud")
+                        CloudSyncToolbarIndicator()
                     }
                 }
 
@@ -344,6 +340,9 @@ struct ContentView: View {
             purgeExpiredTrash()
             setupCloudKitNotifications()
             restoreLastSelectedNoteIfNeeded()
+        }
+        .onDisappear {
+            tearDownCloudKitNotifications()
         }
         .onReceive(NotificationCenter.default.publisher(for: .createNewNoteRequested)) { _ in
             addItem()
@@ -958,7 +957,9 @@ struct ContentView: View {
     }
 
     private func setupCloudKitNotifications() {
-        NotificationCenter.default.addObserver(
+        guard cloudKitEventObserver == nil else { return }
+
+        cloudKitEventObserver = NotificationCenter.default.addObserver(
             forName: NSPersistentCloudKitContainer.eventChangedNotification,
             object: nil,
             queue: .main
@@ -968,11 +969,7 @@ struct ContentView: View {
                     let eventIdentifier = event.identifier
                     let eventHasEnded = event.endDate != nil
                     Task { @MainActor in
-                        if eventHasEnded {
-                            self.activeCloudSyncEventIDs.remove(eventIdentifier)
-                        } else {
-                            self.activeCloudSyncEventIDs.insert(eventIdentifier)
-                        }
+                        updateCloudSyncIndicator(for: eventIdentifier, hasEnded: eventHasEnded)
                     }
                 }
 
@@ -993,6 +990,38 @@ struct ContentView: View {
                     print("   ⚠️ CloudKit error: \(error.localizedDescription)")
                 }
             }
+        }
+    }
+
+    private func tearDownCloudKitNotifications() {
+        guard let cloudKitEventObserver else { return }
+        NotificationCenter.default.removeObserver(cloudKitEventObserver)
+        self.cloudKitEventObserver = nil
+        activeCloudSyncEventIDs.removeAll()
+        cloudSyncHideWorkItem?.cancel()
+        cloudSyncHideWorkItem = nil
+        isCloudSyncIndicatorVisible = false
+    }
+
+    private func updateCloudSyncIndicator(for eventIdentifier: UUID, hasEnded: Bool) {
+        if hasEnded {
+            activeCloudSyncEventIDs.remove(eventIdentifier)
+        } else {
+            activeCloudSyncEventIDs.insert(eventIdentifier)
+        }
+
+        cloudSyncHideWorkItem?.cancel()
+        cloudSyncHideWorkItem = nil
+
+        if activeCloudSyncEventIDs.isEmpty {
+            let workItem = DispatchWorkItem {
+                guard self.activeCloudSyncEventIDs.isEmpty else { return }
+                self.isCloudSyncIndicatorVisible = false
+            }
+            cloudSyncHideWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: workItem)
+        } else {
+            isCloudSyncIndicatorVisible = true
         }
     }
 
@@ -1409,6 +1438,37 @@ struct NoteRowView: View {
         .padding(.vertical, 4)
         .contentShape(Rectangle())
         .id(item.persistentModelID)
+    }
+}
+
+private struct CloudSyncToolbarIndicator: View {
+    #if os(macOS)
+    @State private var isRotating = false
+    #endif
+
+    var body: some View {
+        Group {
+            #if os(macOS)
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 17, weight: .medium))
+                .rotationEffect(.degrees(isRotating ? 360 : 0))
+                .frame(width: 24, height: 24, alignment: .center)
+                .onAppear {
+                    guard !isRotating else { return }
+                    withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
+                        isRotating = true
+                    }
+                }
+                .onDisappear {
+                    isRotating = false
+                }
+            #else
+            ProgressView()
+                .progressViewStyle(.circular)
+            #endif
+        }
+        .help("Syncing with iCloud")
+        .accessibilityLabel("Syncing with iCloud")
     }
 }
 
