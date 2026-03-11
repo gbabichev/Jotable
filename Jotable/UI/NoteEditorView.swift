@@ -486,7 +486,7 @@ private struct NoteHeaderView: View {
 
     private var categorySelectionBinding: Binding<Category?> {
         Binding(
-            get: { item.category?.isSystemTrash == true ? nil : item.category },
+            get: { item.category },
             set: { newCategory in
                 item.category = newCategory
 

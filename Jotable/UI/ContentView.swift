@@ -88,10 +88,6 @@ struct ContentView: View {
         }
     }
 
-    private var trashCategory: Category? {
-        categories.first(where: { $0.isSystemTrash })
-    }
-
     private var visibleCategories: [Category] {
         categories.filter { !$0.isSystemTrash }
     }
@@ -135,11 +131,10 @@ struct ContentView: View {
             if let selectedCategory = selectedCategory {
                 items = items.filter { $0.category == selectedCategory }
             } else {
-                // In All Notes, hide notes from locked/hidden/system categories.
+                // In All Notes, hide notes from locked/hidden categories.
                 items = items.filter { item in
                     guard let category = item.category else { return true }
-                    return !category.isSystemTrash &&
-                        !lockedCategoryIDs.contains(category.id) &&
+                    return !lockedCategoryIDs.contains(category.id) &&
                         !hiddenCategoryIDs.contains(category.id)
                 }
             }
@@ -163,8 +158,7 @@ struct ContentView: View {
         return allItems.filter { item in
             guard !item.isInTrash else { return false }
             guard let category = item.category else { return true }
-            return !category.isSystemTrash &&
-                !lockedCategoryIDs.contains(category.id) &&
+            return !lockedCategoryIDs.contains(category.id) &&
                 !hiddenCategoryIDs.contains(category.id)
         }.count
     }
@@ -349,7 +343,7 @@ struct ContentView: View {
         }
 #endif
         .onAppear {
-            ensureTrashCategoryExists()
+            cleanupLegacyTrashCategories()
             purgeExpiredTrash()
             setupCloudKitNotifications()
             restoreLastSelectedNoteIfNeeded()
@@ -394,7 +388,7 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, newPhase in
             // When app becomes active, check if authentication has expired
             if newPhase == .active {
-                ensureTrashCategoryExists()
+                cleanupLegacyTrashCategories()
                 purgeExpiredTrash()
                 if !isAuthenticationValid {
                     // Authentication expired - clear it and revert to All Notes if viewing private category
@@ -1042,61 +1036,41 @@ struct ContentView: View {
         }
     }
 
-    private func fetchTrashCategory() -> Category? {
-        let descriptor = FetchDescriptor<Category>(
-            predicate: #Predicate { $0.isSystemTrash == true }
-        )
-        return try? modelContext.fetch(descriptor).first
-    }
+    private func cleanupLegacyTrashCategories() {
+        let legacyTrashCategories = categories.filter { $0.isSystemTrash }
+        guard !legacyTrashCategories.isEmpty else { return }
 
-    private func ensureTrashCategoryExists() {
-        guard trashCategory == nil, fetchTrashCategory() == nil else { return }
+        let legacyTrashIDs = Set(legacyTrashCategories.map(\.id))
 
-        let trash = Category(
-            name: Category.trashName,
-            color: "gray",
-            sortOrder: (visibleCategories.map(\.sortOrder).max() ?? -1) + 1,
-            isSystemTrash: true
-        )
-        modelContext.insert(trash)
+        if case .category(let selectedCategory) = sidebarSelection, legacyTrashIDs.contains(selectedCategory.id) {
+            sidebarSelection = .allNotes
+            selectedItemIDs.removeAll()
+        }
+
+        for item in allItems {
+            if let category = item.category, legacyTrashIDs.contains(category.id) {
+                item.category = nil
+            }
+
+            if let previousCategory = item.previousCategory, legacyTrashIDs.contains(previousCategory.id) {
+                item.previousCategory = nil
+            }
+        }
+
+        for category in legacyTrashCategories {
+            modelContext.delete(category)
+        }
 
         do {
             try modelContext.save()
+            print("💾 Removed \(legacyTrashCategories.count) legacy Trash categories")
         } catch {
-            print("❌ Failed to create Trash category: \(error)")
-        }
-    }
-
-    private func resolvedTrashCategory() -> Category? {
-        if let trashCategory {
-            return trashCategory
-        }
-
-        if let storedTrashCategory = fetchTrashCategory() {
-            return storedTrashCategory
-        }
-
-        let trash = Category(
-            name: Category.trashName,
-            color: "gray",
-            sortOrder: (visibleCategories.map(\.sortOrder).max() ?? -1) + 1,
-            isSystemTrash: true
-        )
-        modelContext.insert(trash)
-
-        do {
-            try modelContext.save()
-            return trash
-        } catch {
-            print("❌ Failed to create Trash category: \(error)")
-            modelContext.delete(trash)
-            return nil
+            print("❌ Failed to remove legacy Trash categories: \(error)")
         }
     }
 
     private func moveItemToTrash(_ item: Item) {
         guard !item.isInTrash else { return }
-        guard let trash = resolvedTrashCategory() else { return }
 
         if selectedItemIDs.contains(item.persistentModelID) {
             selectedItemIDs.remove(item.persistentModelID)
@@ -1104,8 +1078,8 @@ struct ContentView: View {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             withAnimation {
-                item.previousCategory = item.category?.isSystemTrash == true ? nil : item.category
-                item.category = trash
+                item.previousCategory = item.category
+                item.category = nil
                 item.trashedAt = Date()
                 item.timestamp = Date()
 
@@ -1121,14 +1095,13 @@ struct ContentView: View {
 
     private func moveItemsToTrash(_ items: [Item]) {
         guard !items.isEmpty else { return }
-        guard let trash = resolvedTrashCategory() else { return }
 
         selectedItemIDs.removeAll()
 
         withAnimation {
             for item in items where !item.isInTrash {
-                item.previousCategory = item.category?.isSystemTrash == true ? nil : item.category
-                item.category = trash
+                item.previousCategory = item.category
+                item.category = nil
                 item.trashedAt = Date()
                 item.timestamp = Date()
             }
@@ -1190,8 +1163,7 @@ struct ContentView: View {
         guard item.isInTrash else { return }
 
         withAnimation {
-            let restoreCategory = item.previousCategory?.isSystemTrash == true ? nil : item.previousCategory
-            item.category = restoreCategory
+            item.category = item.previousCategory
             item.previousCategory = nil
             item.trashedAt = nil
             item.timestamp = Date()
