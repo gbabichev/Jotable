@@ -42,6 +42,7 @@ struct ContentView: View {
     @State private var showAuthError = false
     @State private var authErrorMessage = ""
     @State private var showingCategoryPickerForItem: Item?
+    @State private var activeCloudSyncEventIDs: Set<UUID> = []
     #if os(macOS)
     @State private var isExporting = false
     @State private var exportDocument = NotesExportDocument(data: Data())
@@ -112,6 +113,10 @@ struct ContentView: View {
         case .allNotes, .none:
             return "All Notes"
         }
+    }
+
+    private var isCloudSyncInProgress: Bool {
+        !activeCloudSyncEventIDs.isEmpty
     }
     
     // Filtered items based on selected category and search
@@ -279,6 +284,15 @@ struct ContentView: View {
             .navigationSubtitle("\(filteredItems.count) \(filteredItems.count == 1 ? "note" : "notes")")
             .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 400)
             .toolbar {
+                if isCloudSyncInProgress {
+                    ToolbarItem(placement: .automatic) {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                            .help("Syncing with iCloud")
+                            .accessibilityLabel("Syncing with iCloud")
+                    }
+                }
+
                 NotesToolbar(
                     isEditing: isEditing,
                     filteredItems: filteredItems,
@@ -950,6 +964,18 @@ struct ContentView: View {
             queue: .main
         ) { notification in
             if let event = notification.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey] as? NSPersistentCloudKitContainer.Event {
+                if event.type == .import || event.type == .export {
+                    let eventIdentifier = event.identifier
+                    let eventHasEnded = event.endDate != nil
+                    Task { @MainActor in
+                        if eventHasEnded {
+                            self.activeCloudSyncEventIDs.remove(eventIdentifier)
+                        } else {
+                            self.activeCloudSyncEventIDs.insert(eventIdentifier)
+                        }
+                    }
+                }
+
                 //print("📱 CloudKit Event: \(event.type)")
 
                 switch event.type {
