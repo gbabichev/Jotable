@@ -57,17 +57,14 @@ private enum AppActionRouter {
 
         if let existingWindow = NSApp.windows.first(where: { $0.canBecomeMain }) {
             existingWindow.makeKeyAndOrderFront(nil)
-            NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
             postPasswordGeneratorRequest()
             return
         }
 
         if !NSWorkspace.shared.open(generatePasswordURL) {
-            NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
             postPasswordGeneratorRequest()
         }
         #else
-        NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
         postPasswordGeneratorRequest()
         #endif
     }
@@ -76,7 +73,6 @@ private enum AppActionRouter {
         if url.absoluteString == newNoteURL.absoluteString {
             NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
         } else if url.absoluteString == generatePasswordURL.absoluteString {
-            NotificationCenter.default.post(name: .createNewNoteRequested, object: nil)
             postPasswordGeneratorRequest()
         }
     }
