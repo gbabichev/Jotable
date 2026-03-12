@@ -61,6 +61,18 @@ Just a clean, focused space for your thoughts.
 
 ## 📝 Changelog
 
+### 1.3.0
+- Added:
+  - Recently Deleted support. When notes are deleted, they move to 'Trash'. After 30 days, notes will automatically delete. Notes can be recovered from Trash. 
+  - Mac - Spruced up Password Generator.
+  - Access to Password Generator available from a right click of the App Icon in the Dock on Mac, and from the Home Screen on iOS.
+  - iCloud sync indicator.
+
+- Fixed:
+  - Mac "New Note" shortcut was not working properly if app window was closed.
+  - Adding a dash, bullet, number, or checkbox and inserting a new line would delete the line. 
+  - Inserting images is more consistent. 
+
 ### 1.2.2
 - Fixed
   - Undo not working properly in certain conditions. 
