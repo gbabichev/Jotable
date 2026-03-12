@@ -46,6 +46,7 @@ struct ContentView: View {
     @State private var cloudKitEventObserver: NSObjectProtocol?
     @State private var isCloudSyncIndicatorVisible = false
     @State private var cloudSyncHideWorkItem: DispatchWorkItem?
+    @State private var passwordGeneratorTargetNoteID: UUID?
     #if os(macOS)
     @State private var isExporting = false
     @State private var exportDocument = NotesExportDocument(data: Data())
@@ -318,10 +319,19 @@ struct ContentView: View {
             NavigationStack {
                 if let selectedItem = primarySelectedItem {
                     #if os(macOS)
-                    NoteEditorView(item: selectedItem, pastePlaintextTrigger: $pastePlaintextTrigger, isEditorActive: $isEditorActive)
+                    NoteEditorView(
+                        item: selectedItem,
+                        pastePlaintextTrigger: $pastePlaintextTrigger,
+                        isEditorActive: $isEditorActive,
+                        passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID
+                    )
                         .id(selectedItem.id) // Force view recreation when switching notes
                     #else
-                    NoteEditorView(item: selectedItem, isEditorActive: $isEditorActive)
+                    NoteEditorView(
+                        item: selectedItem,
+                        isEditorActive: $isEditorActive,
+                        passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID
+                    )
                         .id(selectedItem.id) // Force view recreation when switching notes
                     #endif
                 } else {
@@ -352,7 +362,10 @@ struct ContentView: View {
             tearDownCloudKitNotifications()
         }
         .onReceive(NotificationCenter.default.publisher(for: .createNewNoteRequested)) { _ in
-            addItem()
+            handleExternalNewNoteRequest()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openPasswordGeneratorRequested)) { _ in
+            handleExternalPasswordGeneratorRequest()
         }
         #if os(macOS)
         .onReceive(NotificationCenter.default.publisher(for: .exportNotesRequested)) { _ in
@@ -900,7 +913,33 @@ struct ContentView: View {
         }
     }
 
-    private func addItem() {
+    private func prepareExternalEditorPresentation() {
+        if isViewingTrash {
+            sidebarSelection = .allNotes
+        }
+
+        if !searchText.isEmpty {
+            searchText = ""
+        }
+
+        #if os(iOS)
+        editMode = .inactive
+        #endif
+    }
+
+    private func handleExternalNewNoteRequest() {
+        prepareExternalEditorPresentation()
+        addItem()
+    }
+
+    private func handleExternalPasswordGeneratorRequest() {
+        prepareExternalEditorPresentation()
+        guard let newItem = createItem() else { return }
+        passwordGeneratorTargetNoteID = newItem.id
+    }
+
+    @discardableResult
+    private func createItem() -> Item? {
         // Create date formatter for the title
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "EEEE, M/d/yy"
@@ -920,9 +959,15 @@ struct ContentView: View {
             print("💾 New item created and saved - CloudKit sync queued")
             // Set selection immediately
             selectedItemIDs = [newItem.persistentModelID]
+            return newItem
         } catch {
             print("❌ Failed to save new item: \(error)")
+            return nil
         }
+    }
+
+    private func addItem() {
+        _ = createItem()
     }
 
     #if os(macOS)

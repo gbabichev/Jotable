@@ -14,6 +14,7 @@ struct NoteEditorView: View {
     @Binding var pastePlaintextTrigger: UUID?
     #endif
     @Binding var isEditorActive: Bool
+    @Binding var passwordGeneratorTargetNoteID: UUID?
     @State private var richText = AttributedTextWrapper(value: NSAttributedString(string: ""))
     @State private var activeColor: RichTextColor = .automatic
     @State private var activeHighlighter: HighlighterColor = .none
@@ -87,9 +88,18 @@ struct NoteEditorView: View {
                 isUnderlined.toggle()
             }
 #endif
-            .onReceive(NotificationCenter.default.publisher(for: .openPasswordGeneratorRequested)) { _ in
-                showingPasswordGenerator = true
+            .onAppear {
+                presentPasswordGeneratorIfNeeded()
             }
+            .onChange(of: passwordGeneratorTargetNoteID) { _, _ in
+                presentPasswordGeneratorIfNeeded()
+            }
+    }
+
+    private func presentPasswordGeneratorIfNeeded() {
+        guard passwordGeneratorTargetNoteID == item.id else { return }
+        showingPasswordGenerator = true
+        passwordGeneratorTargetNoteID = nil
     }
 
     private var richTextEditorView: some View {
