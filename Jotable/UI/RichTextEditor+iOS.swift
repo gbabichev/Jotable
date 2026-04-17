@@ -8,6 +8,18 @@ private class PastableTextView: UITextView {
     private var pinchingCharIndex: Int?
     private var initialPinchSize: CGSize?
     private var hasPendingImageResizeCommit = false
+    var extraBottomPadding: CGFloat = 0 {
+        didSet {
+            guard oldValue != extraBottomPadding else { return }
+            var inset = textContainerInset
+            inset.bottom = extraBottomPadding
+            textContainerInset = inset
+
+            var indicatorInsets = verticalScrollIndicatorInsets
+            indicatorInsets.bottom = extraBottomPadding
+            verticalScrollIndicatorInsets = indicatorInsets
+        }
+    }
 
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
@@ -279,12 +291,14 @@ struct RichTextEditor: UIViewRepresentable {
         textView.allowsEditingTextAttributes = false
         context.coordinator.textView = textView
         context.coordinator.applyTypingAttributes(to: textView)
+        context.coordinator.updateBottomBuffer(for: textView)
 
         return textView
     }
 
     func updateUIView(_ uiView: UITextView, context: Context) {
         context.coordinator.textView = uiView
+        context.coordinator.updateBottomBuffer(for: uiView)
 
         // CRITICAL: Skip most updateUIView calls during rapid feedback to prevent native format sheet freeze
         // The native color/font sheet causes SwiftUI to call updateUIView thousands of times per second
@@ -607,6 +621,13 @@ struct RichTextEditor: UIViewRepresentable {
             self.isItalic = parent.isItalic
             self.isUnderlined = parent.isUnderlined
             self.isStrikethrough = parent.isStrikethrough
+        }
+
+        func updateBottomBuffer(for textView: UITextView) {
+            guard let pastableTextView = textView as? PastableTextView else { return }
+            let font = textView.font ?? UIFont.systemFont(ofSize: activeFontSize.rawValue)
+            let lineHeight = font.lineHeight
+            pastableTextView.extraBottomPadding = lineHeight * 8
         }
 
         func textViewDidChange(_ textView: UITextView) {

@@ -10,6 +10,7 @@ private final class DynamicColorTextView: NSTextView {
     var onPaste: (() -> Void)?
     var onImageResize: ((ResizableImageAttachment) -> Void)?
     var isUnderlinedManually = false  // Track underline state for native menu toggles (which don't update typingAttributes)
+    var extraBottomPadding: CGFloat = 0
 
     // Image resize tracking
     private var selectedImageAttachment: ResizableImageAttachment?
@@ -18,6 +19,7 @@ private final class DynamicColorTextView: NSTextView {
     private var hasPendingImageResizeCommit = false
     private var resizeStartPoint: NSPoint = .zero
     private var resizeStartSize: NSSize = .zero
+    private var isAdjustingFrame = false
 
     func forceFullRedraw() {
         if let layoutManager = layoutManager {
@@ -31,6 +33,25 @@ private final class DynamicColorTextView: NSTextView {
     override func didChangeText() {
         super.didChangeText()
         forceFullRedraw()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        guard !isAdjustingFrame else {
+            super.setFrameSize(newSize)
+            return
+        }
+        guard extraBottomPadding > 0 else {
+            super.setFrameSize(newSize)
+            return
+        }
+
+        isAdjustingFrame = true
+        var adjusted = newSize
+        if abs(newSize.height - frame.height) >= 0.5 {
+            adjusted.height += extraBottomPadding
+        }
+        super.setFrameSize(adjusted)
+        isAdjustingFrame = false
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -499,6 +520,7 @@ struct RichTextEditor: NSViewRepresentable {
         scrollView.documentView = textView
         context.coordinator.textView = textView
         context.coordinator.applyTypingAttributes(to: textView)
+        context.coordinator.updateBottomBuffer(for: textView)
 
         // Initialize manual formatting state tracking for underline
         // (strikethrough is only toggled via toolbar, so it's always read from typingAttributes)
@@ -530,6 +552,7 @@ struct RichTextEditor: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = context.coordinator.textView else { return }
+        context.coordinator.updateBottomBuffer(for: textView)
         let now = Date()
         let timeSinceLastUpdate = now.timeIntervalSince(context.coordinator.lastUpdateNSViewTime)
         if timeSinceLastUpdate < 0.05 && context.coordinator.lastUpdateNSViewText.isEqual(to: text) {
@@ -738,6 +761,14 @@ struct RichTextEditor: NSViewRepresentable {
                 return (customTypingColor, identifier)
             }
             return (activeColor.nsColor, activeColor.id)
+        }
+
+        func updateBottomBuffer(for textView: NSTextView) {
+            guard let dynamicTextView = textView as? DynamicColorTextView,
+                  let layoutManager = dynamicTextView.layoutManager else { return }
+            let font = dynamicTextView.font ?? NSFont.systemFont(ofSize: activeFontSize.rawValue)
+            let lineHeight = layoutManager.defaultLineHeight(for: font)
+            dynamicTextView.extraBottomPadding = lineHeight * 8
         }
 
         private func registerUndoSnapshot(for textView: NSTextView,
