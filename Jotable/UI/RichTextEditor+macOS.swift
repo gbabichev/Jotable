@@ -19,6 +19,20 @@ private final class DynamicColorTextView: NSTextView {
     private var resizeStartPoint: NSPoint = .zero
     private var resizeStartSize: NSSize = .zero
 
+    func forceFullRedraw() {
+        if let layoutManager = layoutManager {
+            let fullRange = NSRange(location: 0, length: textStorage?.length ?? 0)
+            layoutManager.invalidateDisplay(forCharacterRange: fullRange)
+        }
+        needsDisplay = true
+        enclosingScrollView?.contentView.needsDisplay = true
+    }
+
+    override func didChangeText() {
+        super.didChangeText()
+        forceFullRedraw()
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         onAppearanceChange?()
@@ -541,6 +555,7 @@ struct RichTextEditor: NSViewRepresentable {
                 textView.textStorage?.setAttributedString(text)
                 // Restore cursor position after updating text
                 textView.setSelectedRange(cursorPosition)
+                (textView    as? DynamicColorTextView)?.forceFullRedraw()
 
                 context.coordinator.isProgrammaticUpdate = false
                 context.coordinator.applyTypingAttributes(to: textView)
@@ -751,6 +766,7 @@ struct RichTextEditor: NSViewRepresentable {
                 targetTextView.setSelectedRange(selection)
                 self.applyTypingAttributes(to: targetTextView)
                 self.updateTypingAttributesHighlight(targetTextView)
+                (targetTextView as? DynamicColorTextView)?.forceFullRedraw()
                 self.pushTextToParent(snapshot)
                 self.isProgrammaticUpdate = false
             }
