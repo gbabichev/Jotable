@@ -104,6 +104,10 @@ struct ContentView: View {
         allItems.filter { $0.isInTrash }.count
     }
 
+    private var trashItems: [Item] {
+        allItems.filter { $0.isInTrash }
+    }
+
     private var currentNavigationTitle: String {
         switch sidebarSelection {
         case .trash:
@@ -519,6 +523,14 @@ struct ContentView: View {
                 isHiddenFromHome: false
             )
             .tag(SidebarSelection.trash)
+            .contextMenu {
+                Button(role: .destructive) {
+                    emptyTrash()
+                } label: {
+                    Label("Empty Trash", systemImage: "trash.slash")
+                }
+                .disabled(trashItems.isEmpty)
+            }
         }
         
         // Categories section
@@ -1215,6 +1227,10 @@ struct ContentView: View {
                 print("❌ Failed to permanently delete selected items: \(error)")
             }
         }
+    }
+
+    private func emptyTrash() {
+        permanentlyDeleteItems(trashItems)
     }
 
     private func restoreItemFromTrash(_ item: Item) {
