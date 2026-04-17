@@ -278,12 +278,13 @@ struct ContentView: View {
             .navigationSubtitle("\(filteredItems.count) \(filteredItems.count == 1 ? "note" : "notes")")
             .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 400)
             .toolbar {
+                #if !os(macOS)
                 if isCloudSyncIndicatorVisible {
                     ToolbarItem(placement: .automatic) {
                         CloudSyncToolbarIndicator()
                     }
-                    //ToolbarSpacer(.fixed, placement: .automatic)
                 }
+                #endif
 
                 #if os(iOS)
                 NotesToolbar(
@@ -352,6 +353,18 @@ struct ContentView: View {
                 .padding(12)
         }
 #endif
+        #if os(macOS)
+        .overlay(alignment: .bottomLeading) {
+            if isCloudSyncIndicatorVisible {
+                CloudSyncToolbarIndicator()
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(16)
+                    .transition(.opacity)
+            }
+        }
+        #endif
         .onAppear {
             cleanupLegacyTrashCategories()
             purgeExpiredTrash()

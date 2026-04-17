@@ -516,21 +516,35 @@ struct RichTextEditor: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = context.coordinator.textView else { return }
-        let currentText = textView.attributedString()
-        let isEditingText = textView.window?.firstResponder === textView
-        if !context.coordinator.isProgrammaticUpdate,
-           !isEditingText,
-           !text.isEqual(to: currentText) {
-            context.coordinator.isProgrammaticUpdate = true
+        let now = Date()
+        let timeSinceLastUpdate = now.timeIntervalSince(context.coordinator.lastUpdateNSViewTime)
+        if timeSinceLastUpdate < 0.05 && context.coordinator.lastUpdateNSViewText.isEqual(to: text) {
+            return
+        }
 
-            // Save cursor position before updating text
-            let cursorPosition = textView.selectedRange
-            textView.textStorage?.setAttributedString(text)
-            // Restore cursor position after updating text
-            textView.setSelectedRange(cursorPosition)
+        context.coordinator.lastUpdateNSViewTime = now
+        context.coordinator.lastUpdateNSViewText = text
 
-            context.coordinator.isProgrammaticUpdate = false
-            context.coordinator.applyTypingAttributes(to: textView)
+        if !context.coordinator.isProgrammaticUpdate {
+            let currentText = textView.attributedString()
+            let isEditingText = textView.window?.firstResponder === textView
+            let timeSinceLastChange = Date().timeIntervalSinceReferenceDate - context.coordinator.lastTextDidChangeTime
+            let isRapidFeedback = timeSinceLastChange < 0.01
+
+            if isRapidFeedback && text.string == currentText.string {
+                context.coordinator.applyTypingAttributes(to: textView)
+            } else if !isEditingText && !text.isEqual(to: currentText) {
+                context.coordinator.isProgrammaticUpdate = true
+
+                // Save cursor position before updating text
+                let cursorPosition = textView.selectedRange
+                textView.textStorage?.setAttributedString(text)
+                // Restore cursor position after updating text
+                textView.setSelectedRange(cursorPosition)
+
+                context.coordinator.isProgrammaticUpdate = false
+                context.coordinator.applyTypingAttributes(to: textView)
+            }
         }
 
         if context.coordinator.activeColor != activeColor {
@@ -692,6 +706,16 @@ struct RichTextEditor: NSViewRepresentable {
         var customTypingColor: NSColor?
         var skipNextColorSampling = false
         var isSyncingFormattingState = false  // Prevent applyTypingAttributes during format sync
+        var lastTextDidChangeTime: TimeInterval = 0
+        var lastUpdateNSViewTime: Date = .distantPast
+        var lastUpdateNSViewText: NSAttributedString = NSAttributedString()
+
+        private func pushTextToParent(_ text: NSAttributedString) {
+            let snapshot = NSAttributedString(attributedString: text)
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.text = snapshot
+            }
+        }
 
         private func effectiveColorComponents() -> (color: NSColor, id: String?) {
             if let customTypingColor {
@@ -727,7 +751,7 @@ struct RichTextEditor: NSViewRepresentable {
                 targetTextView.setSelectedRange(selection)
                 self.applyTypingAttributes(to: targetTextView)
                 self.updateTypingAttributesHighlight(targetTextView)
-                self.parent.text = snapshot
+                self.pushTextToParent(snapshot)
                 self.isProgrammaticUpdate = false
             }
 
@@ -930,6 +954,8 @@ struct RichTextEditor: NSViewRepresentable {
                 return
             }
 
+            lastTextDidChangeTime = Date().timeIntervalSinceReferenceDate
+
             syncColorState(with: textView, sampleFromText: true)
             syncFormattingState(with: textView)
 
@@ -940,7 +966,7 @@ struct RichTextEditor: NSViewRepresentable {
             }
 
             let updatedText = textView.attributedString()
-            parent.text = updatedText
+            pushTextToParent(updatedText)
         }
 
         func textView(_ textView: NSTextView,
@@ -963,15 +989,6 @@ struct RichTextEditor: NSViewRepresentable {
             syncFormattingState(with: textView)
             applyTypingAttributes(to: textView)
             syncColorState(with: textView, sampleFromText: false)
-
-            // Only update parent.text if the content has actually changed
-            // Selection changes alone should not trigger a binding update
-            if !isProgrammaticUpdate {
-                let currentText = textView.attributedString()
-                if !currentText.isEqual(to: parent.text) {
-                    parent.text = currentText
-                }
-            }
         }
 
         func apply(color: RichTextColor, to textView: NSTextView) {
