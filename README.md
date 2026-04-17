@@ -61,6 +61,13 @@ Just a clean, focused space for your thoughts.
 
 ## 📝 Changelog
 
+### 1.3.1
+- Added:
+  - "Empty Trash" context menu
+  - Padding to the bottom of the editor, so when typing on the last line its easier to see. 
+- Fixed: 
+  - Improved text editor on Mac to prevent ghosting in edge cases. 
+
 ### 1.3.0
 - Added:
   - Recently Deleted support. When notes are deleted, they move to 'Trash'. After 30 days, notes will automatically delete. Notes can be recovered from Trash. 
