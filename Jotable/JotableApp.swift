@@ -18,6 +18,7 @@ extension Notification.Name {
     static let toggleUnderlineShortcut = Notification.Name("toggleUnderlineShortcut")
     static let importNotesRequested = Notification.Name("importNotesRequested")
     static let exportNotesRequested = Notification.Name("exportNotesRequested")
+    static let toggleEditorFocusRequested = Notification.Name("toggleEditorFocusRequested")
     #endif
     static let createNewNoteRequested = Notification.Name("createNewNoteRequested")
     static let openPasswordGeneratorRequested = Notification.Name("openPasswordGeneratorRequested")
@@ -198,12 +199,17 @@ struct JotableApp: App {
     @State private var pastePlaintextTrigger: UUID?
     @State private var isAboutPresented = false
     #endif
+    @State private var isEditorExpanded = false
     @State private var isEditorActive = false
 
     var body: some Scene {
         WindowGroup {
             #if os(macOS)
-            ContentView(pastePlaintextTrigger: $pastePlaintextTrigger, isEditorActive: $isEditorActive)
+            ContentView(
+                pastePlaintextTrigger: $pastePlaintextTrigger,
+                isEditorExpanded: $isEditorExpanded,
+                isEditorActive: $isEditorActive
+            )
                 .onOpenURL { url in
                     AppActionRouter.handleIncomingURL(url)
                 }
@@ -226,7 +232,10 @@ struct JotableApp: App {
                     }
                 }
             #else
-            ContentView(isEditorActive: $isEditorActive)
+            ContentView(
+                isEditorExpanded: $isEditorExpanded,
+                isEditorActive: $isEditorActive
+            )
                 .onOpenURL { url in
                     AppActionRouter.handleIncomingURL(url)
                 }
@@ -261,6 +270,12 @@ struct JotableApp: App {
                     AppActionRouter.requestNewNote()
                 }
                 .keyboardShortcut("n", modifiers: [.command])
+            }
+            CommandGroup(after: .sidebar) {
+                Button(isEditorExpanded ? "Show Note List" : "Focus Editor") {
+                    NotificationCenter.default.post(name: .toggleEditorFocusRequested, object: nil)
+                }
+                .disabled(!isEditorActive)
             }
             CommandGroup(after: .pasteboard) {
                 Button(action: {

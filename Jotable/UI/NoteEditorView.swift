@@ -14,6 +14,9 @@ struct NoteEditorView: View {
     @Binding var pastePlaintextTrigger: UUID?
     #endif
     @Binding var isEditorActive: Bool
+    #if os(iOS)
+    @Binding var isEditorExpanded: Bool
+    #endif
     @Binding var passwordGeneratorTargetNoteID: UUID?
     @State private var richText = AttributedTextWrapper(value: NSAttributedString(string: ""))
     @State private var activeColor: RichTextColor = .automatic
@@ -223,6 +226,21 @@ struct NoteEditorView: View {
             saveChanges()
         }
         .toolbar {
+            #if os(iOS)
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        isEditorExpanded.toggle()
+                    } label: {
+                        Label(
+                            isEditorExpanded ? "Show Note List" : "Focus Editor",
+                            systemImage: isEditorExpanded ? "list.bullet.rectangle" : "arrow.up.left.and.arrow.down.right"
+                        )
+                    }
+                }
+            }
+            #endif
+
             ToolbarItemGroup(placement: .primaryAction) {
                 ListToolbar(
                     insertUncheckedCheckboxTrigger: $insertUncheckedCheckboxTrigger,

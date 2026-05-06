@@ -8,6 +8,9 @@ import SwiftData
 import CoreData
 import LocalAuthentication
 import UniformTypeIdentifiers
+#if os(iOS)
+import UIKit
+#endif
 
 // Selection type for the sidebar
 enum SidebarSelection: Hashable {
@@ -27,9 +30,12 @@ struct ContentView: View {
     #if os(macOS)
     @Binding var pastePlaintextTrigger: UUID?
     #endif
+    @Binding var isEditorExpanded: Bool
     @Binding var isEditorActive: Bool
 
     @State private var selectedItemIDs: Set<PersistentIdentifier> = []
+    @State private var splitViewVisibility: NavigationSplitViewVisibility = .automatic
+    @State private var focusedSplitViewVisibility: NavigationSplitViewVisibility = .automatic
     @State private var sidebarSelection: SidebarSelection? = .allNotes
     @State private var showingAddCategory = false
     @State private var categoryToEdit: Category?
@@ -178,179 +184,236 @@ struct ContentView: View {
     }
 
     private var listSelectionBinding: Binding<Set<PersistentIdentifier>> { $selectedItemIDs }
-    
-    var body: some View {
-        NavigationSplitView {
-            // Sidebar with categories
-            List(selection: $sidebarSelection) {
-                sidebarContent
+
+    private var canExpandEditor: Bool {
+        #if os(macOS)
+        return true
+        #elseif os(iOS)
+        return UIDevice.current.userInterfaceIdiom == .pad
+        #else
+        return false
+        #endif
+    }
+
+    private var shouldUseExpandedEditorLayout: Bool {
+        canExpandEditor && isEditorExpanded
+    }
+
+    #if os(macOS) || os(iOS)
+    private var focusedVisibilityPreservingSidebarState: NavigationSplitViewVisibility {
+        switch splitViewVisibility {
+        case .doubleColumn, .detailOnly:
+            return .detailOnly
+        default:
+            return .doubleColumn
+        }
+    }
+    #endif
+
+    @ViewBuilder
+    private var navigationContent: some View {
+        if shouldUseExpandedEditorLayout {
+            NavigationSplitView(columnVisibility: $focusedSplitViewVisibility) {
+                sidebarColumn
+            } detail: {
+                detailColumn
             }
-            .listStyle(SidebarListStyle())
-            .navigationTitle("Jotable")
-            .onChange(of: selectedItemIDs) { _, _ in
-                let newSelectedItem = primarySelectedItem
-                // Manage isEditorActive based on whether a single note is selected
-                isEditorActive = newSelectedItem != nil
-                if let id = newSelectedItem?.id {
-                    lastSelectedNoteID = id.uuidString
-                } else {
-                    lastSelectedNoteID = ""
+        } else {
+            standardNavigationSplitView
+        }
+    }
+
+    private var standardNavigationSplitView: some View {
+        NavigationSplitView(columnVisibility: $splitViewVisibility) {
+            sidebarColumn
+        } content: {
+            notesListColumn
+        } detail: {
+            detailColumn
+        }
+    }
+
+    private var sidebarColumn: some View {
+        List(selection: $sidebarSelection) {
+            sidebarContent
+        }
+        .listStyle(SidebarListStyle())
+        .navigationTitle("Jotable")
+        .onChange(of: selectedItemIDs) { _, _ in
+            let newSelectedItem = primarySelectedItem
+            // Manage isEditorActive based on whether a single note is selected
+            isEditorActive = newSelectedItem != nil
+            #if os(macOS) || os(iOS)
+            if newSelectedItem == nil {
+                setEditorExpanded(false)
+            }
+            #endif
+            if let id = newSelectedItem?.id {
+                lastSelectedNoteID = id.uuidString
+            } else {
+                lastSelectedNoteID = ""
+            }
+        }
+        .onChange(of: sidebarSelection) { oldValue, newValue in
+            // Check if the newly selected item is a locked category
+            if case .category(let category) = newValue, category.isPrivate {
+                // If we're reverting to a previous selection, skip authentication
+                if isRevertingSelection {
+                    isRevertingSelection = false
+                    return
                 }
-            }
-            .onChange(of: sidebarSelection) { oldValue, newValue in
-                // Check if the newly selected item is a locked category
-                if case .category(let category) = newValue, category.isPrivate {
-                    // If we're reverting to a previous selection, skip authentication
-                    if isRevertingSelection {
-                        isRevertingSelection = false
-                        return
-                    }
 
-                    // If we just authenticated for this category, allow the selection
-                    if authenticatingCategoryID == category.id {
-                        authenticatingCategoryID = nil
-                        return
-                    }
+                // If we just authenticated for this category, allow the selection
+                if authenticatingCategoryID == category.id {
+                    authenticatingCategoryID = nil
+                    return
+                }
 
-                    // If already authenticated and within timeout period, allow navigation
-                    if isAuthenticationValid {
-                        return
-                    }
+                // If already authenticated and within timeout period, allow navigation
+                if isAuthenticationValid {
+                    return
+                }
 
-                    // Authentication expired or not authenticated - clear state and require auth
-                    isAuthenticatedForPrivateAccess = false
-                    lastAuthenticationTime = nil
+                // Authentication expired or not authenticated - clear state and require auth
+                isAuthenticatedForPrivateAccess = false
+                lastAuthenticationTime = nil
 
-                    // Revert selection while we authenticate
-                    isRevertingSelection = true
-                    sidebarSelection = oldValue
-                    authenticatingCategoryID = category.id
-                    let categoryID = category.id
+                // Revert selection while we authenticate
+                isRevertingSelection = true
+                sidebarSelection = oldValue
+                authenticatingCategoryID = category.id
+                let categoryID = category.id
 
-                    // Authenticate
-                    authenticateWithBiometrics(reason: "Authenticate to access private categories") { success in
-                        DispatchQueue.main.async {
-                            if success {
-                                // Mark as authenticated for private access and record time
-                                self.isAuthenticatedForPrivateAccess = true
-                                self.lastAuthenticationTime = Date()
-                                self.authenticatingCategoryID = categoryID
-                                self.sidebarSelection = newValue
-                            } else {
-                                self.authenticatingCategoryID = nil
-                                self.isRevertingSelection = false
-                            }
+                // Authenticate
+                authenticateWithBiometrics(reason: "Authenticate to access private categories") { success in
+                    DispatchQueue.main.async {
+                        if success {
+                            // Mark as authenticated for private access and record time
+                            self.isAuthenticatedForPrivateAccess = true
+                            self.lastAuthenticationTime = Date()
+                            self.authenticatingCategoryID = categoryID
+                            self.sidebarSelection = newValue
+                        } else {
+                            self.authenticatingCategoryID = nil
+                            self.isRevertingSelection = false
                         }
                     }
                 }
             }
-            .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 300)
-            .toolbar {
-                ToolbarItemGroup(placement: .primaryAction)
-                {
-                    Button(action: { showingAddCategory = true }) {
-                        Image(systemName: "folder.badge.plus")
-                    }
-                    #if DEBUG
-                    Button(action: {
-                        print("Debug Print")
-                    }) {
-                        Label("Debug", systemImage: "ladybug")
-                    }
-                    Button(role: .destructive, action: deleteEverything) {
-                        Image(systemName: "trash.fill")
-                    }
-                    #endif
+        }
+        .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 300)
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction)
+            {
+                Button(action: { showingAddCategory = true }) {
+                    Image(systemName: "folder.badge.plus")
                 }
-            }
-            .sheet(isPresented: $showingAddCategory) {
-                AddCategoryView()
-            }
-            .sheet(item: $categoryToEdit) { category in
-                AddCategoryView(categoryToEdit: category)
-            }
-        } content: {
-            // Notes list with drag-to-reorder capability
-            List(selection: listSelectionBinding) {
-                notesListContent
-            }
-            .searchable(
-                text: $searchText,
-                prompt: "Search notes"
-            )
-            .navigationTitle(currentNavigationTitle)
-            .navigationSubtitle("\(filteredItems.count) \(filteredItems.count == 1 ? "note" : "notes")")
-            .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 400)
-            .toolbar {
-                #if !os(macOS)
-                if isCloudSyncIndicatorVisible {
-                    ToolbarItem(placement: .automatic) {
-                        CloudSyncToolbarIndicator()
-                    }
+                #if DEBUG
+                Button(action: {
+                    print("Debug Print")
+                }) {
+                    Label("Debug", systemImage: "ladybug")
+                }
+                Button(role: .destructive, action: deleteEverything) {
+                    Image(systemName: "trash.fill")
                 }
                 #endif
+            }
+        }
+        .sheet(isPresented: $showingAddCategory) {
+            AddCategoryView()
+        }
+        .sheet(item: $categoryToEdit) { category in
+            AddCategoryView(categoryToEdit: category)
+        }
+    }
 
-                #if os(iOS)
-                NotesToolbar(
-                    isEditing: isEditing,
-                    filteredItems: filteredItems,
-                    selectedItemIDs: selectedItemIDs,
-                    allItemsIsEmpty: allItems.isEmpty,
-                    allFilteredItemsSelected: allFilteredItemsSelected,
-                    deleteSelectedLabel: isViewingTrash ? "Delete Forever" : "Trash Selected",
-                    deleteSelectedSystemImage: isViewingTrash ? "trash.slash" : "trash",
-                    deleteSelectedItems: deleteSelectedItems,
-                    addItem: addItem,
-                    selectAllItems: selectAllItems,
-                    deselectAllItems: deselectAllItems
-                )
-                #else
-                NotesToolbar(
-                    isEditing: isEditing,
-                    filteredItems: filteredItems,
-                    selectedItemIDs: selectedItemIDs,
-                    deleteSelectedLabel: isViewingTrash ? "Delete Forever" : "Trash Selected",
-                    deleteSelectedSystemImage: isViewingTrash ? "trash.slash" : "trash",
-                    deleteSelectedItems: deleteSelectedItems,
-                    addItem: addItem
-                )
-                #endif
+    private var notesListColumn: some View {
+        List(selection: listSelectionBinding) {
+            notesListContent
+        }
+        .searchable(
+            text: $searchText,
+            prompt: "Search notes"
+        )
+        .navigationTitle(currentNavigationTitle)
+        .navigationSubtitle("\(filteredItems.count) \(filteredItems.count == 1 ? "note" : "notes")")
+        .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 400)
+        .toolbar {
+            #if !os(macOS)
+            if isCloudSyncIndicatorVisible {
+                ToolbarItem(placement: .automatic) {
+                    CloudSyncToolbarIndicator()
+                }
             }
-            #if os(iOS)
-            .environment(\.editMode, $editMode)
             #endif
-        } detail: {
-            // Detail view wrapped in NavigationStack for proper navigation
-            NavigationStack {
-                if let selectedItem = primarySelectedItem {
-                    #if os(macOS)
-                    NoteEditorView(
-                        item: selectedItem,
-                        pastePlaintextTrigger: $pastePlaintextTrigger,
-                        isEditorActive: $isEditorActive,
-                        passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID
-                    )
-                        .id(selectedItem.id) // Force view recreation when switching notes
-                    #else
-                    NoteEditorView(
-                        item: selectedItem,
-                        isEditorActive: $isEditorActive,
-                        passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID
-                    )
-                        .id(selectedItem.id) // Force view recreation when switching notes
-                    #endif
-                } else {
-                    ContentUnavailableView {
-                        Label("Select a Note", systemImage: "note.text")
-                    } description: {
-                        Text("Choose a note from the sidebar to view and edit it, or create a new note.")
-                    } actions: {
-                        Button("New Note", action: addItem)
-                            .buttonStyle(.borderedProminent)
-                    }
+
+            #if os(iOS)
+            NotesToolbar(
+                isEditing: isEditing,
+                filteredItems: filteredItems,
+                selectedItemIDs: selectedItemIDs,
+                allItemsIsEmpty: allItems.isEmpty,
+                allFilteredItemsSelected: allFilteredItemsSelected,
+                deleteSelectedLabel: isViewingTrash ? "Delete Forever" : "Trash Selected",
+                deleteSelectedSystemImage: isViewingTrash ? "trash.slash" : "trash",
+                deleteSelectedItems: deleteSelectedItems,
+                addItem: addItem,
+                selectAllItems: selectAllItems,
+                deselectAllItems: deselectAllItems
+            )
+            #else
+            NotesToolbar(
+                isEditing: isEditing,
+                filteredItems: filteredItems,
+                selectedItemIDs: selectedItemIDs,
+                deleteSelectedLabel: isViewingTrash ? "Delete Forever" : "Trash Selected",
+                deleteSelectedSystemImage: isViewingTrash ? "trash.slash" : "trash",
+                deleteSelectedItems: deleteSelectedItems,
+                addItem: addItem
+            )
+            #endif
+        }
+        #if os(iOS)
+        .environment(\.editMode, $editMode)
+        #endif
+    }
+
+    private var detailColumn: some View {
+        NavigationStack {
+            if let selectedItem = primarySelectedItem {
+                #if os(macOS)
+                NoteEditorView(
+                    item: selectedItem,
+                    pastePlaintextTrigger: $pastePlaintextTrigger,
+                    isEditorActive: $isEditorActive,
+                    passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID
+                )
+                    .id(selectedItem.id) // Force view recreation when switching notes
+                #else
+                NoteEditorView(
+                    item: selectedItem,
+                    isEditorActive: $isEditorActive,
+                    isEditorExpanded: $isEditorExpanded,
+                    passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID
+                )
+                    .id(selectedItem.id) // Force view recreation when switching notes
+                #endif
+            } else {
+                ContentUnavailableView {
+                    Label("Select a Note", systemImage: "note.text")
+                } description: {
+                    Text("Choose a note from the sidebar to view and edit it, or create a new note.")
+                } actions: {
+                    Button("New Note", action: addItem)
+                        .buttonStyle(.borderedProminent)
                 }
             }
         }
+    }
+    
+    var body: some View {
+        navigationContent
 #if DEBUG
         .overlay(alignment: .bottomTrailing) {
             BetaTag()
@@ -384,6 +447,35 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openPasswordGeneratorRequested)) { _ in
             handleExternalPasswordGeneratorRequest()
         }
+        #if os(macOS)
+        .onReceive(NotificationCenter.default.publisher(for: .toggleEditorFocusRequested)) { _ in
+            setEditorExpanded(!isEditorExpanded)
+        }
+        .toolbar {
+            if canExpandEditor {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        setEditorExpanded(!isEditorExpanded)
+                    } label: {
+                        Label(
+                            isEditorExpanded ? "Show Note List" : "Focus Editor",
+                            systemImage: isEditorExpanded ? "list.bullet.rectangle" : "arrow.up.left.and.arrow.down.right"
+                        )
+                    }
+                    .disabled(primarySelectedItem == nil)
+                    .help(isEditorExpanded ? "Show the note list" : "Hide the note list and focus the editor")
+                }
+            }
+        }
+        .onChange(of: isEditorExpanded) { _, expanded in
+            setEditorExpanded(expanded)
+        }
+        #endif
+        #if os(iOS)
+        .onChange(of: isEditorExpanded) { _, expanded in
+            setEditorExpanded(expanded)
+        }
+        #endif
         #if os(macOS)
         .onReceive(NotificationCenter.default.publisher(for: .exportNotesRequested)) { _ in
             showExportAlert = true
@@ -447,57 +539,49 @@ struct ContentView: View {
             Text(authErrorMessage)
         }
         #if os(macOS)
-        .alert("Export Notes", isPresented: $showExportAlert) {
-            Button("Export", role: .none) {
-                startExport()
-            }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("Everything will be exported as plain text, including private notes.")
-        }
-        .alert("Export Failed", isPresented: Binding(get: { exportError != nil }, set: { _ in exportError = nil })) {
-            Button("OK", role: .cancel) { exportError = nil }
-        } message: {
-            Text(exportError ?? "Unknown error")
-        }
-        .alert("Import Result", isPresented: Binding(get: { importResultMessage != nil }, set: { _ in importResultMessage = nil })) {
-            Button("OK", role: .cancel) { importResultMessage = nil }
-        } message: {
-            Text(importResultMessage ?? "")
-        }
-        .alert("Import Failed", isPresented: Binding(get: { importError != nil }, set: { _ in importError = nil })) {
-            Button("OK", role: .cancel) { importError = nil }
-        } message: {
-            Text(importError ?? "Unknown error")
-        }
-        .fileExporter(
-            isPresented: $isExporting,
-            document: exportDocument,
-            contentType: .json,
-            defaultFilename: "Jotable-Export"
-        ) { result in
-            if case let .failure(error) = result {
-                exportError = error.localizedDescription
-            }
-        }
-        .fileImporter(
-            isPresented: $isImporting,
-            allowedContentTypes: [.json],
-            allowsMultipleSelection: false
-        ) { result in
-            switch result {
-            case .success(let urls):
-                guard let url = urls.first else { return }
-                handleImport(from: url)
-            case .failure(let error):
-                importError = error.localizedDescription
-            }
-        }
-        #endif
-        #if os(macOS)
+        .macImportExportPresentation(
+            showExportAlert: $showExportAlert,
+            isExporting: $isExporting,
+            exportDocument: exportDocument,
+            exportError: $exportError,
+            isImporting: $isImporting,
+            importError: $importError,
+            importResultMessage: $importResultMessage,
+            startExport: startExport,
+            handleImport: handleImport
+        )
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         #endif
     }
+
+    #if os(macOS) || os(iOS)
+    private func setEditorExpanded(_ expanded: Bool) {
+        if expanded && (!canExpandEditor || primarySelectedItem == nil) {
+            isEditorExpanded = false
+            return
+        }
+
+        #if os(macOS) || os(iOS)
+        if expanded {
+            focusedSplitViewVisibility = focusedVisibilityPreservingSidebarState
+        }
+        #endif
+
+        guard expanded != isEditorExpanded else {
+            return
+        }
+
+        if expanded {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isEditorExpanded = true
+            }
+        } else {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isEditorExpanded = false
+            }
+        }
+    }
+    #endif
     
     // Shared sidebar content
     @ViewBuilder
@@ -1303,6 +1387,119 @@ struct ContentView: View {
     }
     #endif
 }
+
+#if os(macOS)
+private struct MacImportExportPresentationModifier: ViewModifier {
+    @Binding var showExportAlert: Bool
+    @Binding var isExporting: Bool
+    let exportDocument: NotesExportDocument
+    @Binding var exportError: String?
+    @Binding var isImporting: Bool
+    @Binding var importError: String?
+    @Binding var importResultMessage: String?
+    let startExport: () -> Void
+    let handleImport: (URL) -> Void
+
+    private var isExportErrorPresented: Binding<Bool> {
+        Binding(
+            get: { exportError != nil },
+            set: { if !$0 { exportError = nil } }
+        )
+    }
+
+    private var isImportResultPresented: Binding<Bool> {
+        Binding(
+            get: { importResultMessage != nil },
+            set: { if !$0 { importResultMessage = nil } }
+        )
+    }
+
+    private var isImportErrorPresented: Binding<Bool> {
+        Binding(
+            get: { importError != nil },
+            set: { if !$0 { importError = nil } }
+        )
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .alert("Export Notes", isPresented: $showExportAlert) {
+                Button("Export", role: .none) {
+                    startExport()
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("Everything will be exported as plain text, including private notes.")
+            }
+            .alert("Export Failed", isPresented: isExportErrorPresented) {
+                Button("OK", role: .cancel) { exportError = nil }
+            } message: {
+                Text(exportError ?? "Unknown error")
+            }
+            .alert("Import Result", isPresented: isImportResultPresented) {
+                Button("OK", role: .cancel) { importResultMessage = nil }
+            } message: {
+                Text(importResultMessage ?? "")
+            }
+            .alert("Import Failed", isPresented: isImportErrorPresented) {
+                Button("OK", role: .cancel) { importError = nil }
+            } message: {
+                Text(importError ?? "Unknown error")
+            }
+            .fileExporter(
+                isPresented: $isExporting,
+                document: exportDocument,
+                contentType: .json,
+                defaultFilename: "Jotable-Export"
+            ) { result in
+                if case let .failure(error) = result {
+                    exportError = error.localizedDescription
+                }
+            }
+            .fileImporter(
+                isPresented: $isImporting,
+                allowedContentTypes: [.json],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    handleImport(url)
+                case .failure(let error):
+                    importError = error.localizedDescription
+                }
+            }
+    }
+}
+
+private extension View {
+    func macImportExportPresentation(
+        showExportAlert: Binding<Bool>,
+        isExporting: Binding<Bool>,
+        exportDocument: NotesExportDocument,
+        exportError: Binding<String?>,
+        isImporting: Binding<Bool>,
+        importError: Binding<String?>,
+        importResultMessage: Binding<String?>,
+        startExport: @escaping () -> Void,
+        handleImport: @escaping (URL) -> Void
+    ) -> some View {
+        modifier(
+            MacImportExportPresentationModifier(
+                showExportAlert: showExportAlert,
+                isExporting: isExporting,
+                exportDocument: exportDocument,
+                exportError: exportError,
+                isImporting: isImporting,
+                importError: importError,
+                importResultMessage: importResultMessage,
+                startExport: startExport,
+                handleImport: handleImport
+            )
+        )
+    }
+}
+#endif
 
 private struct NotesToolbar: ToolbarContent {
     let isEditing: Bool
