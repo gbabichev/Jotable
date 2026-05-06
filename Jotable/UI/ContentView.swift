@@ -199,6 +199,19 @@ struct ContentView: View {
         canExpandEditor && isEditorExpanded
     }
 
+    private var notesListMinimumColumnWidth: CGFloat {
+        switch splitViewVisibility {
+        case .doubleColumn, .detailOnly:
+            return 450
+        default:
+            return 250
+        }
+    }
+
+    private var notesListIdealColumnWidth: CGFloat {
+        max(250, notesListMinimumColumnWidth)
+    }
+
     #if os(macOS) || os(iOS)
     private var focusedVisibilityPreservingSidebarState: NavigationSplitViewVisibility {
         switch splitViewVisibility {
@@ -308,16 +321,16 @@ struct ContentView: View {
                 Button(action: { showingAddCategory = true }) {
                     Image(systemName: "folder.badge.plus")
                 }
-                #if DEBUG
-                Button(action: {
-                    print("Debug Print")
-                }) {
-                    Label("Debug", systemImage: "ladybug")
-                }
-                Button(role: .destructive, action: deleteEverything) {
-                    Image(systemName: "trash.fill")
-                }
-                #endif
+//                #if DEBUG
+//                Button(action: {
+//                    print("Debug Print")
+//                }) {
+//                    Label("Debug", systemImage: "ladybug")
+//                }
+//                Button(role: .destructive, action: deleteEverything) {
+//                    Image(systemName: "trash.fill")
+//                }
+//                #endif
             }
         }
         .sheet(isPresented: $showingAddCategory) {
@@ -338,7 +351,7 @@ struct ContentView: View {
         )
         .navigationTitle(currentNavigationTitle)
         .navigationSubtitle("\(filteredItems.count) \(filteredItems.count == 1 ? "note" : "notes")")
-        .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 400)
+        .navigationSplitViewColumnWidth(min: notesListMinimumColumnWidth, ideal: notesListIdealColumnWidth, max: 800)
         .toolbar {
             #if !os(macOS)
             if isCloudSyncIndicatorVisible {
