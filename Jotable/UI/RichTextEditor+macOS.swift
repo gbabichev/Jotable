@@ -555,7 +555,22 @@ struct RichTextEditor: NSViewRepresentable {
         context.coordinator.updateBottomBuffer(for: textView)
         let now = Date()
         let timeSinceLastUpdate = now.timeIntervalSince(context.coordinator.lastUpdateNSViewTime)
-        if timeSinceLastUpdate < 0.05 && context.coordinator.lastUpdateNSViewText.isEqual(to: text) {
+        let hasPendingEditorCommand =
+            insertUncheckedCheckboxTrigger != context.coordinator.lastUncheckedCheckboxTrigger ||
+            insertDashTrigger != context.coordinator.lastDashTrigger ||
+            insertBulletTrigger != context.coordinator.lastBulletTrigger ||
+            insertNumberingTrigger != context.coordinator.lastNumberingTrigger ||
+            dateInsertionRequest?.id != context.coordinator.lastDateRequest?.id ||
+            timeInsertionRequest?.id != context.coordinator.lastTimeRequest?.id ||
+            insertURLTrigger?.id != context.coordinator.lastURLTrigger?.id ||
+            plainTextInsertionRequest?.id != context.coordinator.lastPlainTextInsertionRequest?.id ||
+            presentFormatMenuTrigger != context.coordinator.lastFormatMenuTrigger ||
+            resetColorTrigger != context.coordinator.lastResetColorTrigger ||
+            pastePlaintextTrigger != context.coordinator.lastPlaintextPasteTrigger
+
+        if !hasPendingEditorCommand &&
+            timeSinceLastUpdate < 0.05 &&
+            context.coordinator.lastUpdateNSViewText.isEqual(to: text) {
             return
         }
 
@@ -1047,6 +1062,7 @@ struct RichTextEditor: NSViewRepresentable {
                 registerUndoSnapshot(for: textView, actionName: "Color")
                 ColorMapping.applyColor(color, to: storage, range: selectedRange)
                 textView.setSelectedRange(selectedRange)
+                textView.didChangeText()
 
                 // Defer the binding update to avoid "Modifying state during view update" warning
                 DispatchQueue.main.async { [weak self] in
@@ -1072,6 +1088,7 @@ struct RichTextEditor: NSViewRepresentable {
                 ]
                 storage.addAttributes(fontAttrs, range: selectedRange)
                 textView.setSelectedRange(selectedRange)
+                textView.didChangeText()
 
                 // Defer the binding update to avoid "Modifying state during view update" warning
                 DispatchQueue.main.async { [weak self] in
@@ -1092,6 +1109,7 @@ struct RichTextEditor: NSViewRepresentable {
                 registerUndoSnapshot(for: textView, actionName: "Highlight")
                 ColorMapping.applyHighlight(highlighter, to: storage, range: selectedRange)
                 textView.setSelectedRange(selectedRange)
+                textView.didChangeText()
 
                 DispatchQueue.main.async { [weak self] in
                     self?.isProgrammaticUpdate = false
@@ -1206,6 +1224,7 @@ struct RichTextEditor: NSViewRepresentable {
 
                 storage.addAttribute(NSAttributedString.Key.font, value: font, range: selectedRange)
                 textView.setSelectedRange(selectedRange)
+                textView.didChangeText()
 
                 DispatchQueue.main.async { [weak self] in
                     self?.isProgrammaticUpdate = false
@@ -1228,6 +1247,7 @@ struct RichTextEditor: NSViewRepresentable {
 
                 storage.addAttribute(NSAttributedString.Key.font, value: font, range: selectedRange)
                 textView.setSelectedRange(selectedRange)
+                textView.didChangeText()
 
                 DispatchQueue.main.async { [weak self] in
                     self?.isProgrammaticUpdate = false
@@ -1248,6 +1268,7 @@ struct RichTextEditor: NSViewRepresentable {
                 let underlineValue = isUnderlined ? NSUnderlineStyle.single.rawValue : 0
                 storage.addAttribute(NSAttributedString.Key.underlineStyle, value: underlineValue, range: selectedRange)
                 textView.setSelectedRange(selectedRange)
+                textView.didChangeText()
 
                 DispatchQueue.main.async { [weak self] in
                     self?.isProgrammaticUpdate = false
@@ -1273,6 +1294,7 @@ struct RichTextEditor: NSViewRepresentable {
                 let strikethroughValue = isStrikethrough ? NSUnderlineStyle.single.rawValue : 0
                 storage.addAttribute(NSAttributedString.Key.strikethroughStyle, value: strikethroughValue, range: selectedRange)
                 textView.setSelectedRange(selectedRange)
+                textView.didChangeText()
 
                 DispatchQueue.main.async { [weak self] in
                     self?.isProgrammaticUpdate = false
@@ -1326,6 +1348,7 @@ struct RichTextEditor: NSViewRepresentable {
                 storage.addAttribute(ColorMapping.colorIDKey, value: RichTextColor.automatic.id, range: selectedRange)
 
                 textView.setSelectedRange(selectedRange)
+                textView.didChangeText()
 
                 // Defer the parent text update to avoid triggering updateNSView during reset
                 DispatchQueue.main.async { [weak self] in
@@ -1478,6 +1501,7 @@ struct RichTextEditor: NSViewRepresentable {
                 let newCursorPosition = replacementRange.location + result.newText.count
                 textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
                 applyTypingAttributes(to: textView)
+                textView.didChangeText()
 
                 parent.text = NSAttributedString(attributedString: storage)
                 isProgrammaticUpdate = false
@@ -1564,6 +1588,7 @@ struct RichTextEditor: NSViewRepresentable {
 
             // Ensure typing attributes are set for the next line
             applyTypingAttributes(to: textView)
+            textView.didChangeText()
 
             parent.text = NSAttributedString(attributedString: storage)
             isProgrammaticUpdate = false
@@ -1588,6 +1613,7 @@ struct RichTextEditor: NSViewRepresentable {
             let newCursorPosition = replacementRange.location + newText.count
             textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
             applyTypingAttributes(to: textView)
+            textView.didChangeText()
 
             parent.text = NSAttributedString(attributedString: storage)
             isProgrammaticUpdate = false
@@ -2339,32 +2365,32 @@ struct RichTextEditor: NSViewRepresentable {
             ]
             let linkString = NSAttributedString(string: request.displayText, attributes: linkAttrs)
 
-            // Replace the target range or insert at cursor
-            storage.replaceCharacters(in: insertionRange, with: linkString)
+            let replacement = NSMutableAttributedString(attributedString: linkString)
 
-            var newCursorPosition = insertionRange.location + request.displayText.count
+            let linkEndPosition = insertionRange.location + linkString.length
+            var newCursorPosition = linkEndPosition
 
             if shouldAppendTrailingSpace {
-                let spaceInsertionPos = newCursorPosition
-                if spaceInsertionPos < storage.length {
-                    let nextCharRange = NSRange(location: spaceInsertionPos, length: 1)
+                let originalFollowingPosition = insertionRange.location + insertionRange.length
+                if originalFollowingPosition < storage.length {
+                    let nextCharRange = NSRange(location: originalFollowingPosition, length: 1)
                     let nextChar = storage.attributedSubstring(from: nextCharRange).string
                     if nextChar != " " {
                         let spaceAttrs = currentTypingAttributes(from: textView)
-                        storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
-                        newCursorPosition += 1
-                    } else {
-                        newCursorPosition = spaceInsertionPos + 1
+                        replacement.append(NSAttributedString(string: " ", attributes: spaceAttrs))
                     }
+                    newCursorPosition = linkEndPosition + 1
                 } else {
                     let spaceAttrs = currentTypingAttributes(from: textView)
-                    storage.insert(NSAttributedString(string: " ", attributes: spaceAttrs), at: spaceInsertionPos)
-                    newCursorPosition = spaceInsertionPos + 1
+                    replacement.append(NSAttributedString(string: " ", attributes: spaceAttrs))
+                    newCursorPosition = linkEndPosition + 1
                 }
             }
 
+            _ = replaceText(in: insertionRange, with: replacement, in: textView)
             textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
             applyTypingAttributes(to: textView)
+            (textView as? DynamicColorTextView)?.forceFullRedraw()
 
             // Defer binding update to next runloop to avoid state modification during view update
             let newText = NSAttributedString(attributedString: storage)
@@ -2447,16 +2473,9 @@ struct RichTextEditor: NSViewRepresentable {
 
             let plainAttributedString = NSAttributedString(string: plainText, attributes: plainAttrs)
 
-            // Replace selected text or insert at cursor
-            if insertionRange.length > 0 {
-                storage.replaceCharacters(in: insertionRange, with: plainAttributedString)
-                let newCursorPosition = insertionRange.location + plainText.count
-                textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
-            } else {
-                storage.insert(plainAttributedString, at: insertionRange.location)
-                let newCursorPosition = insertionRange.location + plainText.count
-                textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
-            }
+            _ = replaceText(in: insertionRange, with: plainAttributedString, in: textView)
+            let newCursorPosition = insertionRange.location + plainAttributedString.length
+            textView.setSelectedRange(NSRange(location: newCursorPosition, length: 0))
 
             applyTypingAttributes(to: textView)
 
