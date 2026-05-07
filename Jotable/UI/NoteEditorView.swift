@@ -18,6 +18,7 @@ struct NoteEditorView: View {
     @Binding var isEditorExpanded: Bool
     #endif
     @Binding var passwordGeneratorTargetNoteID: UUID?
+    var onCategoryAssignment: (Item, Category?) -> Void = { _, _ in }
     @State private var richText = AttributedTextWrapper(value: NSAttributedString(string: ""))
     @State private var activeColor: RichTextColor = .automatic
     @State private var activeHighlighter: HighlighterColor = .none
@@ -177,6 +178,7 @@ struct NoteEditorView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     NoteHeaderView(
                         item: item,
+                        onCategoryAssignment: onCategoryAssignment,
                         onHeaderHeightChange: { height in
                             headerHeight = height
                         }
@@ -502,13 +504,16 @@ private struct NoteHeaderView: View {
     @State private var showingCategoryPicker = false
     @State private var headerHeight: CGFloat = 0
 
+    var onCategoryAssignment: (Item, Category?) -> Void
     var onHeaderHeightChange: (CGFloat) -> Void
 
     init(
         item: Item,
+        onCategoryAssignment: @escaping (Item, Category?) -> Void,
         onHeaderHeightChange: @escaping (CGFloat) -> Void
     ) {
         self._item = Bindable(item)
+        self.onCategoryAssignment = onCategoryAssignment
         self.onHeaderHeightChange = onHeaderHeightChange
     }
 
@@ -516,6 +521,7 @@ private struct NoteHeaderView: View {
         Binding(
             get: { item.category },
             set: { newCategory in
+                onCategoryAssignment(item, newCategory)
                 item.category = newCategory
 
                 if item.isInTrash {

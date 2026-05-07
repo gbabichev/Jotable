@@ -34,6 +34,7 @@ struct ContentView: View {
     @Binding var isEditorActive: Bool
 
     @State private var selectedItemIDs: Set<PersistentIdentifier> = []
+    @State private var categoryAssignmentPreservedSelectionID: PersistentIdentifier?
     @State private var splitViewVisibility: NavigationSplitViewVisibility = .automatic
     @State private var focusedSplitViewVisibility: NavigationSplitViewVisibility = .automatic
     @State private var sidebarSelection: SidebarSelection? = .allNotes
@@ -181,7 +182,12 @@ struct ContentView: View {
         #else
         guard selectedItemIDs.count == 1, let selectedID = selectedItemIDs.first else { return nil }
         #endif
-        return filteredItems.first { $0.persistentModelID == selectedID }
+        if let visibleItem = filteredItems.first(where: { $0.persistentModelID == selectedID }) {
+            return visibleItem
+        }
+
+        guard categoryAssignmentPreservedSelectionID == selectedID else { return nil }
+        return allItems.first { $0.persistentModelID == selectedID && !$0.isInTrash }
     }
 
     private var listSelectionBinding: Binding<Set<PersistentIdentifier>> { $selectedItemIDs }
@@ -254,6 +260,17 @@ struct ContentView: View {
         .listStyle(SidebarListStyle())
         .navigationTitle("Jotable")
         .onChange(of: selectedItemIDs) { _, _ in
+            if let preservedID = categoryAssignmentPreservedSelectionID,
+               !selectedItemIDs.contains(preservedID) {
+                if selectedItemIDs.isEmpty,
+                   allItems.contains(where: { $0.persistentModelID == preservedID && !$0.isInTrash }) {
+                    selectedItemIDs = [preservedID]
+                    return
+                }
+
+                categoryAssignmentPreservedSelectionID = nil
+            }
+
             let newSelectedItem = primarySelectedItem
             // Manage isEditorActive based on whether a single note is selected
             isEditorActive = newSelectedItem != nil
@@ -401,7 +418,8 @@ struct ContentView: View {
                     item: selectedItem,
                     pastePlaintextTrigger: $pastePlaintextTrigger,
                     isEditorActive: $isEditorActive,
-                    passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID
+                    passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID,
+                    onCategoryAssignment: prepareSelectionForCategoryAssignment
                 )
                     .id(selectedItem.id) // Force view recreation when switching notes
                 #else
@@ -409,7 +427,8 @@ struct ContentView: View {
                     item: selectedItem,
                     isEditorActive: $isEditorActive,
                     isEditorExpanded: $isEditorExpanded,
-                    passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID
+                    passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID,
+                    onCategoryAssignment: prepareSelectionForCategoryAssignment
                 )
                     .id(selectedItem.id) // Force view recreation when switching notes
                 #endif
@@ -522,10 +541,26 @@ struct ContentView: View {
             }
         }
         .onChange(of: filteredItems) { _, _ in
-            // Trim selection to only items still visible in the list
+            let visibleIDs = Set(filteredItems.map(\.persistentModelID))
+
+            // Trim selection to visible list items, except for the note just moved
+            // into a hidden/private category while it is open in the editor.
             selectedItemIDs = Set(selectedItemIDs.filter { id in
-                filteredItems.contains(where: { $0.persistentModelID == id })
+                if visibleIDs.contains(id) {
+                    return true
+                }
+
+                guard id == categoryAssignmentPreservedSelectionID,
+                      let item = allItems.first(where: { $0.persistentModelID == id }) else {
+                    return false
+                }
+                return !item.isInTrash
             })
+
+            if let preservedID = categoryAssignmentPreservedSelectionID,
+               visibleIDs.contains(preservedID) {
+                categoryAssignmentPreservedSelectionID = nil
+            }
         }
         .onChange(of: scenePhase) { _, newPhase in
             // When app becomes active, check if authentication has expired
@@ -1154,7 +1189,9 @@ struct ContentView: View {
         Binding(
             get: { item.category },
             set: {
-                item.category = $0
+                let assignedCategory = $0
+                prepareSelectionForCategoryAssignment(item: item, category: assignedCategory)
+                item.category = assignedCategory
                 do {
                     try modelContext.save()
                     print("💾 Category updated and saved - CloudKit sync queued")
@@ -1163,6 +1200,24 @@ struct ContentView: View {
                 }
             }
         )
+    }
+
+    private func prepareSelectionForCategoryAssignment(item: Item, category: Category?) {
+        guard selectedItemIDs.count == 1,
+              selectedItemIDs.contains(item.persistentModelID) else {
+            return
+        }
+
+        if categoryIsHiddenFromAllNotes(category) {
+            categoryAssignmentPreservedSelectionID = item.persistentModelID
+        } else {
+            categoryAssignmentPreservedSelectionID = nil
+        }
+    }
+
+    private func categoryIsHiddenFromAllNotes(_ category: Category?) -> Bool {
+        guard let category else { return false }
+        return category.isPrivate || category.isHiddenFromHome
     }
 
     private func restoreLastSelectedNoteIfNeeded() {
