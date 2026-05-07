@@ -13,12 +13,12 @@ struct PasswordGeneratorView: View {
     @State private var includeNumbers = true
     @State private var includeSymbols = true
     @State private var generatedPassword: String = ""
-    @State private var simpleWordCount: Int = 3
+    @State private var simpleWordCount: Int = 5
     @State private var simpleSeparator: String = "-"
     @State private var simpleCapitalize = true
     @State private var simpleNumberSuffix = true
     @State private var addSpecialSuffix = true
-    @State private var mode: PasswordMode = .simple
+    @AppStorage("passwordGenerator.mode") private var mode: PasswordMode = .strong
 
     var onInsert: (String) -> Void
 
@@ -83,7 +83,7 @@ struct PasswordGeneratorView: View {
                     } else {
                         sectionHeader("Settings")
                         VStack(alignment: .leading, spacing: 10) {
-                            Stepper("Words: \(simpleWordCount)", value: $simpleWordCount, in: 2...6)
+                            Stepper("Words: \(simpleWordCount)", value: $simpleWordCount, in: 2...8)
 
                             HStack {
                                 Text("Separator")
@@ -368,7 +368,7 @@ struct PasswordGeneratorView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Words")
                                 .font(.subheadline.weight(.semibold))
-                            Text("Choose 2 to 6 words")
+                            Text("Choose 2 to 8 words")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -390,7 +390,7 @@ struct PasswordGeneratorView: View {
                                 .frame(minWidth: 22)
 
                             Button {
-                                simpleWordCount = min(6, simpleWordCount + 1)
+                                simpleWordCount = min(8, simpleWordCount + 1)
                             } label: {
                                 Image(systemName: "plus")
                                     .frame(width: 22, height: 22)
@@ -584,21 +584,34 @@ struct PasswordGeneratorView: View {
     }
 
     private func generatePassword() -> String {
-        var pool = ""
-        if includeUppercase { pool.append("ABCDEFGHIJKLMNOPQRSTUVWXYZ") }
-        if includeLowercase { pool.append("abcdefghijklmnopqrstuvwxyz") }
-        if includeNumbers { pool.append("0123456789") }
-        if includeSymbols { pool.append(symbols) }
+        let enabledSets = enabledCharacterSets()
+        guard !enabledSets.isEmpty else { return "" }
 
-        guard !pool.isEmpty else { return "" }
+        let targetLength = max(Int(length), enabledSets.count)
+        let combinedPool = enabledSets.flatMap { $0 }
+        var generator = SystemRandomNumberGenerator()
 
-        var password = ""
-        for _ in 0..<Int(length) {
-            if let char = pool.randomElement() {
-                password.append(char)
+        var passwordCharacters: [Character] = enabledSets.compactMap { characterSet in
+            characterSet.randomElement(using: &generator)
+        }
+
+        while passwordCharacters.count < targetLength {
+            if let char = combinedPool.randomElement(using: &generator) {
+                passwordCharacters.append(char)
             }
         }
-        return password
+
+        passwordCharacters.shuffle(using: &generator)
+        return String(passwordCharacters)
+    }
+
+    private func enabledCharacterSets() -> [[Character]] {
+        var characterSets: [[Character]] = []
+        if includeUppercase { characterSets.append(Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ")) }
+        if includeLowercase { characterSets.append(Array("abcdefghijklmnopqrstuvwxyz")) }
+        if includeNumbers { characterSets.append(Array("0123456789")) }
+        if includeSymbols { characterSets.append(Array(symbols)) }
+        return characterSets
     }
 
     private func generateSimplePassword() -> String {
@@ -649,6 +662,27 @@ struct PasswordGeneratorView: View {
         "nomad","olive","plume","quasar","ridge","summit","tide","upland","vista","whisper",
         "yukon","azure","bramble","cascade","flare","garnet","heather","indigo","jasper",
         "kepler","lilac","moss","nebula","orchid","prairie","quince","robin","solace","thunder",
-        "ursa","verve","wander","xenon","yodel","zinnia"
+        "ursa","verve","wander","xenon","yodel","zinnia",
+        "acorn","anchor","anvil","apex","apron","arcade","atlas","avenue","badge","baker",
+        "banner","basin","beacon","binder","blanket","blend","bloom","boulder","branch","brass",
+        "bridge","brook","brush","bucket","canvas","caramel","castle","cavern","chisel","citrus",
+        "clay","cliff","clover","coral","corner","cotton","cradle","craft","crystal","daisy",
+        "dapple","depot","desert","dome","dragon","dream","echoes","fabric","feather","field",
+        "flame","fleece","floral","forge","garden","gather","glacier","grain","granite","gravel",
+        "hammer","haven","hollow","horizon","kernel","ladder","lantern","lattice","laurel","meadowlark",
+        "mellow","meteor","midnight","mirror","mist","mosaic","notion","novel","oasis","obelisk",
+        "packet","paddle","parchment","pastel","petal","pillar","planet","plaza","pocket","polaris",
+        "porch","portal","prism","ripple","rivet","saddle","saffron","satin","shelter","signal",
+        "sketch","slate","spark","sphere","spindle","staple","starlight","station","studio","tablet",
+        "tangle","terrace","timber","token","torch","tower","tracer","tulip","velvet","vessel",
+        "voyage","walnut","window","winter","woven","zebra","abacus","aglow","alpine","anthem",
+        "ashlar","ballet","barrel","basil","bevel","blossom","bolt","briar","cabinet","calm",
+        "campus","carbon","carve","circle","cobalt","column","compass","concord","cork","cosmic",
+        "courier","dagger","degree","dovetail","drawer","easel","effort","estate","evergreen","fathom",
+        "fresco","galaxy","gilded","harvested","helium","herald","hinge","honor","inlet","jewel",
+        "keeper","kindle","level","library","lotus","matrix","medal","melody","meridian","mineral",
+        "museum","native","needle","obelus","parcel","pattern","pencil","pioneer","pixel","quarry",
+        "rally","ribbon","rocket","shelve","sierra","solstice","spirit","stable","stride","sunset",
+        "tailor","tempo","theory","thrive","topaz","unison","vector","victory","wafer","wanderer"
     ]
 }

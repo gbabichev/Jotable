@@ -53,6 +53,7 @@ struct ContentView: View {
     @State private var isCloudSyncIndicatorVisible = false
     @State private var cloudSyncHideWorkItem: DispatchWorkItem?
     @State private var passwordGeneratorTargetNoteID: UUID?
+    @State private var showingExternalPasswordGenerator = false
     #if os(macOS)
     @State private var isExporting = false
     @State private var exportDocument = NotesExportDocument(data: Data())
@@ -459,6 +460,12 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .openPasswordGeneratorRequested)) { _ in
             handleExternalPasswordGeneratorRequest()
+        }
+        .sheet(isPresented: $showingExternalPasswordGenerator) {
+            PasswordGeneratorView { password in
+                insertPasswordIntoNewNote(password)
+                showingExternalPasswordGenerator = false
+            }
         }
         #if os(macOS)
         .onReceive(NotificationCenter.default.publisher(for: .toggleEditorFocusRequested)) { _ in
@@ -1056,18 +1063,31 @@ struct ContentView: View {
 
     private func handleExternalPasswordGeneratorRequest() {
         prepareExternalEditorPresentation()
-        guard let newItem = createItem() else { return }
-        passwordGeneratorTargetNoteID = newItem.id
+        if let selectedItem = primarySelectedItem {
+            passwordGeneratorTargetNoteID = selectedItem.id
+        } else {
+            showingExternalPasswordGenerator = true
+        }
+    }
+
+    private func insertPasswordIntoNewNote(_ password: String) {
+        guard !password.isEmpty else { return }
+        let attributedPassword = defaultAttributedContent(for: password)
+        _ = createItem(
+            content: password,
+            attributedContent: archiveDefaultAttributedContent(attributedPassword)
+        )
     }
 
     @discardableResult
-    private func createItem() -> Item? {
+    private func createItem(content: String = "", attributedContent: Data? = nil) -> Item? {
         // Create date formatter for the title
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "EEEE, M/d/yy"
         let dateTitle = dateFormatter.string(from: Date())
 
-        let newItem = Item(title: dateTitle)
+        let newItem = Item(title: dateTitle, content: content)
+        newItem.attributedContent = attributedContent
 
         // Assign to selected category if one is chosen
         if let selectedCategory = selectedCategory {
@@ -1090,6 +1110,26 @@ struct ContentView: View {
 
     private func addItem() {
         _ = createItem()
+    }
+
+    private func defaultAttributedContent(for text: String) -> NSAttributedString {
+        let styler = TextStyler(
+            fontSize: .normal,
+            colorID: RichTextColor.automatic.id,
+            color: nil
+        )
+        return NSAttributedString(
+            string: text,
+            attributes: styler.buildAttributes(usingAutomatic: true)
+        )
+    }
+
+    private func archiveDefaultAttributedContent(_ attributedString: NSAttributedString) -> Data? {
+        let processedString = ColorMapping.preprocessForArchiving(attributedString)
+        return try? NSKeyedArchiver.archivedData(
+            withRootObject: processedString,
+            requiringSecureCoding: false
+        )
     }
 
     #if os(macOS)
