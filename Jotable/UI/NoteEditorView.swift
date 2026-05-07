@@ -234,7 +234,7 @@ struct NoteEditorView: View {
                     } label: {
                         Label(
                             isEditorExpanded ? "Show Note List" : "Focus Editor",
-                            systemImage: isEditorExpanded ? "list.bullet.rectangle" : "arrow.up.left.and.arrow.down.right"
+                            systemImage: isEditorExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
                         )
                     }
                 }
