@@ -210,10 +210,6 @@ struct ContentView: View {
     }
 
     private var notesListMinimumColumnWidth: CGFloat {
-        if shouldUseExpandedEditorLayout {
-            return 0
-        }
-
         switch splitViewVisibility {
         case .doubleColumn, .detailOnly:
             return 450
@@ -223,20 +219,16 @@ struct ContentView: View {
     }
 
     private var notesListIdealColumnWidth: CGFloat {
-        if shouldUseExpandedEditorLayout {
-            return 0
-        }
-
         return max(250, notesListMinimumColumnWidth)
-    }
-
-    private var notesListMaximumColumnWidth: CGFloat {
-        shouldUseExpandedEditorLayout ? 0 : 800
     }
 
     @ViewBuilder
     private var navigationContent: some View {
-        standardNavigationSplitView
+        if shouldUseExpandedEditorLayout {
+            detailColumn
+        } else {
+            standardNavigationSplitView
+        }
     }
 
     private var standardNavigationSplitView: some View {
@@ -356,61 +348,54 @@ struct ContentView: View {
     }
 
     private var notesListColumn: some View {
-        Group {
-            if shouldUseExpandedEditorLayout {
-                Color.clear
-                    .accessibilityHidden(true)
-            } else {
-                List(selection: listSelectionBinding) {
-                    notesListContent
-                }
-                .searchable(
-                    text: $searchText,
-                    prompt: "Search notes"
-                )
-                .navigationTitle(currentNavigationTitle)
-                .navigationSubtitle("\(filteredItems.count) \(filteredItems.count == 1 ? "note" : "notes")")
-                .toolbar {
-                    #if !os(macOS)
-                    if isCloudSyncIndicatorVisible {
-                        ToolbarItem(placement: .automatic) {
-                            CloudSyncToolbarIndicator()
-                        }
-                    }
-                    #endif
-
-                    #if os(iOS)
-                    NotesToolbar(
-                        isEditing: isEditing,
-                        filteredItems: filteredItems,
-                        selectedItemIDs: selectedItemIDs,
-                        allItemsIsEmpty: allItems.isEmpty,
-                        allFilteredItemsSelected: allFilteredItemsSelected,
-                        deleteSelectedLabel: isViewingTrash ? "Delete Forever" : "Trash Selected",
-                        deleteSelectedSystemImage: isViewingTrash ? "trash.slash" : "trash",
-                        deleteSelectedItems: deleteSelectedItems,
-                        addItem: addItem,
-                        selectAllItems: selectAllItems,
-                        deselectAllItems: deselectAllItems
-                    )
-                    #else
-                    NotesToolbar(
-                        isEditing: isEditing,
-                        filteredItems: filteredItems,
-                        selectedItemIDs: selectedItemIDs,
-                        deleteSelectedLabel: isViewingTrash ? "Delete Forever" : "Trash Selected",
-                        deleteSelectedSystemImage: isViewingTrash ? "trash.slash" : "trash",
-                        deleteSelectedItems: deleteSelectedItems,
-                        addItem: addItem
-                    )
-                    #endif
-                }
-                #if os(iOS)
-                .environment(\.editMode, $editMode)
-                #endif
-            }
+        List(selection: listSelectionBinding) {
+            notesListContent
         }
-        .navigationSplitViewColumnWidth(min: notesListMinimumColumnWidth, ideal: notesListIdealColumnWidth, max: notesListMaximumColumnWidth)
+        .searchable(
+            text: $searchText,
+            prompt: "Search notes"
+        )
+        .navigationTitle(currentNavigationTitle)
+        .navigationSubtitle("\(filteredItems.count) \(filteredItems.count == 1 ? "note" : "notes")")
+        .navigationSplitViewColumnWidth(min: notesListMinimumColumnWidth, ideal: notesListIdealColumnWidth, max: 800)
+        .toolbar {
+            #if !os(macOS)
+            if isCloudSyncIndicatorVisible {
+                ToolbarItem(placement: .automatic) {
+                    CloudSyncToolbarIndicator()
+                }
+            }
+            #endif
+
+            #if os(iOS)
+            NotesToolbar(
+                isEditing: isEditing,
+                filteredItems: filteredItems,
+                selectedItemIDs: selectedItemIDs,
+                allItemsIsEmpty: allItems.isEmpty,
+                allFilteredItemsSelected: allFilteredItemsSelected,
+                deleteSelectedLabel: isViewingTrash ? "Delete Forever" : "Trash Selected",
+                deleteSelectedSystemImage: isViewingTrash ? "trash.slash" : "trash",
+                deleteSelectedItems: deleteSelectedItems,
+                addItem: addItem,
+                selectAllItems: selectAllItems,
+                deselectAllItems: deselectAllItems
+            )
+            #else
+            NotesToolbar(
+                isEditing: isEditing,
+                filteredItems: filteredItems,
+                selectedItemIDs: selectedItemIDs,
+                deleteSelectedLabel: isViewingTrash ? "Delete Forever" : "Trash Selected",
+                deleteSelectedSystemImage: isViewingTrash ? "trash.slash" : "trash",
+                deleteSelectedItems: deleteSelectedItems,
+                addItem: addItem
+            )
+            #endif
+        }
+        #if os(iOS)
+        .environment(\.editMode, $editMode)
+        #endif
     }
 
     private var detailColumn: some View {
