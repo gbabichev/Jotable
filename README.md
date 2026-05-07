@@ -61,6 +61,12 @@ Just a clean, focused space for your thoughts.
 
 ## 📝 Changelog
 
+### 1.4.0
+- Added: 
+  - "Focus Mode" on iPad and Mac. You can now make notes take up the full window. 
+- Fixed:
+  - Changing a note category to a Hidden or Private category no longer takes you out of that category. 
+
 ### 1.3.1
 - Added:
   - "Empty Trash" context menu
