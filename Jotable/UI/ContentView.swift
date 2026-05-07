@@ -327,16 +327,23 @@ struct ContentView: View {
                 Button(action: { showingAddCategory = true }) {
                     Image(systemName: "folder.badge.plus")
                 }
-//                #if DEBUG
-//                Button(action: {
-//                    print("Debug Print")
-//                }) {
-//                    Label("Debug", systemImage: "ladybug")
-//                }
-//                Button(role: .destructive, action: deleteEverything) {
-//                    Image(systemName: "trash.fill")
-//                }
-//                #endif
+                #if DEBUG
+                Menu {
+                    Button {
+                        createFormattingTestNote()
+                    } label: {
+                        Label("Formatting Test Note", systemImage: "textformat")
+                    }
+
+                    Divider()
+
+                    Button(role: .destructive, action: deleteEverything) {
+                        Label("Delete Everything", systemImage: "trash.fill")
+                    }
+                } label: {
+                    Label("Debug", systemImage: "ladybug")
+                }
+                #endif
             }
         }
         .sheet(isPresented: $showingAddCategory) {
@@ -1131,6 +1138,144 @@ struct ContentView: View {
     private func addItem() {
         _ = createItem()
     }
+
+    #if DEBUG
+    private func createFormattingTestNote() {
+        let attributedContent = formattingTestAttributedContent()
+        let note = Item(
+            title: "Formatting Sync Test",
+            content: formattingTestPlainText()
+        )
+        note.attributedContent = archiveDefaultAttributedContent(attributedContent)
+        note.timestamp = Date()
+
+        if let selectedCategory = selectedCategory {
+            note.category = selectedCategory
+        }
+
+        modelContext.insert(note)
+
+        do {
+            try modelContext.save()
+            selectedItemIDs = [note.persistentModelID]
+        } catch {
+            print("Failed to create formatting test note: \(error)")
+        }
+    }
+
+    private func formattingTestAttributedContent() -> NSAttributedString {
+        let content = NSMutableAttributedString()
+        let baseAttributes = debugTextAttributes()
+        let boldAttributes = debugTextAttributes(isBold: true)
+        let boldItalicAttributes = debugTextAttributes(isBold: true, isItalic: true)
+        let boldItalicUnderlineAttributes = debugTextAttributes(isBold: true, isItalic: true, isUnderlined: true)
+        let boldItalicStrikethroughAttributes = debugTextAttributes(isBold: true, isItalic: true, isStrikethrough: true)
+        let colorAttributes = debugTextAttributes(color: .red)
+        let highlightAttributes = debugTextAttributes(highlight: .yellow)
+
+        append("1. Basic word: ", to: content, attributes: baseAttributes)
+        append("Plain", to: content, attributes: baseAttributes)
+        append("\n\n2. Bold word: ", to: content, attributes: baseAttributes)
+        append("Bold", to: content, attributes: boldAttributes)
+        append("\n\n3. Bold + Italics word: ", to: content, attributes: baseAttributes)
+        append("BoldItalic", to: content, attributes: boldItalicAttributes)
+        append("\n\n4. Bold + Italics + Underline word: ", to: content, attributes: baseAttributes)
+        append("BoldItalicUnderline", to: content, attributes: boldItalicUnderlineAttributes)
+        append("\n\n5. Bold + Italics + Strikethrough word: ", to: content, attributes: baseAttributes)
+        append("BoldItalicStrike", to: content, attributes: boldItalicStrikethroughAttributes)
+        append("\n\n6. Colored word: ", to: content, attributes: baseAttributes)
+        append("Red", to: content, attributes: colorAttributes)
+        append("\n\n7. Highlighted word: ", to: content, attributes: baseAttributes)
+        append("Highlighted", to: content, attributes: highlightAttributes)
+        append("\n\n8. Bullet items:\n", to: content, attributes: baseAttributes)
+        append("• Bullet item one\n• Bullet item two", to: content, attributes: baseAttributes)
+        append("\n\n9. Checkbox items:\n", to: content, attributes: baseAttributes)
+        appendCheckboxLine("Checkbox item one", isChecked: false, to: content, attributes: baseAttributes)
+        appendCheckboxLine("Checkbox item two", isChecked: true, to: content, attributes: baseAttributes)
+        append("\n10. Numbered items:\n", to: content, attributes: baseAttributes)
+        append("1. Numbered item one\n2. Numbered item two", to: content, attributes: baseAttributes)
+
+        return content
+    }
+
+    private func formattingTestPlainText() -> String {
+        """
+        1. Basic word: Plain
+
+        2. Bold word: Bold
+
+        3. Bold + Italics word: BoldItalic
+
+        4. Bold + Italics + Underline word: BoldItalicUnderline
+
+        5. Bold + Italics + Strikethrough word: BoldItalicStrike
+
+        6. Colored word: Red
+
+        7. Highlighted word: Highlighted
+
+        8. Bullet items:
+        • Bullet item one
+        • Bullet item two
+
+        9. Checkbox items:
+        Checkbox item one
+        Checkbox item two
+
+        10. Numbered items:
+        1. Numbered item one
+        2. Numbered item two
+        """
+    }
+
+    private func debugTextAttributes(
+        isBold: Bool = false,
+        isItalic: Bool = false,
+        isUnderlined: Bool = false,
+        isStrikethrough: Bool = false,
+        color: RichTextColor = .automatic,
+        highlight: HighlighterColor = .none
+    ) -> [NSAttributedString.Key: Any] {
+        #if os(macOS)
+        let platformColor = color.nsColor
+        let platformHighlight = highlight.nsColor
+        #else
+        let platformColor = color.uiColor
+        let platformHighlight = highlight.uiColor
+        #endif
+
+        return TextStyler(
+            isBold: isBold,
+            isItalic: isItalic,
+            fontSize: .normal,
+            colorID: color.id,
+            color: platformColor,
+            highlightID: highlight == .none ? nil : highlight.id,
+            highlight: platformHighlight,
+            isUnderlined: isUnderlined,
+            isStrikethrough: isStrikethrough
+        ).buildAttributes(usingAutomatic: color == .automatic)
+    }
+
+    private func append(_ text: String, to content: NSMutableAttributedString, attributes: [NSAttributedString.Key: Any]) {
+        content.append(NSAttributedString(string: text, attributes: attributes))
+    }
+
+    private func appendCheckboxLine(
+        _ text: String,
+        isChecked: Bool,
+        to content: NSMutableAttributedString,
+        attributes: [NSAttributedString.Key: Any]
+    ) {
+        let checkbox = CheckboxTextAttachment(
+            checkboxID: UUID().uuidString,
+            isChecked: isChecked,
+            fontPointSize: FontSize.normal.rawValue
+        )
+        content.append(NSAttributedString(attachment: checkbox))
+        append(" \(text)\n", to: content, attributes: attributes)
+    }
+    #endif
 
     private func defaultAttributedContent(for text: String) -> NSAttributedString {
         let styler = TextStyler(
