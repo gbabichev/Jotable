@@ -770,6 +770,35 @@ struct RichTextEditor: NSViewRepresentable {
             }
         }
 
+        private func pushFormattingStateToParent(
+            bold: Bool? = nil,
+            italic: Bool? = nil,
+            underlined: Bool? = nil,
+            strikethrough: Bool? = nil
+        ) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if let bold {
+                    self.parent.isBold = bold
+                }
+                if let italic {
+                    self.parent.isItalic = italic
+                }
+                if let underlined {
+                    self.parent.isUnderlined = underlined
+                }
+                if let strikethrough {
+                    self.parent.isStrikethrough = strikethrough
+                }
+            }
+        }
+
+        private func pushActiveColorToParent(_ color: RichTextColor) {
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.activeColor = color
+            }
+        }
+
         private func effectiveColorComponents() -> (color: NSColor, id: String?) {
             if let customTypingColor {
                 let identifier = ColorMapping.identifier(for: customTypingColor, preferPaletteMatch: false)
@@ -827,7 +856,11 @@ struct RichTextEditor: NSViewRepresentable {
 
         func syncFormattingState(with textView: NSTextView) {
             isSyncingFormattingState = true
-            defer { isSyncingFormattingState = false }
+            defer {
+                DispatchQueue.main.async { [weak self] in
+                    self?.isSyncingFormattingState = false
+                }
+            }
 
             let selectedRange = textView.selectedRange
 
@@ -889,31 +922,31 @@ struct RichTextEditor: NSViewRepresentable {
             // This ensures consistency after native menu changes
             if sampledBold != isBold {
                 isBold = sampledBold
-                parent.isBold = sampledBold
+                pushFormattingStateToParent(bold: sampledBold)
             } else if sampledBold != parent.isBold {
                 // Ensure parent binding is in sync even if coordinator state matches
-                parent.isBold = sampledBold
+                pushFormattingStateToParent(bold: sampledBold)
             }
 
             if sampledItalic != isItalic {
                 isItalic = sampledItalic
-                parent.isItalic = sampledItalic
+                pushFormattingStateToParent(italic: sampledItalic)
             } else if sampledItalic != parent.isItalic {
-                parent.isItalic = sampledItalic
+                pushFormattingStateToParent(italic: sampledItalic)
             }
 
             if sampledUnderline != isUnderlined {
                 isUnderlined = sampledUnderline
-                parent.isUnderlined = sampledUnderline
+                pushFormattingStateToParent(underlined: sampledUnderline)
             } else if sampledUnderline != parent.isUnderlined {
-                parent.isUnderlined = sampledUnderline
+                pushFormattingStateToParent(underlined: sampledUnderline)
             }
 
             if sampledStrikethrough != isStrikethrough {
                 isStrikethrough = sampledStrikethrough
-                parent.isStrikethrough = sampledStrikethrough
+                pushFormattingStateToParent(strikethrough: sampledStrikethrough)
             } else if sampledStrikethrough != parent.isStrikethrough {
-                parent.isStrikethrough = sampledStrikethrough
+                pushFormattingStateToParent(strikethrough: sampledStrikethrough)
             }
         }
 
@@ -967,7 +1000,7 @@ struct RichTextEditor: NSViewRepresentable {
                     if paletteColor != activeColor {
                         activeColor = paletteColor
                         pendingActiveColorFeedback = paletteColor
-                        parent.activeColor = paletteColor
+                        pushActiveColorToParent(paletteColor)
                     }
                 }
             } else if let color {
@@ -979,17 +1012,17 @@ struct RichTextEditor: NSViewRepresentable {
             // Update bold, underline, and strikethrough state if sampled
             if let sampledBold, sampledBold != isBold {
                 isBold = sampledBold
-                parent.isBold = sampledBold
+                pushFormattingStateToParent(bold: sampledBold)
             }
 
             if let sampledUnderline, sampledUnderline != isUnderlined {
                 isUnderlined = sampledUnderline
-                parent.isUnderlined = sampledUnderline
+                pushFormattingStateToParent(underlined: sampledUnderline)
             }
 
             if let sampledStrikethrough, sampledStrikethrough != isStrikethrough {
                 isStrikethrough = sampledStrikethrough
-                parent.isStrikethrough = sampledStrikethrough
+                pushFormattingStateToParent(strikethrough: sampledStrikethrough)
             }
         }
 
@@ -1162,7 +1195,7 @@ struct RichTextEditor: NSViewRepresentable {
                paletteMatch != activeColor {
                 activeColor = paletteMatch
                 pendingActiveColorFeedback = paletteMatch
-                parent.activeColor = paletteMatch
+                pushActiveColorToParent(paletteMatch)
             }
 
             applyTypingAttributes(to: textView)
