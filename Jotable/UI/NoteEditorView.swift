@@ -19,6 +19,7 @@ struct NoteEditorView: View {
     #endif
     @Binding var passwordGeneratorTargetNoteID: UUID?
     var onCategoryAssignment: (Item, Category?) -> Void = { _, _ in }
+    var onToggleEditorFocus: () -> Void = {}
     @State private var richText = AttributedTextWrapper(value: NSAttributedString(string: ""))
     @State private var activeColor: RichTextColor = .automatic
     @State private var activeHighlighter: HighlighterColor = .none
@@ -232,7 +233,7 @@ struct NoteEditorView: View {
             if UIDevice.current.userInterfaceIdiom == .pad {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        isEditorExpanded.toggle()
+                        onToggleEditorFocus()
                     } label: {
                         Label(
                             isEditorExpanded ? "Show Note List" : "Focus Editor",

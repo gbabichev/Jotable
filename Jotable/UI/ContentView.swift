@@ -35,8 +35,11 @@ struct ContentView: View {
 
     @State private var selectedItemIDs: Set<PersistentIdentifier> = []
     @State private var categoryAssignmentPreservedSelectionID: PersistentIdentifier?
+    #if os(iOS)
+    @State private var splitViewVisibility: NavigationSplitViewVisibility = UIDevice.current.userInterfaceIdiom == .pad ? .all : .automatic
+    #else
     @State private var splitViewVisibility: NavigationSplitViewVisibility = .automatic
-    @State private var focusedSplitViewVisibility: NavigationSplitViewVisibility = .automatic
+    #endif
     @State private var sidebarSelection: SidebarSelection? = .allNotes
     @State private var showingAddCategory = false
     @State private var categoryToEdit: Category?
@@ -207,6 +210,10 @@ struct ContentView: View {
     }
 
     private var notesListMinimumColumnWidth: CGFloat {
+        if shouldUseExpandedEditorLayout {
+            return 0
+        }
+
         switch splitViewVisibility {
         case .doubleColumn, .detailOnly:
             return 450
@@ -216,31 +223,20 @@ struct ContentView: View {
     }
 
     private var notesListIdealColumnWidth: CGFloat {
-        max(250, notesListMinimumColumnWidth)
+        if shouldUseExpandedEditorLayout {
+            return 0
+        }
+
+        return max(250, notesListMinimumColumnWidth)
     }
 
-    #if os(macOS) || os(iOS)
-    private var focusedVisibilityPreservingSidebarState: NavigationSplitViewVisibility {
-        switch splitViewVisibility {
-        case .doubleColumn, .detailOnly:
-            return .detailOnly
-        default:
-            return .doubleColumn
-        }
+    private var notesListMaximumColumnWidth: CGFloat {
+        shouldUseExpandedEditorLayout ? 0 : 800
     }
-    #endif
 
     @ViewBuilder
     private var navigationContent: some View {
-        if shouldUseExpandedEditorLayout {
-            NavigationSplitView(columnVisibility: $focusedSplitViewVisibility) {
-                sidebarColumn
-            } detail: {
-                detailColumn
-            }
-        } else {
-            standardNavigationSplitView
-        }
+        standardNavigationSplitView
     }
 
     private var standardNavigationSplitView: some View {
@@ -360,54 +356,61 @@ struct ContentView: View {
     }
 
     private var notesListColumn: some View {
-        List(selection: listSelectionBinding) {
-            notesListContent
-        }
-        .searchable(
-            text: $searchText,
-            prompt: "Search notes"
-        )
-        .navigationTitle(currentNavigationTitle)
-        .navigationSubtitle("\(filteredItems.count) \(filteredItems.count == 1 ? "note" : "notes")")
-        .navigationSplitViewColumnWidth(min: notesListMinimumColumnWidth, ideal: notesListIdealColumnWidth, max: 800)
-        .toolbar {
-            #if !os(macOS)
-            if isCloudSyncIndicatorVisible {
-                ToolbarItem(placement: .automatic) {
-                    CloudSyncToolbarIndicator()
+        Group {
+            if shouldUseExpandedEditorLayout {
+                Color.clear
+                    .accessibilityHidden(true)
+            } else {
+                List(selection: listSelectionBinding) {
+                    notesListContent
                 }
-            }
-            #endif
+                .searchable(
+                    text: $searchText,
+                    prompt: "Search notes"
+                )
+                .navigationTitle(currentNavigationTitle)
+                .navigationSubtitle("\(filteredItems.count) \(filteredItems.count == 1 ? "note" : "notes")")
+                .toolbar {
+                    #if !os(macOS)
+                    if isCloudSyncIndicatorVisible {
+                        ToolbarItem(placement: .automatic) {
+                            CloudSyncToolbarIndicator()
+                        }
+                    }
+                    #endif
 
-            #if os(iOS)
-            NotesToolbar(
-                isEditing: isEditing,
-                filteredItems: filteredItems,
-                selectedItemIDs: selectedItemIDs,
-                allItemsIsEmpty: allItems.isEmpty,
-                allFilteredItemsSelected: allFilteredItemsSelected,
-                deleteSelectedLabel: isViewingTrash ? "Delete Forever" : "Trash Selected",
-                deleteSelectedSystemImage: isViewingTrash ? "trash.slash" : "trash",
-                deleteSelectedItems: deleteSelectedItems,
-                addItem: addItem,
-                selectAllItems: selectAllItems,
-                deselectAllItems: deselectAllItems
-            )
-            #else
-            NotesToolbar(
-                isEditing: isEditing,
-                filteredItems: filteredItems,
-                selectedItemIDs: selectedItemIDs,
-                deleteSelectedLabel: isViewingTrash ? "Delete Forever" : "Trash Selected",
-                deleteSelectedSystemImage: isViewingTrash ? "trash.slash" : "trash",
-                deleteSelectedItems: deleteSelectedItems,
-                addItem: addItem
-            )
-            #endif
+                    #if os(iOS)
+                    NotesToolbar(
+                        isEditing: isEditing,
+                        filteredItems: filteredItems,
+                        selectedItemIDs: selectedItemIDs,
+                        allItemsIsEmpty: allItems.isEmpty,
+                        allFilteredItemsSelected: allFilteredItemsSelected,
+                        deleteSelectedLabel: isViewingTrash ? "Delete Forever" : "Trash Selected",
+                        deleteSelectedSystemImage: isViewingTrash ? "trash.slash" : "trash",
+                        deleteSelectedItems: deleteSelectedItems,
+                        addItem: addItem,
+                        selectAllItems: selectAllItems,
+                        deselectAllItems: deselectAllItems
+                    )
+                    #else
+                    NotesToolbar(
+                        isEditing: isEditing,
+                        filteredItems: filteredItems,
+                        selectedItemIDs: selectedItemIDs,
+                        deleteSelectedLabel: isViewingTrash ? "Delete Forever" : "Trash Selected",
+                        deleteSelectedSystemImage: isViewingTrash ? "trash.slash" : "trash",
+                        deleteSelectedItems: deleteSelectedItems,
+                        addItem: addItem
+                    )
+                    #endif
+                }
+                #if os(iOS)
+                .environment(\.editMode, $editMode)
+                #endif
+            }
         }
-        #if os(iOS)
-        .environment(\.editMode, $editMode)
-        #endif
+        .navigationSplitViewColumnWidth(min: notesListMinimumColumnWidth, ideal: notesListIdealColumnWidth, max: notesListMaximumColumnWidth)
     }
 
     private var detailColumn: some View {
@@ -428,7 +431,10 @@ struct ContentView: View {
                     isEditorActive: $isEditorActive,
                     isEditorExpanded: $isEditorExpanded,
                     passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID,
-                    onCategoryAssignment: prepareSelectionForCategoryAssignment
+                    onCategoryAssignment: prepareSelectionForCategoryAssignment,
+                    onToggleEditorFocus: {
+                        setEditorExpanded(!isEditorExpanded)
+                    }
                 )
                     .id(selectedItem.id) // Force view recreation when switching notes
                 #endif
@@ -615,12 +621,6 @@ struct ContentView: View {
             isEditorExpanded = false
             return
         }
-
-        #if os(macOS) || os(iOS)
-        if expanded {
-            focusedSplitViewVisibility = focusedVisibilityPreservingSidebarState
-        }
-        #endif
 
         guard expanded != isEditorExpanded else {
             return
