@@ -10,10 +10,16 @@ import SwiftUI
 struct AddURLView: View {
     @State private var displayText: String
     @State private var urlString: String
+    @FocusState private var focusedField: Field?
     @Environment(\.dismiss) private var dismissEnvironment
     @Binding var tempURLData: (String, String)?
     private let editingContext: LinkEditContext?
     var onDismiss: (() -> Void)?
+
+    private enum Field {
+        case displayText
+        case url
+    }
 
     init(
         tempURLData: Binding<(String, String)?>,
@@ -59,42 +65,94 @@ struct AddURLView: View {
 
 #if os(macOS)
     private var macContent: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(isEditing ? "Edit Link" : "Add Link")
-                .font(.headline)
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "link")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 34, height: 34)
+                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 8))
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Display Text")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                TextField("Link text (e.g., Visit our website)", text: $displayText)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("URL")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                TextField("https://example.com", text: $urlString)
-                    .textFieldStyle(.roundedBorder)
-                    .autocorrectionDisabled()
-                Text("Include https:// for best results.")
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-            }
-
-            HStack {
-                Spacer()
-                Button(action: submitURL) {
-                    Text(isEditing ? "Update Link" : "Add Link")
-                        .frame(minWidth: 100)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(isEditing ? "Edit Link" : "Add Link")
+                        .font(.headline)
+                    Text("Create a clickable link in the note.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
-                .keyboardShortcut(.defaultAction)
-                .disabled(!isValid)
+
+                Spacer()
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 16)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 14) {
+                macField("Text") {
+                    TextField("Text to display", text: $displayText)
+                        .focused($focusedField, equals: .displayText)
+                        .onSubmit(submitIfValid)
+                }
+
+                macField("Destination") {
+                    TextField("https://example.com", text: $urlString)
+                        .focused($focusedField, equals: .url)
+                        .autocorrectionDisabled()
+                        .onSubmit(submitIfValid)
+                } footer: {
+                    Text(normalizedURL == nil && !urlString.isEmpty ? "Enter a valid web address." : "Missing schemes are saved as https://")
+                        .font(.footnote)
+                        .foregroundStyle(normalizedURL == nil && !urlString.isEmpty ? .red : .secondary)
+                }
+            }
+            .textFieldStyle(.roundedBorder)
+            .controlSize(.large)
+            .padding(20)
+
+            Divider()
+
+            HStack(spacing: 10) {
+                Spacer()
+                Button("Cancel", action: dismissView)
+                    .keyboardShortcut(.cancelAction)
+
+                Button(isEditing ? "Update Link" : "Add Link", action: submitURL)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!isValid)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
         }
-        .padding(20)
-        .frame(minWidth: 320, maxWidth: 360)
+        .frame(width: 420)
+        .onAppear {
+            focusedField = displayText.isEmpty ? .displayText : .url
+        }
+    }
+
+    private func macField<Content: View, Footer: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content,
+        @ViewBuilder footer: () -> Footer
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+            content()
+            footer()
+        }
+    }
+
+    private func macField<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        macField(title, content: content) {
+            EmptyView()
+        }
     }
 #else
     private var iosForm: some View {
@@ -129,6 +187,11 @@ struct AddURLView: View {
 
         tempURLData = (url.absoluteString, display)
         dismissView()
+    }
+
+    private func submitIfValid() {
+        guard isValid else { return }
+        submitURL()
     }
 
     private func dismissView() {

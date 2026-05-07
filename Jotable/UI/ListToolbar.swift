@@ -20,18 +20,13 @@ struct ListToolbar: View {
                 showingAddURLDialog = true
             }
             .sheet(isPresented: $showingAddURLDialog) {
-                NavigationStack {
-                    AddURLView(
-                        tempURLData: $tempURLData,
-                        editingContext: nil,
-                        onDismiss: {
-                            showingAddURLDialog = false
-                        }
-                    )
-                    .frame(width: 320, height: 260)
-                    .padding()
-                }
-                .frame(width: 360, height: 320)
+                AddURLView(
+                    tempURLData: $tempURLData,
+                    editingContext: nil,
+                    onDismiss: {
+                        showingAddURLDialog = false
+                    }
+                )
             }
         }
 #else

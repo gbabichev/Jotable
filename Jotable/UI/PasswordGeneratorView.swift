@@ -171,18 +171,24 @@ struct PasswordGeneratorView: View {
 #if os(macOS)
     private var macBody: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    macHeroCard
-                    macModePicker
+            VStack(spacing: 0) {
+                macHeader
 
-                    if mode == .strong {
-                        macStrongConfiguration
-                    } else {
-                        macSimpleConfiguration
+                Divider()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        macHeroCard
+                        macModePicker
+
+                        if mode == .strong {
+                            macStrongConfiguration
+                        } else {
+                            macSimpleConfiguration
+                        }
                     }
+                    .padding(12)
                 }
-                .padding(12)
             }
             .frame(width: 500, height: 420)
             .background(Color(nsColor: .windowBackgroundColor))
@@ -209,6 +215,29 @@ struct PasswordGeneratorView: View {
                 refreshPassword()
             }
         }
+    }
+
+    private var macHeader: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "key.horizontal")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Generate Password")
+                    .font(.headline)
+                Text("Create a strong or memorable password for this note.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 18)
+        .padding(.bottom, 16)
     }
 
     private var macHeroCard: some View {
