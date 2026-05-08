@@ -468,6 +468,10 @@ struct ContentView: View {
             purgeExpiredTrash()
             setupCloudKitNotifications()
             restoreLastSelectedNoteIfNeeded()
+            disableFocusModeIfEditorIsEmpty()
+            DispatchQueue.main.async {
+                disableFocusModeIfEditorIsEmpty()
+            }
         }
         .onDisappear {
             tearDownCloudKitNotifications()
@@ -537,6 +541,7 @@ struct ContentView: View {
             if primarySelectedItem == nil {
                 restoreLastSelectedNoteIfNeeded()
             }
+            disableFocusModeIfEditorIsEmpty()
         }
         .onChange(of: filteredItems) { _, _ in
             let visibleIDs = Set(filteredItems.map(\.persistentModelID))
@@ -559,6 +564,7 @@ struct ContentView: View {
                visibleIDs.contains(preservedID) {
                 categoryAssignmentPreservedSelectionID = nil
             }
+            disableFocusModeIfEditorIsEmpty()
         }
         .onChange(of: scenePhase) { _, newPhase in
             // When app becomes active, check if authentication has expired
@@ -608,6 +614,14 @@ struct ContentView: View {
     }
 
     #if os(macOS) || os(iOS)
+    private func disableFocusModeIfEditorIsEmpty() {
+        guard isEditorExpanded, primarySelectedItem == nil else {
+            return
+        }
+
+        isEditorExpanded = false
+    }
+
     private func setEditorExpanded(_ expanded: Bool) {
         if expanded && (!canExpandEditor || primarySelectedItem == nil) {
             isEditorExpanded = false
