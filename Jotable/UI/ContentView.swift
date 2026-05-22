@@ -44,6 +44,7 @@ struct ContentView: View {
     #endif
     @State private var sidebarSelection: SidebarSelection? = .allNotes
     @State private var showingAddCategory = false
+    @State private var showingAddTodo = false
     @State private var categoryToEdit: Category?
     @State private var searchText = ""
     @State private var authenticatingCategoryID: PersistentIdentifier?
@@ -472,8 +473,14 @@ struct ContentView: View {
         .navigationSubtitle("\(openTodoCount) \(openTodoCount == 1 ? "open todo" : "open todos")")
         .navigationSplitViewColumnWidth(min: notesListMinimumColumnWidth, ideal: notesListIdealColumnWidth, max: 800)
         .toolbar {
-            if isCloudSyncIndicatorVisible {
-                ToolbarItem(placement: .automatic) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    showingAddTodo = true
+                } label: {
+                    Label("New Todo", systemImage: "plus")
+                }
+
+                if isCloudSyncIndicatorVisible {
                     CloudSyncToolbarIndicator()
                 }
             }
@@ -561,6 +568,11 @@ struct ContentView: View {
             PasswordGeneratorView { password in
                 insertPasswordIntoNewNote(password)
                 showingExternalPasswordGenerator = false
+            }
+        }
+        .sheet(isPresented: $showingAddTodo) {
+            AddTodoView { text in
+                createStandaloneTodo(from: text)
             }
         }
         #if os(macOS)
@@ -908,22 +920,30 @@ struct ContentView: View {
                     todo: todo,
                     sourceTitle: sourceTitle(for: todo),
                     sourceCategoryName: sourceCategoryName(for: todo),
+                    isLinkedToNote: !isStandaloneTodo(todo),
                     sourceTextAvailable: todo.isSourceTextAvailable,
                     canOpenSource: sourceNote(for: todo) != nil,
                     toggleCompletion: {
                         toggleTodoCompletion(todo)
+                    },
+                    updateText: { text in
+                        updateStandaloneTodo(todo, text: text)
                     },
                     openSource: {
                         openSourceNote(for: todo)
                     }
                 )
                 .contextMenu {
-                    Button {
-                        openSourceNote(for: todo)
-                    } label: {
-                        Label("Open Source Note", systemImage: "arrow.up.forward.square")
+                    if !isStandaloneTodo(todo) {
+                        Button {
+                            openSourceNote(for: todo)
+                        } label: {
+                            Label("Open Source Note", systemImage: "arrow.up.forward.square")
+                        }
+                        .disabled(sourceNote(for: todo) == nil)
+
+                        Divider()
                     }
-                    .disabled(sourceNote(for: todo) == nil)
 
                     Button {
                         toggleTodoCompletion(todo)
@@ -953,6 +973,59 @@ struct ContentView: View {
         }
     }
 
+    private func isStandaloneTodo(_ todo: TodoItem) -> Bool {
+        todo.sourceNote == nil && todo.sourceNoteID.isEmpty
+    }
+
+    private func createStandaloneTodo(from text: String) {
+        let todoText = normalizedStandaloneTodoText(from: text)
+        guard !todoText.isEmpty else { return }
+
+        let todo = TodoItem(
+            text: todoText,
+            sourceText: "",
+            sourceNote: nil
+        )
+        todo.isSourceTextAvailable = false
+        modelContext.insert(todo)
+
+        do {
+            try modelContext.save()
+            print("💾 Standalone todo created - CloudKit sync queued")
+        } catch {
+            print("❌ Failed to create standalone todo: \(error)")
+        }
+    }
+
+    private func normalizedStandaloneTodoText(from text: String) -> String {
+        text
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    @discardableResult
+    private func updateStandaloneTodo(_ todo: TodoItem, text: String) -> String {
+        guard isStandaloneTodo(todo) else { return todo.text }
+
+        let todoText = normalizedStandaloneTodoText(from: text)
+        guard !todoText.isEmpty else { return todo.text }
+        guard todo.text != todoText else { return todo.text }
+
+        todo.text = todoText
+        todo.updatedAt = Date()
+
+        do {
+            try modelContext.save()
+            print("💾 Standalone todo updated - CloudKit sync queued")
+        } catch {
+            print("❌ Failed to update standalone todo: \(error)")
+        }
+
+        return todo.text
+    }
+
     private func sourceNote(for todo: TodoItem) -> Item? {
         guard let note = linkedSourceNote(for: todo), !note.isInTrash else {
             return nil
@@ -971,6 +1044,10 @@ struct ContentView: View {
     }
 
     private func sourceTitle(for todo: TodoItem) -> String {
+        if isStandaloneTodo(todo) {
+            return "Standalone todo"
+        }
+
         if let note = sourceNote(for: todo) {
             return note.title.isEmpty ? "Untitled" : note.title
         }
@@ -979,6 +1056,8 @@ struct ContentView: View {
     }
 
     private func sourceCategoryName(for todo: TodoItem) -> String? {
+        guard !isStandaloneTodo(todo) else { return nil }
+
         if let categoryName = sourceNote(for: todo)?.category?.name, !categoryName.isEmpty {
             return categoryName
         }
@@ -2101,17 +2180,92 @@ struct TodoRowView: View {
     let todo: TodoItem
     let sourceTitle: String
     let sourceCategoryName: String?
+    let isLinkedToNote: Bool
     let sourceTextAvailable: Bool
     let canOpenSource: Bool
     let toggleCompletion: () -> Void
+    let updateText: (String) -> String
     let openSource: () -> Void
 
+    @State private var draftText = ""
+    @FocusState private var isTextFocused: Bool
+
     private var sourceLabel: String {
+        guard isLinkedToNote else {
+            return "Standalone todo"
+        }
+
         let title = sourceTextAvailable ? sourceTitle : "\(sourceTitle) - source text removed"
         if let sourceCategoryName {
             return "\(sourceCategoryName) / \(title)"
         }
         return title
+    }
+
+    private var sourceIcon: String {
+        guard isLinkedToNote else {
+            return "checklist"
+        }
+
+        return canOpenSource ? "arrow.up.forward.square" : "exclamationmark.triangle"
+    }
+
+    private var sourceHelp: String {
+        if canOpenSource {
+            return "Open source note"
+        }
+
+        return isLinkedToNote ? "Source note is unavailable" : "Standalone todo"
+    }
+
+    @ViewBuilder
+    private var titleContent: some View {
+        if isLinkedToNote {
+            Text(todo.text)
+                .font(.body)
+                .foregroundStyle(todo.isCompleted ? .secondary : .primary)
+                .strikethrough(todo.isCompleted)
+                .lineLimit(3)
+        } else {
+            TextField("Todo", text: $draftText, axis: .vertical)
+                .font(.body)
+                .foregroundStyle(todo.isCompleted ? .secondary : .primary)
+                .strikethrough(todo.isCompleted)
+                .lineLimit(1...3)
+                .textFieldStyle(.plain)
+                .focused($isTextFocused)
+                .onSubmit {
+                    commitStandaloneEdit()
+                }
+                .onChange(of: isTextFocused) { _, isFocused in
+                    if !isFocused {
+                        commitStandaloneEdit()
+                    }
+                }
+                #if os(iOS)
+                .textInputAutocapitalization(.sentences)
+                #endif
+        }
+    }
+
+    private var rowContent: some View {
+        HStack(alignment: .top, spacing: 0) {
+            VStack(alignment: .leading, spacing: 6) {
+                titleContent
+
+                HStack(spacing: 4) {
+                    Image(systemName: sourceIcon)
+                        .font(.caption)
+                    Text(sourceLabel)
+                        .lineLimit(1)
+                }
+                .font(.caption)
+                .foregroundStyle(canOpenSource ? .secondary : .tertiary)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
     }
 
     var body: some View {
@@ -2125,34 +2279,36 @@ struct TodoRowView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(todo.isCompleted ? "Mark todo open" : "Mark todo done")
 
-            Button(action: openSource) {
-                HStack(alignment: .top, spacing: 0) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(todo.text)
-                            .font(.body)
-                            .foregroundStyle(todo.isCompleted ? .secondary : .primary)
-                            .strikethrough(todo.isCompleted)
-                            .lineLimit(3)
-
-                        HStack(spacing: 4) {
-                            Image(systemName: canOpenSource ? "arrow.up.forward.square" : "exclamationmark.triangle")
-                                .font(.caption)
-                            Text(sourceLabel)
-                                .lineLimit(1)
-                        }
-                        .font(.caption)
-                        .foregroundStyle(canOpenSource ? .secondary : .tertiary)
-                    }
-
-                    Spacer(minLength: 0)
+            if canOpenSource {
+                Button(action: openSource) {
+                    rowContent
                 }
+                .buttonStyle(.plain)
+                .help(sourceHelp)
+            } else {
+                rowContent
+                    .help(sourceHelp)
             }
-            .buttonStyle(.plain)
-            .disabled(!canOpenSource)
-            .help(canOpenSource ? "Open source note" : "Source note is unavailable")
         }
         .padding(.vertical, 6)
         .contentShape(Rectangle())
+        .onAppear {
+            draftText = todo.text
+        }
+        .onChange(of: todo.text) { _, newValue in
+            if !isTextFocused {
+                draftText = newValue
+            }
+        }
+    }
+
+    private func commitStandaloneEdit() {
+        guard !isLinkedToNote else { return }
+
+        let savedText = updateText(draftText)
+        if draftText != savedText {
+            draftText = savedText
+        }
     }
 }
 
