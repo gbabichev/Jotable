@@ -9,6 +9,7 @@ private final class DynamicColorTextView: NSTextView {
     var onFormatChange: (() -> Void)?
     var onPaste: (() -> Void)?
     var onImageResize: ((ResizableImageAttachment) -> Void)?
+    var onAddSelectedTextToTodo: ((String, NSRange) -> Void)?
     var isUnderlinedManually = false  // Track underline state for native menu toggles (which don't update typingAttributes)
     var extraBottomPadding: CGFloat = 0
 
@@ -162,6 +163,50 @@ private final class DynamicColorTextView: NSTextView {
            let tiffData = image.tiffRepresentation {
             pasteboard.setData(tiffData, forType: .tiff)
         }
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = (super.menu(for: event)?.copy() as? NSMenu) ?? NSMenu()
+
+        if selectedTodoPayload() != nil {
+            if !menu.items.isEmpty {
+                menu.addItem(.separator())
+            }
+
+            let item = NSMenuItem(
+                title: "Add to Todo List",
+                action: #selector(addSelectedTextToTodo(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.image = NSImage(systemSymbolName: "checklist", accessibilityDescription: "Add to Todo List")
+            menu.addItem(item)
+        }
+
+        return menu
+    }
+
+    @objc private func addSelectedTextToTodo(_ sender: Any?) {
+        guard let payload = selectedTodoPayload() else { return }
+        onAddSelectedTextToTodo?(payload.text, payload.range)
+    }
+
+    private func selectedTodoPayload() -> (text: String, range: NSRange)? {
+        let range = selectedRange
+        guard range.length > 0,
+              let storage = textStorage,
+              range.location >= 0,
+              NSMaxRange(range) <= storage.length else {
+            return nil
+        }
+
+        let text = storage.attributedSubstring(from: range).string
+        let visibleText = text.replacingOccurrences(of: "\u{FFFC}", with: "")
+        guard !visibleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        return (text, range)
     }
 
     override func changeColor(_ sender: Any?) {
@@ -489,6 +534,7 @@ struct RichTextEditor: NSViewRepresentable {
     @Binding var presentFormatMenuTrigger: UUID?
     @Binding var resetColorTrigger: UUID?
     @Binding var pastePlaintextTrigger: UUID?
+    var onAddSelectedTextToTodo: (TodoCreationRequest) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -540,6 +586,9 @@ struct RichTextEditor: NSViewRepresentable {
         }
         textView.onPaste = { [weak coordinator = context.coordinator] in
             coordinator?.handlePasteUndoSnapshot()
+        }
+        textView.onAddSelectedTextToTodo = { [weak coordinator = context.coordinator] text, range in
+            coordinator?.handleAddSelectedTextToTodo(text: text, range: range)
         }
 
         // Mark initialization as complete after the textView is fully set up
@@ -852,6 +901,15 @@ struct RichTextEditor: NSViewRepresentable {
         func handlePasteUndoSnapshot() {
             guard let textView else { return }
             registerUndoSnapshot(for: textView, actionName: "Paste")
+        }
+
+        func handleAddSelectedTextToTodo(text: String, range: NSRange) {
+            let request = TodoCreationRequest(
+                text: text,
+                selectedRangeLocation: range.location,
+                selectedRangeLength: range.length
+            )
+            parent.onAddSelectedTextToTodo(request)
         }
 
         func syncFormattingState(with textView: NSTextView) {

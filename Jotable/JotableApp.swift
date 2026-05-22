@@ -180,7 +180,7 @@ struct JotableApp: App {
         //resetDataStore()
 
         do {
-            let schema = Schema([Item.self, Category.self])
+            let schema = Schema([Item.self, Category.self, TodoItem.self])
             let config = ModelConfiguration(
                 schema: schema,
                 isStoredInMemoryOnly: false,

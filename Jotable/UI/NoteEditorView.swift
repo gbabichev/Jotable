@@ -9,6 +9,7 @@ import UIKit
 struct NoteEditorView: View {
     @Bindable var item: Item
     @Environment(\.modelContext) private var modelContext
+    @Query(sort: \TodoItem.createdAt, order: .reverse) private var allTodos: [TodoItem]
     @FocusState private var isTitleFocused: Bool
     #if os(macOS)
     @Binding var pastePlaintextTrigger: UUID?
@@ -47,6 +48,7 @@ struct NoteEditorView: View {
     @State private var lastSyncedRichText: NSAttributedString?
     @State private var skipNextAttributedContentChange = false
     @State private var isLoadingContent = false
+    @State private var isApplyingTodoRendering = false
 #if !os(macOS)
     @State private var linkEditRequest: LinkEditContext?
 #endif
@@ -99,12 +101,78 @@ struct NoteEditorView: View {
             .onChange(of: passwordGeneratorTargetNoteID) { _, _ in
                 presentPasswordGeneratorIfNeeded()
             }
+            .onChange(of: todoRenderSignature) { _, _ in
+                applyTodoCompletionRenderingIfNeeded()
+            }
     }
 
     private func presentPasswordGeneratorIfNeeded() {
         guard passwordGeneratorTargetNoteID == item.id else { return }
         showingPasswordGenerator = true
         passwordGeneratorTargetNoteID = nil
+    }
+
+    private func createTodoFromSelection(_ request: TodoCreationRequest) {
+        let todoText = normalizedTodoText(from: request.text)
+        guard !todoText.isEmpty else { return }
+
+        let todo = TodoItem(
+            text: todoText,
+            sourceText: request.text,
+            sourceNote: item,
+            sourceRangeLocation: request.selectedRangeLocation,
+            sourceRangeLength: request.selectedRangeLength
+        )
+        modelContext.insert(todo)
+        applyTodoMarker(todo, range: NSRange(location: request.selectedRangeLocation, length: request.selectedRangeLength))
+
+        do {
+            try modelContext.save()
+            print("💾 Todo created from note selection - CloudKit sync queued")
+        } catch {
+            print("❌ Failed to create todo: \(error)")
+        }
+    }
+
+    private func normalizedTodoText(from selectedText: String) -> String {
+        selectedText
+            .replacingOccurrences(of: "\u{FFFC}", with: "Image")
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    private var currentTodos: [TodoItem] {
+        allTodos.filter { todo in
+            todo.sourceNote == item || todo.sourceNoteID == item.id.uuidString
+        }
+    }
+
+    private var todoRenderSignature: String {
+        currentTodos
+            .map { "\($0.id.uuidString):\($0.isCompleted):\($0.isSourceTextAvailable)" }
+            .sorted()
+            .joined(separator: "|")
+    }
+
+    private func applyTodoMarker(_ todo: TodoItem, range: NSRange) {
+        let currentText = NSMutableAttributedString(attributedString: richText.value)
+        guard range.location >= 0,
+              range.length > 0,
+              NSMaxRange(range) <= currentText.length else {
+            return
+        }
+
+        currentText.addAttribute(TodoTextAttributes.todoIDKey, value: todo.id.uuidString, range: range)
+        currentText.removeAttribute(TodoTextAttributes.completionRenderedKey, range: range)
+        currentText.removeAttribute(TodoTextAttributes.originalStrikethroughStyleKey, range: range)
+        item.content = currentText.string
+        item.attributedContent = archiveAttributedString(currentText)
+        item.timestamp = Date()
+        skipNextAttributedContentChange = true
+        richText = AttributedTextWrapper(value: currentText)
+        lastSyncedRichText = currentText
     }
 
     private var richTextEditorView: some View {
@@ -146,7 +214,8 @@ struct NoteEditorView: View {
             plainTextInsertionRequest: $plainTextInsertionRequest,
             presentFormatMenuTrigger: $presentFormatMenuTrigger,
             resetColorTrigger: $resetColorTrigger,
-            pastePlaintextTrigger: $pastePlaintextTrigger
+            pastePlaintextTrigger: $pastePlaintextTrigger,
+            onAddSelectedTextToTodo: createTodoFromSelection
         )
         #else
         return RichTextEditor(
@@ -200,6 +269,7 @@ struct NoteEditorView: View {
         }
         .onAppear {
             loadContentIfNeeded()
+            applyTodoCompletionRenderingIfNeeded()
             lastSyncedRichText = richText.value
             if item.title.isEmpty && item.content.isEmpty {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -214,16 +284,21 @@ struct NoteEditorView: View {
                 return
             }
             loadContentIfNeeded()
+            applyTodoCompletionRenderingIfNeeded()
         }
         .onChange(of: richText) { _, newWrapper in
             if isLoadingContent {
                 return
+            }
+            if !isApplyingTodoRendering {
+                syncTodosFromAttributedText(newWrapper.value)
             }
             item.content = newWrapper.value.string
             item.attributedContent = archiveAttributedString(newWrapper.value)
             item.timestamp = Date()
             skipNextAttributedContentChange = true
             saveChanges()
+            isApplyingTodoRendering = false
         }
         .onDisappear {
             saveChanges()
@@ -298,6 +373,150 @@ struct NoteEditorView: View {
             richText = AttributedTextWrapper(value: snapshot)
             lastSyncedRichText = snapshot
         }
+    }
+
+    private struct TodoSourceSnapshot {
+        var text: String
+        var location: Int
+        var length: Int
+    }
+
+    private func todoSourceSnapshots(in attributedString: NSAttributedString) -> [String: TodoSourceSnapshot] {
+        var fragmentsByID: [String: [(range: NSRange, text: String)]] = [:]
+        let fullRange = NSRange(location: 0, length: attributedString.length)
+
+        attributedString.enumerateAttribute(TodoTextAttributes.todoIDKey, in: fullRange, options: []) { value, range, _ in
+            guard let todoID = value as? String,
+                  !todoID.isEmpty,
+                  range.length > 0 else {
+                return
+            }
+
+            let text = attributedString.attributedSubstring(from: range).string
+            fragmentsByID[todoID, default: []].append((range, text))
+        }
+
+        return fragmentsByID.reduce(into: [:]) { result, entry in
+            let fragments = entry.value.sorted { $0.range.location < $1.range.location }
+            guard let firstRange = fragments.first?.range,
+                  let lastRange = fragments.last?.range else {
+                return
+            }
+
+            let text = fragments.map(\.text).joined()
+            result[entry.key] = TodoSourceSnapshot(
+                text: text,
+                location: firstRange.location,
+                length: NSMaxRange(lastRange) - firstRange.location
+            )
+        }
+    }
+
+    private func syncTodosFromAttributedText(_ attributedString: NSAttributedString) {
+        let snapshots = todoSourceSnapshots(in: attributedString)
+        var hasChanges = false
+
+        for todo in currentTodos {
+            if let snapshot = snapshots[todo.id.uuidString] {
+                let todoText = normalizedTodoText(from: snapshot.text)
+                guard !todoText.isEmpty else {
+                    if todo.isSourceTextAvailable {
+                        todo.isSourceTextAvailable = false
+                        todo.sourceRangeLength = 0
+                        todo.updatedAt = Date()
+                        hasChanges = true
+                    }
+                    continue
+                }
+
+                if todo.text != todoText ||
+                    todo.sourceText != snapshot.text ||
+                    todo.sourceRangeLocation != snapshot.location ||
+                    todo.sourceRangeLength != snapshot.length ||
+                    !todo.isSourceTextAvailable ||
+                    todo.sourceNoteTitleSnapshot != item.title ||
+                    todo.sourceCategoryNameSnapshot != (item.category?.name ?? "") {
+                    todo.text = todoText
+                    todo.sourceText = snapshot.text
+                    todo.sourceRangeLocation = snapshot.location
+                    todo.sourceRangeLength = snapshot.length
+                    todo.isSourceTextAvailable = true
+                    todo.sourceNoteTitleSnapshot = item.title
+                    todo.sourceCategoryNameSnapshot = item.category?.name ?? ""
+                    todo.updatedAt = Date()
+                    hasChanges = true
+                }
+            } else if todo.isSourceTextAvailable {
+                todo.isSourceTextAvailable = false
+                todo.sourceRangeLength = 0
+                todo.updatedAt = Date()
+                hasChanges = true
+            }
+        }
+
+        if hasChanges {
+            saveChanges()
+        }
+    }
+
+    private func applyTodoCompletionRenderingIfNeeded() {
+        guard !isLoadingContent else {
+            DispatchQueue.main.async {
+                applyTodoCompletionRenderingIfNeeded()
+            }
+            return
+        }
+
+        let completionByID = Dictionary(uniqueKeysWithValues: currentTodos.map { ($0.id.uuidString, $0.isCompleted) })
+        guard !completionByID.isEmpty, richText.value.length > 0 else { return }
+
+        let rendered = NSMutableAttributedString(attributedString: richText.value)
+        var changed = false
+        let fullRange = NSRange(location: 0, length: rendered.length)
+
+        var markedRanges: [(todoID: String, range: NSRange)] = []
+        richText.value.enumerateAttribute(TodoTextAttributes.todoIDKey, in: fullRange, options: []) { value, range, _ in
+            guard let todoID = value as? String,
+                  range.length > 0 else {
+                return
+            }
+
+            markedRanges.append((todoID, range))
+        }
+
+        for markedRange in markedRanges {
+            guard let isCompleted = completionByID[markedRange.todoID] else { continue }
+            let range = markedRange.range
+
+            if isCompleted {
+                let isRendered = (rendered.attribute(TodoTextAttributes.completionRenderedKey, at: range.location, effectiveRange: nil) as? NSNumber)?.boolValue ?? false
+                if !isRendered {
+                    if let existingStyle = rendered.attribute(.strikethroughStyle, at: range.location, effectiveRange: nil) as? NSNumber {
+                        rendered.addAttribute(TodoTextAttributes.originalStrikethroughStyleKey, value: existingStyle, range: range)
+                    }
+                    rendered.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+                    rendered.addAttribute(TodoTextAttributes.completionRenderedKey, value: NSNumber(value: true), range: range)
+                    changed = true
+                }
+            } else {
+                let isRendered = (rendered.attribute(TodoTextAttributes.completionRenderedKey, at: range.location, effectiveRange: nil) as? NSNumber)?.boolValue ?? false
+                guard isRendered else { continue }
+
+                if let originalStyle = rendered.attribute(TodoTextAttributes.originalStrikethroughStyleKey, at: range.location, effectiveRange: nil) {
+                    rendered.addAttribute(.strikethroughStyle, value: originalStyle, range: range)
+                } else {
+                    rendered.removeAttribute(.strikethroughStyle, range: range)
+                }
+                rendered.removeAttribute(TodoTextAttributes.completionRenderedKey, range: range)
+                rendered.removeAttribute(TodoTextAttributes.originalStrikethroughStyleKey, range: range)
+                changed = true
+            }
+        }
+
+        guard changed else { return }
+        isApplyingTodoRendering = true
+        richText = AttributedTextWrapper(value: rendered)
+        lastSyncedRichText = rendered
     }
 
     private func archiveAttributedString(_ attributedString: NSAttributedString) -> Data? {

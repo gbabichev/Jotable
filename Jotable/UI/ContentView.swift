@@ -15,6 +15,7 @@ import UIKit
 // Selection type for the sidebar
 enum SidebarSelection: Hashable {
     case allNotes
+    case todoList
     case trash
     case category(Category)
 }
@@ -25,6 +26,7 @@ struct ContentView: View {
     // Changed from timestamp to createdAt for stable sorting based on creation date
     @Query(sort: \Item.createdAt, order: .reverse) private var allItems: [Item]
     @Query(sort: \Category.sortOrder) private var categories: [Category]
+    @Query(sort: \TodoItem.createdAt, order: .reverse) private var allTodos: [TodoItem]
     @AppStorage("lastSelectedNoteID") private var lastSelectedNoteID: String = ""
 
     #if os(macOS)
@@ -93,7 +95,7 @@ struct ContentView: View {
     // Computed property to get the selected category for filtering
     private var selectedCategory: Category? {
         switch sidebarSelection {
-        case .allNotes, .trash, .none:
+        case .allNotes, .todoList, .trash, .none:
             return nil
         case .category(let category):
             return category
@@ -111,6 +113,49 @@ struct ContentView: View {
         return false
     }
 
+    private var isViewingTodoList: Bool {
+        if case .todoList = sidebarSelection {
+            return true
+        }
+        return false
+    }
+
+    private var visibleTodos: [TodoItem] {
+        allTodos.filter { todo in
+            if let linkedNote = linkedSourceNote(for: todo) {
+                guard !linkedNote.isInTrash else { return false }
+
+                guard let category = linkedNote.category else { return true }
+                return !category.isPrivate && !category.isHiddenFromHome
+            }
+
+            return true
+        }
+    }
+
+    private var openTodoCount: Int {
+        visibleTodos.filter { !$0.isCompleted }.count
+    }
+
+    private var filteredTodos: [TodoItem] {
+        var todos = visibleTodos
+
+        if !searchText.isEmpty {
+            todos = todos.filter { todo in
+                todo.text.localizedCaseInsensitiveContains(searchText) ||
+                sourceTitle(for: todo).localizedCaseInsensitiveContains(searchText) ||
+                sourceCategoryName(for: todo)?.localizedCaseInsensitiveContains(searchText) == true
+            }
+        }
+
+        return todos.sorted { lhs, rhs in
+            if lhs.isCompleted != rhs.isCompleted {
+                return !lhs.isCompleted
+            }
+            return lhs.createdAt > rhs.createdAt
+        }
+    }
+
     private var trashItemCount: Int {
         allItems.filter { $0.isInTrash }.count
     }
@@ -121,6 +166,8 @@ struct ContentView: View {
 
     private var currentNavigationTitle: String {
         switch sidebarSelection {
+        case .todoList:
+            return "Todo List"
         case .trash:
             return Category.trashName
         case .category(let category):
@@ -185,6 +232,10 @@ struct ContentView: View {
         #else
         guard selectedItemIDs.count == 1, let selectedID = selectedItemIDs.first else { return nil }
         #endif
+        if isViewingTodoList {
+            return allItems.first { $0.persistentModelID == selectedID && !$0.isInTrash }
+        }
+
         if let visibleItem = filteredItems.first(where: { $0.persistentModelID == selectedID }) {
             return visibleItem
         }
@@ -235,7 +286,11 @@ struct ContentView: View {
         NavigationSplitView(columnVisibility: $splitViewVisibility) {
             sidebarColumn
         } content: {
-            notesListColumn
+            if isViewingTodoList {
+                todoListColumn
+            } else {
+                notesListColumn
+            }
         } detail: {
             detailColumn
         }
@@ -405,6 +460,26 @@ struct ContentView: View {
         #endif
     }
 
+    private var todoListColumn: some View {
+        List {
+            todoListContent
+        }
+        .searchable(
+            text: $searchText,
+            prompt: "Search todos"
+        )
+        .navigationTitle("Todo List")
+        .navigationSubtitle("\(openTodoCount) \(openTodoCount == 1 ? "open todo" : "open todos")")
+        .navigationSplitViewColumnWidth(min: notesListMinimumColumnWidth, ideal: notesListIdealColumnWidth, max: 800)
+        .toolbar {
+            if isCloudSyncIndicatorVisible {
+                ToolbarItem(placement: .automatic) {
+                    CloudSyncToolbarIndicator()
+                }
+            }
+        }
+    }
+
     private var detailColumn: some View {
         NavigationStack {
             if let selectedItem = primarySelectedItem {
@@ -544,6 +619,11 @@ struct ContentView: View {
             disableFocusModeIfEditorIsEmpty()
         }
         .onChange(of: filteredItems) { _, _ in
+            if isViewingTodoList {
+                disableFocusModeIfEditorIsEmpty()
+                return
+            }
+
             let visibleIDs = Set(filteredItems.map(\.persistentModelID))
 
             // Trim selection to visible list items, except for the note just moved
@@ -658,6 +738,16 @@ struct ContentView: View {
                 isHiddenFromHome: false
             )
             .tag(SidebarSelection.allNotes)
+
+            CategoryRowView(
+                icon: "checklist",
+                title: "Todo List",
+                count: openTodoCount,
+                color: nil,
+                isPrivate: false,
+                isHiddenFromHome: false
+            )
+            .tag(SidebarSelection.todoList)
 
             CategoryRowView(
                 icon: "trash",
@@ -803,6 +893,56 @@ struct ContentView: View {
         .onDelete(perform: deleteItems)
         #endif
     }
+
+    @ViewBuilder
+    private var todoListContent: some View {
+        if filteredTodos.isEmpty {
+            ContentUnavailableView {
+                Label("No Todos", systemImage: "checklist")
+            } description: {
+                Text(searchText.isEmpty ? "No todo items yet." : "No matching todos.")
+            }
+        } else {
+            ForEach(filteredTodos) { todo in
+                TodoRowView(
+                    todo: todo,
+                    sourceTitle: sourceTitle(for: todo),
+                    sourceCategoryName: sourceCategoryName(for: todo),
+                    sourceTextAvailable: todo.isSourceTextAvailable,
+                    canOpenSource: sourceNote(for: todo) != nil,
+                    toggleCompletion: {
+                        toggleTodoCompletion(todo)
+                    },
+                    openSource: {
+                        openSourceNote(for: todo)
+                    }
+                )
+                .contextMenu {
+                    Button {
+                        openSourceNote(for: todo)
+                    } label: {
+                        Label("Open Source Note", systemImage: "arrow.up.forward.square")
+                    }
+                    .disabled(sourceNote(for: todo) == nil)
+
+                    Button {
+                        toggleTodoCompletion(todo)
+                    } label: {
+                        Label(todo.isCompleted ? "Mark Open" : "Mark Done", systemImage: todo.isCompleted ? "square" : "checkmark.square")
+                    }
+
+                    Divider()
+
+                    Button(role: .destructive) {
+                        deleteTodo(todo)
+                    } label: {
+                        Label("Delete Todo", systemImage: "trash")
+                    }
+                }
+            }
+            .onDelete(perform: deleteTodos)
+        }
+    }
     
     // Delete a single item
     private func deleteItem(_ item: Item) {
@@ -810,6 +950,98 @@ struct ContentView: View {
             permanentlyDeleteItem(item)
         } else {
             moveItemToTrash(item)
+        }
+    }
+
+    private func sourceNote(for todo: TodoItem) -> Item? {
+        guard let note = linkedSourceNote(for: todo), !note.isInTrash else {
+            return nil
+        }
+
+        return note
+    }
+
+    private func linkedSourceNote(for todo: TodoItem) -> Item? {
+        if let sourceNote = todo.sourceNote {
+            return sourceNote
+        }
+
+        guard !todo.sourceNoteID.isEmpty else { return nil }
+        return allItems.first { $0.id.uuidString == todo.sourceNoteID }
+    }
+
+    private func sourceTitle(for todo: TodoItem) -> String {
+        if let note = sourceNote(for: todo) {
+            return note.title.isEmpty ? "Untitled" : note.title
+        }
+
+        return todo.sourceNoteTitleSnapshot.isEmpty ? "Missing note" : todo.sourceNoteTitleSnapshot
+    }
+
+    private func sourceCategoryName(for todo: TodoItem) -> String? {
+        if let categoryName = sourceNote(for: todo)?.category?.name, !categoryName.isEmpty {
+            return categoryName
+        }
+
+        return todo.sourceCategoryNameSnapshot.isEmpty ? nil : todo.sourceCategoryNameSnapshot
+    }
+
+    private func openSourceNote(for todo: TodoItem) {
+        guard let note = sourceNote(for: todo) else { return }
+        selectedItemIDs = [note.persistentModelID]
+        lastSelectedNoteID = note.id.uuidString
+        isEditorActive = true
+
+        #if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            splitViewVisibility = .detailOnly
+        }
+        #endif
+    }
+
+    private func toggleTodoCompletion(_ todo: TodoItem) {
+        todo.isCompleted.toggle()
+        todo.completedAt = todo.isCompleted ? Date() : nil
+        todo.updatedAt = Date()
+
+        do {
+            try modelContext.save()
+            print("💾 Todo updated - CloudKit sync queued")
+        } catch {
+            print("❌ Failed to update todo: \(error)")
+        }
+    }
+
+    private func deleteTodo(_ todo: TodoItem) {
+        modelContext.delete(todo)
+
+        do {
+            try modelContext.save()
+            print("💾 Todo deleted - CloudKit sync queued")
+        } catch {
+            print("❌ Failed to delete todo: \(error)")
+        }
+    }
+
+    private func deleteTodos(offsets: IndexSet) {
+        let todosToDelete = offsets.map { filteredTodos[$0] }
+        guard !todosToDelete.isEmpty else { return }
+
+        for todo in todosToDelete {
+            modelContext.delete(todo)
+        }
+
+        do {
+            try modelContext.save()
+            print("💾 Deleted \(todosToDelete.count) todos - CloudKit sync queued")
+        } catch {
+            print("❌ Failed to delete todos: \(error)")
+        }
+    }
+
+    private func deleteTodosLinked(to item: Item) {
+        for todo in allTodos where todo.sourceNote == item || todo.sourceNoteID == item.id.uuidString {
+            modelContext.delete(todo)
         }
     }
 
@@ -1064,6 +1296,10 @@ struct ContentView: View {
         // Give SwiftUI a moment to process the selection change
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             withAnimation {
+                for todo in self.allTodos {
+                    self.modelContext.delete(todo)
+                }
+
                 // Delete all items
                 for item in self.allItems {
                     self.modelContext.delete(item)
@@ -1531,6 +1767,7 @@ struct ContentView: View {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             withAnimation {
+                deleteTodosLinked(to: item)
                 modelContext.delete(item)
 
                 do {
@@ -1550,6 +1787,7 @@ struct ContentView: View {
 
         withAnimation {
             for item in items {
+                deleteTodosLinked(to: item)
                 modelContext.delete(item)
             }
 
@@ -1600,6 +1838,7 @@ struct ContentView: View {
             if selectedItemIDs.contains(item.persistentModelID) {
                 selectedItemIDs.remove(item.persistentModelID)
             }
+            deleteTodosLinked(to: item)
             modelContext.delete(item)
         }
 
@@ -1632,7 +1871,7 @@ struct ContentView: View {
         do {
             let data = try Data(contentsOf: url)
             let result = try DataExportImport.importPackage(from: data, into: modelContext)
-            importResultMessage = "Imported \(result.importedCategories) categories and \(result.importedNotes) notes."
+            importResultMessage = "Imported \(result.importedCategories) categories, \(result.importedNotes) notes, and \(result.importedTodos) todos."
         } catch {
             importError = error.localizedDescription
         }
@@ -1854,6 +2093,65 @@ struct CategoryRowView: View {
                 .foregroundColor(.secondary)
                 .font(.caption)
         }
+        .contentShape(Rectangle())
+    }
+}
+
+struct TodoRowView: View {
+    let todo: TodoItem
+    let sourceTitle: String
+    let sourceCategoryName: String?
+    let sourceTextAvailable: Bool
+    let canOpenSource: Bool
+    let toggleCompletion: () -> Void
+    let openSource: () -> Void
+
+    private var sourceLabel: String {
+        let title = sourceTextAvailable ? sourceTitle : "\(sourceTitle) - source text removed"
+        if let sourceCategoryName {
+            return "\(sourceCategoryName) / \(title)"
+        }
+        return title
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Button(action: toggleCompletion) {
+                Image(systemName: todo.isCompleted ? "checkmark.square.fill" : "square")
+                    .font(.title3)
+                    .symbolRenderingMode(.hierarchical)
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(todo.isCompleted ? "Mark todo open" : "Mark todo done")
+
+            Button(action: openSource) {
+                HStack(alignment: .top, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(todo.text)
+                            .font(.body)
+                            .foregroundStyle(todo.isCompleted ? .secondary : .primary)
+                            .strikethrough(todo.isCompleted)
+                            .lineLimit(3)
+
+                        HStack(spacing: 4) {
+                            Image(systemName: canOpenSource ? "arrow.up.forward.square" : "exclamationmark.triangle")
+                                .font(.caption)
+                            Text(sourceLabel)
+                                .lineLimit(1)
+                        }
+                        .font(.caption)
+                        .foregroundStyle(canOpenSource ? .secondary : .tertiary)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(!canOpenSource)
+            .help(canOpenSource ? "Open source note" : "Source note is unavailable")
+        }
+        .padding(.vertical, 6)
         .contentShape(Rectangle())
     }
 }
