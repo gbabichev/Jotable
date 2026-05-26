@@ -322,17 +322,23 @@ struct RichTextEditor: UIViewRepresentable {
             // Always ensure the textStorage delegate is set
             uiView.textStorage.delegate = context.coordinator
 
-            // Skip update if textViewDidChange was just called (within 10ms)
+            let isComposingText = uiView.markedTextRange != nil
+
+            // Skip update if textViewDidChange was just called.
             // This prevents cursor jumping from the rapid round-trip cycle:
             // textViewDidChange -> pushTextToParent -> updateUIView
             let timeSinceLastChange = Date().timeIntervalSinceReferenceDate - context.coordinator.lastTextViewDidChangeTime
-            let isRapidFeedback = timeSinceLastChange < 0.01
+            let isRecentLocalEdit = timeSinceLastChange < 0.35
+            let shouldDeferTextUpdate = isComposingText ||
+                (isRecentLocalEdit && context.coordinator.currentTextMatchesLastLocalEdit(currentText))
 
-            if isRapidFeedback && text.string == currentText.string {
-                // Text content is the same and this is a rapid feedback cycle
-                // Skip the update to avoid cursor repositioning
+            if shouldDeferTextUpdate {
+                // UIKit owns the newest text/selection during autocorrect and for a short window
+                // immediately after local edits. Do not overwrite it with stale SwiftUI binding text.
                 context.coordinator.syncColorState(with: uiView, sampleFromText: false)
-                context.coordinator.applyTypingAttributes(to: uiView)
+                if !isComposingText {
+                    context.coordinator.applyTypingAttributes(to: uiView)
+                }
             } else if text.string != currentText.string {
                 // String content actually changed, must update
                 context.coordinator.isProgrammaticUpdate = true
@@ -482,9 +488,14 @@ struct RichTextEditor: UIViewRepresentable {
         private var isProcessingExternalAttributes = false
         var customTypingColor: UIColor?
         var lastTextViewDidChangeTime: TimeInterval = 0
+        private var lastLocalTextViewString = ""
         private var hadMarkedTextInLastChange = false
         var lastUpdateUIViewTime: Date = Date.distantPast
         var lastUpdateUIViewText: NSAttributedString = NSAttributedString()
+
+        func currentTextMatchesLastLocalEdit(_ text: NSAttributedString) -> Bool {
+            text.string == lastLocalTextViewString
+        }
 
         private func pushTextToParent(_ text: NSAttributedString) {
             let snapshot = NSAttributedString(attributedString: text)
@@ -633,6 +644,7 @@ struct RichTextEditor: UIViewRepresentable {
         func textViewDidChange(_ textView: UITextView) {
             guard !isProgrammaticUpdate else { return }
             lastTextViewDidChangeTime = Date().timeIntervalSinceReferenceDate
+            lastLocalTextViewString = textView.attributedText?.string ?? ""
 
             syncColorState(with: textView, sampleFromText: true)
             syncFormattingState(with: textView)
@@ -673,6 +685,8 @@ struct RichTextEditor: UIViewRepresentable {
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
+            guard textView.markedTextRange == nil else { return }
+
             if textView.selectedRange.length > 0 {
                 caretColorLockID = nil
                 releaseColorLockOnTextChange = false
@@ -715,6 +729,10 @@ struct RichTextEditor: UIViewRepresentable {
             guard (canHandleAutomaticFix || canHandleAttributeChange),
                   !isProgrammaticUpdate,
                   !isProcessingExternalAttributes else { return }
+
+            if textView?.markedTextRange != nil {
+                return
+            }
 
             let storageLength = textStorage.length
             guard storageLength > 0 else { return }
