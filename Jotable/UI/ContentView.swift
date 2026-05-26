@@ -23,6 +23,9 @@ enum SidebarSelection: Hashable {
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
     // Changed from timestamp to createdAt for stable sorting based on creation date
     @Query(sort: \Item.createdAt, order: .reverse) private var allItems: [Item]
     @Query(sort: \Category.sortOrder) private var categories: [Category]
@@ -72,6 +75,7 @@ struct ContentView: View {
     #endif
     #if os(iOS)
     @State private var editMode: EditMode = .inactive
+    @State private var todoSourceNavigationPath: [UUID] = []
     #endif
     private var isEditing: Bool {
         #if os(iOS)
@@ -261,6 +265,12 @@ struct ContentView: View {
         canExpandEditor && isEditorExpanded
     }
 
+    #if os(iOS)
+    private var shouldPushTodoSourceInTodoList: Bool {
+        horizontalSizeClass == .compact || UIDevice.current.userInterfaceIdiom == .phone
+    }
+    #endif
+
     private var notesListMinimumColumnWidth: CGFloat {
         switch splitViewVisibility {
         case .doubleColumn, .detailOnly:
@@ -330,6 +340,15 @@ struct ContentView: View {
             }
         }
         .onChange(of: sidebarSelection) { oldValue, newValue in
+            #if os(iOS)
+            switch newValue {
+            case .todoList:
+                break
+            default:
+                todoSourceNavigationPath.removeAll()
+            }
+            #endif
+
             // Check if the newly selected item is a locked category
             if case .category(let category) = newValue, category.isPrivate {
                 // If we're reverting to a previous selection, skip authentication
@@ -461,10 +480,31 @@ struct ContentView: View {
         #endif
     }
 
+    @ViewBuilder
     private var todoListColumn: some View {
+        #if os(iOS)
+        if shouldPushTodoSourceInTodoList {
+            NavigationStack(path: $todoSourceNavigationPath) {
+                todoListColumnContent
+                    .navigationDestination(for: UUID.self) { noteID in
+                        todoSourceDestination(for: noteID)
+                    }
+            }
+        } else {
+            todoListColumnContent
+        }
+        #else
+        todoListColumnContent
+        #endif
+    }
+
+    private var todoListColumnContent: some View {
         List {
             todoListContent
         }
+        #if os(iOS)
+        .scrollDismissesKeyboard(.interactively)
+        #endif
         .searchable(
             text: $searchText,
             prompt: "Search todos"
@@ -486,6 +526,31 @@ struct ContentView: View {
             }
         }
     }
+
+    #if os(iOS)
+    @ViewBuilder
+    private func todoSourceDestination(for noteID: UUID) -> some View {
+        if let note = allItems.first(where: { $0.id == noteID && !$0.isInTrash }) {
+            NoteEditorView(
+                item: note,
+                isEditorActive: $isEditorActive,
+                isEditorExpanded: $isEditorExpanded,
+                passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID,
+                onCategoryAssignment: prepareSelectionForCategoryAssignment,
+                onToggleEditorFocus: {
+                    setEditorExpanded(!isEditorExpanded)
+                }
+            )
+            .id(note.id)
+        } else {
+            ContentUnavailableView {
+                Label("Note Unavailable", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text("The source note for this todo could not be opened.")
+            }
+        }
+    }
+    #endif
 
     private var detailColumn: some View {
         NavigationStack {
@@ -1072,7 +1137,9 @@ struct ContentView: View {
         isEditorActive = true
 
         #if os(iOS)
-        if UIDevice.current.userInterfaceIdiom == .phone {
+        if shouldPushTodoSourceInTodoList {
+            todoSourceNavigationPath = [note.id]
+        } else if UIDevice.current.userInterfaceIdiom == .phone {
             splitViewVisibility = .detailOnly
         }
         #endif
