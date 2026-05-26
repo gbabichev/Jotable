@@ -269,6 +269,7 @@ struct RichTextEditor: UIViewRepresentable {
     @Binding var presentFormatMenuTrigger: UUID?
     @Binding var resetColorTrigger: UUID?
     @Binding var linkEditRequest: LinkEditContext?
+    var onAddSelectedTextToTodo: (TodoCreationRequest) -> Void = { _ in }
     @Environment(\.colorScheme) var colorScheme
 
     func makeCoordinator() -> Coordinator {
@@ -708,18 +709,60 @@ struct RichTextEditor: UIViewRepresentable {
         }
 
         private func buildEditMenu(for ranges: [NSRange], in textView: UITextView, suggestedActions: [UIMenuElement]) -> UIMenu? {
-            guard let context = linkContext(for: ranges, in: textView) else {
-                return UIMenu(children: suggestedActions)
+            var elements = suggestedActions
+
+            if let context = linkContext(for: ranges, in: textView) {
+                let editAction = UIAction(title: "Edit Link", image: UIImage(systemName: "link")) { [weak self] _ in
+                    DispatchQueue.main.async {
+                        self?.parent.linkEditRequest = context
+                    }
+                }
+                elements.append(editAction)
             }
 
-            var elements = suggestedActions
-            let editAction = UIAction(title: "Edit Link", image: UIImage(systemName: "link")) { [weak self] _ in
-                DispatchQueue.main.async {
-                    self?.parent.linkEditRequest = context
+            if let payload = selectedTodoPayload(for: ranges, in: textView) {
+                let todoAction = UIAction(title: "Add to Todo List", image: UIImage(systemName: "checklist")) { [weak self] _ in
+                    DispatchQueue.main.async {
+                        self?.handleAddSelectedTextToTodo(text: payload.text, range: payload.range)
+                    }
                 }
+                elements.append(todoAction)
             }
-            elements.append(editAction)
+
             return UIMenu(children: elements)
+        }
+
+        private func selectedTodoPayload(for ranges: [NSRange], in textView: UITextView) -> (text: String, range: NSRange)? {
+            guard let attributed = textView.attributedText else { return nil }
+
+            let candidateRanges = ranges.isEmpty ? [textView.selectedRange] : ranges
+            for range in candidateRanges {
+                let validRange = validateCursorPosition(range, for: textView)
+                guard validRange.length > 0,
+                      validRange.location >= 0,
+                      NSMaxRange(validRange) <= attributed.length else {
+                    continue
+                }
+
+                let text = attributed.attributedSubstring(from: validRange).string
+                let visibleText = text.replacingOccurrences(of: "\u{FFFC}", with: "")
+                guard !visibleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    continue
+                }
+
+                return (text, validRange)
+            }
+
+            return nil
+        }
+
+        private func handleAddSelectedTextToTodo(text: String, range: NSRange) {
+            let request = TodoCreationRequest(
+                text: text,
+                selectedRangeLocation: range.location,
+                selectedRangeLength: range.length
+            )
+            parent.onAddSelectedTextToTodo(request)
         }
 
         func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorage.EditActions, range editedRange: NSRange, changeInLength delta: Int) {

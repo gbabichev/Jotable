@@ -237,7 +237,8 @@ struct NoteEditorView: View {
             plainTextInsertionRequest: $plainTextInsertionRequest,
             presentFormatMenuTrigger: $presentFormatMenuTrigger,
             resetColorTrigger: $resetColorTrigger,
-            linkEditRequest: $linkEditRequest
+            linkEditRequest: $linkEditRequest,
+            onAddSelectedTextToTodo: createTodoFromSelection
         )
         #endif
     }
