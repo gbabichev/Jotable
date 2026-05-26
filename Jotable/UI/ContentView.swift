@@ -2188,6 +2188,7 @@ struct TodoRowView: View {
     let openSource: () -> Void
 
     @State private var draftText = ""
+    @State private var isInfoPresented = false
     @FocusState private var isTextFocused: Bool
 
     private var sourceLabel: String {
@@ -2268,6 +2269,56 @@ struct TodoRowView: View {
         .contentShape(Rectangle())
     }
 
+    private var infoButton: some View {
+        Button {
+            isInfoPresented.toggle()
+        } label: {
+            Image(systemName: "info.circle")
+                .font(.body)
+                .symbolRenderingMode(.hierarchical)
+                .frame(width: 24, height: 24)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel("Todo info")
+        .help("Show todo dates")
+        .popover(isPresented: $isInfoPresented) {
+            todoInfoPopover
+        }
+    }
+
+    private var todoInfoPopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Todo Info")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 8) {
+                dateRow(title: "Created", date: todo.createdAt)
+
+                if let completedAt = todo.completedAt {
+                    dateRow(title: "Completed", date: completedAt)
+                }
+            }
+        }
+        .padding(16)
+        .frame(minWidth: 220, alignment: .leading)
+    }
+
+    private func dateRow(title: String, date: Date) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Text(formattedDate(date))
+                .font(.body)
+        }
+    }
+
+    private func formattedDate(_ date: Date) -> String {
+        date.formatted(date: .abbreviated, time: .shortened)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Button(action: toggleCompletion) {
@@ -2285,10 +2336,14 @@ struct TodoRowView: View {
                 }
                 .buttonStyle(.plain)
                 .help(sourceHelp)
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 rowContent
                     .help(sourceHelp)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+
+            infoButton
         }
         .padding(.vertical, 6)
         .contentShape(Rectangle())
