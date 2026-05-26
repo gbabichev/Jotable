@@ -2284,7 +2284,16 @@ struct TodoRowView: View {
         .help("Show todo dates")
         .popover(isPresented: $isInfoPresented) {
             todoInfoPopover
+                #if os(iOS)
+                .presentationCompactAdaptation(.sheet)
+                .presentationDetents([.height(todoInfoSheetHeight)])
+                .presentationDragIndicator(.visible)
+                #endif
         }
+    }
+
+    private var todoInfoSheetHeight: CGFloat {
+        todo.completedAt == nil ? 170 : 220
     }
 
     private var todoInfoPopover: some View {
@@ -2301,7 +2310,11 @@ struct TodoRowView: View {
             }
         }
         .padding(16)
+        #if os(iOS)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        #else
         .frame(minWidth: 220, alignment: .leading)
+        #endif
     }
 
     private func dateRow(title: String, date: Date) -> some View {
@@ -2313,6 +2326,7 @@ struct TodoRowView: View {
             Text(formattedDate(date))
                 .font(.body)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func formattedDate(_ date: Date) -> String {
