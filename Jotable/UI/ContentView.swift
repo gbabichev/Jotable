@@ -449,6 +449,26 @@ struct ContentView: View {
 
                     Divider()
 
+                    Button {
+                        createDebugCategories()
+                    } label: {
+                        Label("Create Categories", systemImage: "folder.badge.plus")
+                    }
+
+                    Button {
+                        createDebugNotes()
+                    } label: {
+                        Label("Create Notes", systemImage: "doc.badge.plus")
+                    }
+
+                    Button {
+                        createDebugCategoriesWithNotes()
+                    } label: {
+                        Label("Create Categories with Notes", systemImage: "rectangle.stack.badge.plus")
+                    }
+
+                    Divider()
+
                     Button(role: .destructive, action: deleteEverything) {
                         Label("Delete Everything", systemImage: "trash.fill")
                     }
@@ -1841,6 +1861,194 @@ struct ContentView: View {
     }
 
     #if DEBUG
+    private func createDebugCategories() {
+        let createdCategories = makeDebugCategories(
+            count: Int.random(in: 3...6),
+            prefix: "Debug"
+        )
+
+        saveDebugSeedData(successMessage: "Created debug categories") {
+            if let firstCategory = createdCategories.first {
+                sidebarSelection = .category(firstCategory)
+            }
+        }
+    }
+
+    private func createDebugNotes() {
+        let notes = makeDebugNotes(
+            count: Int.random(in: 8...14),
+            category: selectedCategory
+        )
+
+        saveDebugSeedData(successMessage: "Created debug notes") {
+            if let firstNote = notes.first {
+                selectedItemIDs = [firstNote.persistentModelID]
+            }
+        }
+    }
+
+    private func createDebugCategoriesWithNotes() {
+        let createdCategories = makeDebugCategories(
+            count: Int.random(in: 3...5),
+            prefix: "Debug Filled"
+        )
+        var firstNote: Item?
+
+        for category in createdCategories {
+            let notes = makeDebugNotes(
+                count: Int.random(in: 4...9),
+                category: category
+            )
+            firstNote = firstNote ?? notes.first
+        }
+
+        saveDebugSeedData(successMessage: "Created debug categories with notes") {
+            if let firstCategory = createdCategories.first {
+                sidebarSelection = .category(firstCategory)
+            }
+            if let firstNote {
+                selectedItemIDs = [firstNote.persistentModelID]
+            }
+        }
+    }
+
+    private func makeDebugCategories(count: Int, prefix: String) -> [Category] {
+        let batchName = debugBatchName()
+        let categorySeeds: [(name: String, color: String)] = [
+            ("1:1s", "blue"),
+            ("Hiring Loop", "green"),
+            ("Product Ideas", "orange"),
+            ("Release Prep", "purple"),
+            ("Customer Calls", "pink"),
+            ("Operations", "teal"),
+            ("Research", "mint"),
+            ("Personal Admin", "yellow"),
+            ("Bug Triage", "red"),
+            ("Reading List", "brown")
+        ]
+        let selectedSeeds = categorySeeds.shuffled().prefix(count)
+        let nextSortOrder = ((categories.map(\.sortOrder).max() ?? -1) + 1)
+
+        return selectedSeeds.enumerated().map { index, seed in
+            let category = Category(
+                name: "\(prefix) \(seed.name) \(batchName)",
+                color: seed.color,
+                sortOrder: nextSortOrder + index
+            )
+            modelContext.insert(category)
+            return category
+        }
+    }
+
+    private func makeDebugNotes(
+        count: Int,
+        category: Category?
+    ) -> [Item] {
+        let now = Date()
+        let categoryName = category?.name
+
+        return (1...count).map { index in
+            let title = debugNoteTitle(index: index, categoryName: categoryName)
+            let content = debugNoteContent(index: index, title: title, categoryName: categoryName)
+            let note = Item(title: title, content: content)
+            note.category = category
+            note.createdAt = now.addingTimeInterval(-TimeInterval.random(in: 60...2_592_000))
+            note.timestamp = note.createdAt
+            note.attributedContent = archiveDefaultAttributedContent(defaultAttributedContent(for: content))
+            modelContext.insert(note)
+            return note
+        }
+    }
+
+    private func debugBatchName() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMdd-HHmmss"
+        return formatter.string(from: Date())
+    }
+
+    private func debugNoteTitle(index: Int, categoryName: String?) -> String {
+        let subjects = [
+            "Avery follow-up",
+            "Launch checklist",
+            "Hiring debrief",
+            "Customer call",
+            "Onboarding plan",
+            "Incident review",
+            "Roadmap pass",
+            "Budget notes",
+            "Design critique",
+            "Weekly planning",
+            "API cleanup",
+            "Store listing",
+            "Retention ideas",
+            "Metrics review",
+            "Support queue"
+        ]
+        let formats = [
+            "\(subjects.randomElement() ?? "Debug note")",
+            "\(subjects.randomElement() ?? "Debug note") - next steps",
+            "\(subjects.randomElement() ?? "Debug note") / draft",
+            "Follow up: \(subjects.randomElement() ?? "debug note")",
+            "Notes from \(subjects.randomElement() ?? "debug note")"
+        ]
+
+        if let categoryName, Bool.random() {
+            return "\(formats.randomElement() ?? "Debug note") (\(categoryName))"
+        }
+
+        return formats.randomElement() ?? "Debug note \(index)"
+    }
+
+    private func debugNoteContent(index: Int, title: String, categoryName: String?) -> String {
+        let owners = ["Avery", "Morgan", "Riley", "Jordan", "Casey", "Taylor", "Sam", "Quinn"]
+        let statuses = ["Open", "Waiting", "Blocked", "Ready for review", "Needs a second pass", "Parked"]
+        let nextSteps = [
+            "Confirm the owner before Friday",
+            "Move the notes into the right category",
+            "Turn the rough bullets into todos",
+            "Send a short recap",
+            "Check whether this belongs in the roadmap",
+            "Compare against the last customer conversation",
+            "Add screenshots when testing on iOS",
+            "Validate the edge case on macOS"
+        ].shuffled()
+        let observations = [
+            "The interesting part is the handoff between notes and todos.",
+            "There is enough detail here to test search, previews, and sorting.",
+            "This should look different from the surrounding generated notes.",
+            "The title is intentionally not date-shaped so list scanning feels real.",
+            "Some lines are short while others have enough length to wrap in compact views."
+        ]
+        let context = categoryName.map { "Category: \($0)" } ?? "Uncategorized debug note"
+        let owner = owners.randomElement() ?? "Avery"
+        let status = statuses.randomElement() ?? "Open"
+        let pickedSteps = nextSteps.prefix(Int.random(in: 2...4))
+
+        return """
+        \(title)
+
+        \(context)
+        Owner: \(owner)
+        Status: \(status)
+
+        \(observations.randomElement() ?? "Generated note body.")
+
+        \(pickedSteps.map { "- \($0)" }.joined(separator: "\n"))
+
+        Reference: debug seed \(index)-\(Int.random(in: 100...999))
+        """
+    }
+
+    private func saveDebugSeedData(successMessage: String, afterSave: () -> Void = {}) {
+        do {
+            try modelContext.save()
+            afterSave()
+            print("\(successMessage) - CloudKit sync queued")
+        } catch {
+            print("Failed to seed debug data: \(error)")
+        }
+    }
+
     private func createFormattingTestNote() {
         let attributedContent = formattingTestAttributedContent()
         let note = Item(
