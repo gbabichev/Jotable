@@ -434,9 +434,7 @@ struct ContentView: View {
     }
 
     private var notesListColumn: some View {
-        List(selection: listSelectionBinding) {
-            notesListContent
-        }
+        notesListBody
         .searchable(
             text: $searchText,
             prompt: "Search notes"
@@ -485,6 +483,50 @@ struct ContentView: View {
     }
 
     @ViewBuilder
+    private var notesListBody: some View {
+        if filteredItems.isEmpty {
+            #if os(macOS)
+            notesEmptyState
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            #else
+            ScrollView {
+                notesEmptyState
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 360)
+            }
+            #endif
+        } else {
+            List(selection: listSelectionBinding) {
+                notesListContent
+            }
+        }
+    }
+
+    private var notesEmptyState: some View {
+        ContentUnavailableView {
+            Label("No Notes", systemImage: "note.text")
+        } description: {
+            Text(notesEmptyStateDescription)
+        }
+    }
+
+    private var notesEmptyStateDescription: String {
+        if !searchText.isEmpty {
+            return "No matching notes."
+        }
+
+        if isViewingTrash {
+            return "Trash is empty."
+        }
+
+        if selectedCategory != nil {
+            return "No notes in this category yet."
+        }
+
+        return "No notes yet."
+    }
+
+    @ViewBuilder
     private var todoListColumn: some View {
         #if os(iOS)
         if shouldPushTodoSourceInTodoList {
@@ -529,12 +571,15 @@ struct ContentView: View {
     @ViewBuilder
     private var todoListBody: some View {
         if filteredTodos.isEmpty {
+            #if os(macOS)
+            todoEmptyState
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            #else
             ScrollView {
                 todoEmptyState
                     .frame(maxWidth: .infinity)
                     .frame(minHeight: 360)
             }
-            #if os(iOS)
             .scrollDismissesKeyboard(.interactively)
             #endif
         } else {
