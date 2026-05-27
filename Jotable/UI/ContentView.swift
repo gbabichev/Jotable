@@ -48,6 +48,8 @@ struct ContentView: View {
     @State private var sidebarSelection: SidebarSelection? = .allNotes
     @State private var showingAddCategory = false
     @State private var showingAddTodo = false
+    @State private var isCompletedTodoSectionExpanded = true
+    @State private var showingClearCompletedTodosConfirmation = false
     @State private var categoryToEdit: Category?
     @State private var searchText = ""
     @State private var authenticatingCategoryID: PersistentIdentifier?
@@ -159,6 +161,27 @@ struct ContentView: View {
             }
             return lhs.createdAt > rhs.createdAt
         }
+    }
+
+    private var filteredOpenTodos: [TodoItem] {
+        filteredTodos.filter { !$0.isCompleted }
+    }
+
+    private var filteredCompletedTodos: [TodoItem] {
+        filteredTodos.filter(\.isCompleted)
+    }
+
+    private var clearCompletedTodosButtonTitle: String {
+        let count = filteredCompletedTodos.count
+        return "Clear \(count) Completed \(count == 1 ? "Todo" : "Todos")"
+    }
+
+    private var clearCompletedTodosConfirmationMessage: String {
+        if searchText.isEmpty {
+            return "This deletes every completed todo currently visible in the Todo List."
+        }
+
+        return "This deletes the completed todos matching the current search."
     }
 
     private var trashItemCount: Int {
@@ -606,7 +629,12 @@ struct ContentView: View {
             List {
                 todoListContent
             }
+            #if os(macOS)
+            .contentMargins(.top, 0, for: .scrollContent)
+            #endif
             #if os(iOS)
+            .listStyle(.plain)
+            .listSectionSpacing(.compact)
             .scrollDismissesKeyboard(.interactively)
             #endif
         }
@@ -852,6 +880,15 @@ struct ContentView: View {
         } message: {
             Text(authErrorMessage)
         }
+        .confirmationDialog("Clear Completed Todos?", isPresented: $showingClearCompletedTodosConfirmation, titleVisibility: .visible) {
+            Button(clearCompletedTodosButtonTitle, role: .destructive) {
+                clearCompletedTodos()
+            }
+
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(clearCompletedTodosConfirmationMessage)
+        }
         #if os(macOS)
         .macImportExportPresentation(
             showExportAlert: $showExportAlert,
@@ -1071,52 +1108,161 @@ struct ContentView: View {
 
     @ViewBuilder
     private var todoListContent: some View {
-        ForEach(filteredTodos) { todo in
-            TodoRowView(
-                todo: todo,
-                sourceTitle: sourceTitle(for: todo),
-                sourceCategoryName: sourceCategoryName(for: todo),
-                isLinkedToNote: !isStandaloneTodo(todo),
-                sourceTextAvailable: todo.isSourceTextAvailable,
-                canOpenSource: sourceNote(for: todo) != nil,
-                toggleCompletion: {
-                    toggleTodoCompletion(todo)
-                },
-                updateText: { text in
-                    updateStandaloneTodo(todo, text: text)
-                },
-                openSource: {
-                    openSourceNote(for: todo)
+        #if os(iOS)
+        if !filteredOpenTodos.isEmpty {
+            Section {
+                ForEach(filteredOpenTodos) { todo in
+                    todoRow(for: todo)
                 }
-            )
-            .contextMenu {
-                if !isStandaloneTodo(todo) {
-                    Button {
-                        openSourceNote(for: todo)
-                    } label: {
-                        Label("Open Source Note", systemImage: "arrow.up.forward.square")
+                .onDelete { offsets in
+                    deleteTodos(from: filteredOpenTodos, offsets: offsets)
+                }
+            } header: {
+                todoSectionHeaderLabel("Open")
+            }
+        }
+
+        if !filteredCompletedTodos.isEmpty {
+            Section {
+                if isCompletedTodoSectionExpanded {
+                    ForEach(filteredCompletedTodos) { todo in
+                        todoRow(for: todo)
                     }
-                    .disabled(sourceNote(for: todo) == nil)
-
-                    Divider()
+                    .onDelete { offsets in
+                        deleteTodos(from: filteredCompletedTodos, offsets: offsets)
+                    }
                 }
+            } header: {
+                completedTodoSectionHeader(isFirstSection: filteredOpenTodos.isEmpty)
+            }
+        }
+        #else
+        if !filteredOpenTodos.isEmpty {
+            todoSectionHeader("Open", isFirstSection: true)
+            ForEach(filteredOpenTodos) { todo in
+                todoRow(for: todo)
+            }
+            .onDelete { offsets in
+                deleteTodos(from: filteredOpenTodos, offsets: offsets)
+            }
+        }
 
-                Button {
-                    toggleTodoCompletion(todo)
-                } label: {
-                    Label(todo.isCompleted ? "Mark Open" : "Mark Done", systemImage: todo.isCompleted ? "square" : "checkmark.square")
+        if !filteredCompletedTodos.isEmpty {
+            completedTodoSectionHeader(isFirstSection: filteredOpenTodos.isEmpty)
+            if isCompletedTodoSectionExpanded {
+                ForEach(filteredCompletedTodos) { todo in
+                    todoRow(for: todo)
                 }
-
-                Divider()
-
-                Button(role: .destructive) {
-                    deleteTodo(todo)
-                } label: {
-                    Label("Delete Todo", systemImage: "trash")
+                .onDelete { offsets in
+                    deleteTodos(from: filteredCompletedTodos, offsets: offsets)
                 }
             }
         }
-        .onDelete(perform: deleteTodos)
+        #endif
+    }
+
+    private func todoSectionHeaderLabel(_ title: String) -> some View {
+        Text(title)
+            .font(.headline)
+            #if os(iOS)
+            .foregroundStyle(Color.primary.opacity(0.72))
+            #else
+            .foregroundStyle(.secondary)
+            #endif
+            .textCase(nil)
+    }
+
+    private func todoSectionHeader(_ title: String, isFirstSection: Bool) -> some View {
+        todoSectionHeaderLabel(title)
+            .padding(.top, isFirstSection ? 0 : 16)
+            .padding(.bottom, 4)
+            .listRowSeparator(.hidden)
+    }
+
+    @ViewBuilder
+    private func completedTodoSectionHeader(isFirstSection: Bool) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    isCompletedTodoSectionExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isCompletedTodoSectionExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 12)
+                    todoSectionHeaderLabel("Completed")
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isCompletedTodoSectionExpanded ? "Collapse completed todos" : "Expand completed todos")
+
+            Spacer(minLength: 8)
+
+            Button {
+                showingClearCompletedTodosConfirmation = true
+            } label: {
+                Label("Clear", systemImage: "trash")
+                    .labelStyle(.titleAndIcon)
+            }
+            .buttonStyle(.plain)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.red)
+            .accessibilityLabel("Clear completed todos")
+            .help("Clear completed todos")
+        }
+        #if os(macOS)
+        .padding(.top, isFirstSection ? 0 : 16)
+        .padding(.bottom, 4)
+        .listRowSeparator(.hidden)
+        #endif
+    }
+
+    private func todoRow(for todo: TodoItem) -> some View {
+        TodoRowView(
+            todo: todo,
+            sourceTitle: sourceTitle(for: todo),
+            sourceCategoryName: sourceCategoryName(for: todo),
+            isLinkedToNote: !isStandaloneTodo(todo),
+            sourceTextAvailable: todo.isSourceTextAvailable,
+            canOpenSource: sourceNote(for: todo) != nil,
+            toggleCompletion: {
+                toggleTodoCompletion(todo)
+            },
+            updateText: { text in
+                updateStandaloneTodo(todo, text: text)
+            },
+            openSource: {
+                openSourceNote(for: todo)
+            }
+        )
+        .contextMenu {
+            if !isStandaloneTodo(todo) {
+                Button {
+                    openSourceNote(for: todo)
+                } label: {
+                    Label("Open Source Note", systemImage: "arrow.up.forward.square")
+                }
+                .disabled(sourceNote(for: todo) == nil)
+
+                Divider()
+            }
+
+            Button {
+                toggleTodoCompletion(todo)
+            } label: {
+                Label(todo.isCompleted ? "Mark Open" : "Mark Done", systemImage: todo.isCompleted ? "square" : "checkmark.square")
+            }
+
+            Divider()
+
+            Button(role: .destructive) {
+                deleteTodo(todo)
+            } label: {
+                Label("Delete Todo", systemImage: "trash")
+            }
+        }
     }
     
     // Delete a single item
@@ -1267,8 +1413,8 @@ struct ContentView: View {
         }
     }
 
-    private func deleteTodos(offsets: IndexSet) {
-        let todosToDelete = offsets.map { filteredTodos[$0] }
+    private func deleteTodos(from todos: [TodoItem], offsets: IndexSet) {
+        let todosToDelete = offsets.map { todos[$0] }
         guard !todosToDelete.isEmpty else { return }
 
         for todo in todosToDelete {
@@ -1280,6 +1426,22 @@ struct ContentView: View {
             print("💾 Deleted \(todosToDelete.count) todos - CloudKit sync queued")
         } catch {
             print("❌ Failed to delete todos: \(error)")
+        }
+    }
+
+    private func clearCompletedTodos() {
+        let todosToDelete = filteredCompletedTodos
+        guard !todosToDelete.isEmpty else { return }
+
+        for todo in todosToDelete {
+            modelContext.delete(todo)
+        }
+
+        do {
+            try modelContext.save()
+            print("💾 Cleared \(todosToDelete.count) completed todos - CloudKit sync queued")
+        } catch {
+            print("❌ Failed to clear completed todos: \(error)")
         }
     }
 
