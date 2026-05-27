@@ -503,12 +503,7 @@ struct ContentView: View {
     }
 
     private var todoListColumnContent: some View {
-        List {
-            todoListContent
-        }
-        #if os(iOS)
-        .scrollDismissesKeyboard(.interactively)
-        #endif
+        todoListBody
         .searchable(
             text: $searchText,
             prompt: "Search todos"
@@ -528,6 +523,35 @@ struct ContentView: View {
                     CloudSyncToolbarIndicator()
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var todoListBody: some View {
+        if filteredTodos.isEmpty {
+            ScrollView {
+                todoEmptyState
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 360)
+            }
+            #if os(iOS)
+            .scrollDismissesKeyboard(.interactively)
+            #endif
+        } else {
+            List {
+                todoListContent
+            }
+            #if os(iOS)
+            .scrollDismissesKeyboard(.interactively)
+            #endif
+        }
+    }
+
+    private var todoEmptyState: some View {
+        ContentUnavailableView {
+            Label("No Todos", systemImage: "checklist")
+        } description: {
+            Text(searchText.isEmpty ? "No todo items yet." : "No matching todos.")
         }
     }
 
@@ -982,60 +1006,52 @@ struct ContentView: View {
 
     @ViewBuilder
     private var todoListContent: some View {
-        if filteredTodos.isEmpty {
-            ContentUnavailableView {
-                Label("No Todos", systemImage: "checklist")
-            } description: {
-                Text(searchText.isEmpty ? "No todo items yet." : "No matching todos.")
-            }
-        } else {
-            ForEach(filteredTodos) { todo in
-                TodoRowView(
-                    todo: todo,
-                    sourceTitle: sourceTitle(for: todo),
-                    sourceCategoryName: sourceCategoryName(for: todo),
-                    isLinkedToNote: !isStandaloneTodo(todo),
-                    sourceTextAvailable: todo.isSourceTextAvailable,
-                    canOpenSource: sourceNote(for: todo) != nil,
-                    toggleCompletion: {
-                        toggleTodoCompletion(todo)
-                    },
-                    updateText: { text in
-                        updateStandaloneTodo(todo, text: text)
-                    },
-                    openSource: {
-                        openSourceNote(for: todo)
-                    }
-                )
-                .contextMenu {
-                    if !isStandaloneTodo(todo) {
-                        Button {
-                            openSourceNote(for: todo)
-                        } label: {
-                            Label("Open Source Note", systemImage: "arrow.up.forward.square")
-                        }
-                        .disabled(sourceNote(for: todo) == nil)
-
-                        Divider()
-                    }
-
+        ForEach(filteredTodos) { todo in
+            TodoRowView(
+                todo: todo,
+                sourceTitle: sourceTitle(for: todo),
+                sourceCategoryName: sourceCategoryName(for: todo),
+                isLinkedToNote: !isStandaloneTodo(todo),
+                sourceTextAvailable: todo.isSourceTextAvailable,
+                canOpenSource: sourceNote(for: todo) != nil,
+                toggleCompletion: {
+                    toggleTodoCompletion(todo)
+                },
+                updateText: { text in
+                    updateStandaloneTodo(todo, text: text)
+                },
+                openSource: {
+                    openSourceNote(for: todo)
+                }
+            )
+            .contextMenu {
+                if !isStandaloneTodo(todo) {
                     Button {
-                        toggleTodoCompletion(todo)
+                        openSourceNote(for: todo)
                     } label: {
-                        Label(todo.isCompleted ? "Mark Open" : "Mark Done", systemImage: todo.isCompleted ? "square" : "checkmark.square")
+                        Label("Open Source Note", systemImage: "arrow.up.forward.square")
                     }
+                    .disabled(sourceNote(for: todo) == nil)
 
                     Divider()
+                }
 
-                    Button(role: .destructive) {
-                        deleteTodo(todo)
-                    } label: {
-                        Label("Delete Todo", systemImage: "trash")
-                    }
+                Button {
+                    toggleTodoCompletion(todo)
+                } label: {
+                    Label(todo.isCompleted ? "Mark Open" : "Mark Done", systemImage: todo.isCompleted ? "square" : "checkmark.square")
+                }
+
+                Divider()
+
+                Button(role: .destructive) {
+                    deleteTodo(todo)
+                } label: {
+                    Label("Delete Todo", systemImage: "trash")
                 }
             }
-            .onDelete(perform: deleteTodos)
         }
+        .onDelete(perform: deleteTodos)
     }
     
     // Delete a single item
