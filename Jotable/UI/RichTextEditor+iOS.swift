@@ -276,6 +276,35 @@ struct RichTextEditor: UIViewRepresentable {
         Coordinator(self)
     }
 
+    private func todoCompletionRenderingSignature(for attributedString: NSAttributedString) -> String {
+        guard attributedString.length > 0 else { return "" }
+
+        var parts: [String] = []
+        let fullRange = NSRange(location: 0, length: attributedString.length)
+        attributedString.enumerateAttributes(in: fullRange, options: []) { attrs, range, _ in
+            let todoID = attrs[TodoTextAttributes.todoIDKey] as? String
+            let isRendered = (attrs[TodoTextAttributes.completionRenderedKey] as? NSNumber)?.boolValue ?? false
+            let originalStyle = attrs[TodoTextAttributes.originalStrikethroughStyleKey] as? NSNumber
+
+            guard todoID != nil || isRendered || originalStyle != nil else { return }
+
+            let strikethroughStyle = attrs[.strikethroughStyle] as? NSNumber
+            parts.append("\(range.location):\(range.length):\(todoID ?? ""):\(isRendered):\(strikethroughStyle?.intValue ?? 0):\(originalStyle?.intValue ?? -1)")
+        }
+
+        return parts.joined(separator: "|")
+    }
+
+    private func hasTodoCompletionRenderingUpdate(from currentText: NSAttributedString, to incomingText: NSAttributedString) -> Bool {
+        guard incomingText.string == currentText.string,
+              incomingText.length == currentText.length,
+              !incomingText.isEqual(to: currentText) else {
+            return false
+        }
+
+        return todoCompletionRenderingSignature(for: currentText) != todoCompletionRenderingSignature(for: incomingText)
+    }
+
     func makeUIView(context: Context) -> UITextView {
         let textView = PastableTextView()
         textView.delegate = context.coordinator
@@ -324,6 +353,7 @@ struct RichTextEditor: UIViewRepresentable {
             uiView.textStorage.delegate = context.coordinator
 
             let isComposingText = uiView.markedTextRange != nil
+            let shouldApplyTodoRenderingUpdate = !isComposingText && hasTodoCompletionRenderingUpdate(from: currentText, to: text)
 
             // Skip update if textViewDidChange was just called.
             // This prevents cursor jumping from the rapid round-trip cycle:
@@ -331,9 +361,17 @@ struct RichTextEditor: UIViewRepresentable {
             let timeSinceLastChange = Date().timeIntervalSinceReferenceDate - context.coordinator.lastTextViewDidChangeTime
             let isRecentLocalEdit = timeSinceLastChange < 0.35
             let shouldDeferTextUpdate = isComposingText ||
-                (isRecentLocalEdit && context.coordinator.currentTextMatchesLastLocalEdit(currentText))
+                (isRecentLocalEdit && context.coordinator.currentTextMatchesLastLocalEdit(currentText) && !shouldApplyTodoRenderingUpdate)
 
-            if shouldDeferTextUpdate {
+            if shouldApplyTodoRenderingUpdate {
+                context.coordinator.isProgrammaticUpdate = true
+                let cursorPosition = uiView.selectedRange
+                uiView.attributedText = text
+                uiView.textStorage.delegate = context.coordinator
+                context.coordinator.setCursorPosition(cursorPosition, in: uiView)
+                context.coordinator.isProgrammaticUpdate = false
+                context.coordinator.applyTypingAttributes(to: uiView)
+            } else if shouldDeferTextUpdate {
                 // UIKit owns the newest text/selection during autocorrect and for a short window
                 // immediately after local edits. Do not overwrite it with stale SwiftUI binding text.
                 context.coordinator.syncColorState(with: uiView, sampleFromText: false)

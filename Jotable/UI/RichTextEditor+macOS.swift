@@ -540,6 +540,35 @@ struct RichTextEditor: NSViewRepresentable {
         Coordinator(self)
     }
 
+    private func todoCompletionRenderingSignature(for attributedString: NSAttributedString) -> String {
+        guard attributedString.length > 0 else { return "" }
+
+        var parts: [String] = []
+        let fullRange = NSRange(location: 0, length: attributedString.length)
+        attributedString.enumerateAttributes(in: fullRange, options: []) { attrs, range, _ in
+            let todoID = attrs[TodoTextAttributes.todoIDKey] as? String
+            let isRendered = (attrs[TodoTextAttributes.completionRenderedKey] as? NSNumber)?.boolValue ?? false
+            let originalStyle = attrs[TodoTextAttributes.originalStrikethroughStyleKey] as? NSNumber
+
+            guard todoID != nil || isRendered || originalStyle != nil else { return }
+
+            let strikethroughStyle = attrs[.strikethroughStyle] as? NSNumber
+            parts.append("\(range.location):\(range.length):\(todoID ?? ""):\(isRendered):\(strikethroughStyle?.intValue ?? 0):\(originalStyle?.intValue ?? -1)")
+        }
+
+        return parts.joined(separator: "|")
+    }
+
+    private func hasTodoCompletionRenderingUpdate(from currentText: NSAttributedString, to incomingText: NSAttributedString) -> Bool {
+        guard incomingText.string == currentText.string,
+              incomingText.length == currentText.length,
+              !incomingText.isEqual(to: currentText) else {
+            return false
+        }
+
+        return todoCompletionRenderingSignature(for: currentText) != todoCompletionRenderingSignature(for: incomingText)
+    }
+
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -631,8 +660,19 @@ struct RichTextEditor: NSViewRepresentable {
             let isEditingText = textView.window?.firstResponder === textView
             let timeSinceLastChange = Date().timeIntervalSinceReferenceDate - context.coordinator.lastTextDidChangeTime
             let isRapidFeedback = timeSinceLastChange < 0.01
+            let shouldApplyTodoRenderingUpdate = hasTodoCompletionRenderingUpdate(from: currentText, to: text)
 
-            if isRapidFeedback && text.string == currentText.string {
+            if shouldApplyTodoRenderingUpdate {
+                context.coordinator.isProgrammaticUpdate = true
+
+                let cursorPosition = textView.selectedRange
+                textView.textStorage?.setAttributedString(text)
+                textView.setSelectedRange(cursorPosition)
+                (textView as? DynamicColorTextView)?.forceFullRedraw()
+
+                context.coordinator.isProgrammaticUpdate = false
+                context.coordinator.applyTypingAttributes(to: textView)
+            } else if isRapidFeedback && text.string == currentText.string {
                 context.coordinator.applyTypingAttributes(to: textView)
             } else if !isEditingText && !text.isEqual(to: currentText) {
                 context.coordinator.isProgrammaticUpdate = true
