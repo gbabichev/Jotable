@@ -273,6 +273,10 @@ struct ContentView: View {
     private var addTodoSheetHeight: CGFloat {
         260
     }
+
+    private var addCategorySheetHeight: CGFloat {
+        420
+    }
     #endif
 
     private var notesListMinimumColumnWidth: CGFloat {
@@ -427,9 +431,19 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingAddCategory) {
             AddCategoryView()
+            #if os(iOS)
+            .presentationCompactAdaptation(.sheet)
+            .presentationDetents([.height(addCategorySheetHeight)])
+            .presentationDragIndicator(.visible)
+            #endif
         }
         .sheet(item: $categoryToEdit) { category in
             AddCategoryView(categoryToEdit: category)
+            #if os(iOS)
+            .presentationCompactAdaptation(.sheet)
+            .presentationDetents([.height(addCategorySheetHeight)])
+            .presentationDragIndicator(.visible)
+            #endif
         }
     }
 
