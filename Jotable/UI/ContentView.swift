@@ -441,6 +441,12 @@ struct ContentView: View {
                         Label("Formatting Test Note", systemImage: "textformat")
                     }
 
+                    Button {
+                        fillTodosForDebug()
+                    } label: {
+                        Label("Fill Todos", systemImage: "checklist")
+                    }
+
                     Divider()
 
                     Button(role: .destructive, action: deleteEverything) {
@@ -1295,6 +1301,45 @@ struct ContentView: View {
             print("💾 Standalone todo created - CloudKit sync queued")
         } catch {
             print("❌ Failed to create standalone todo: \(error)")
+        }
+    }
+
+    private func fillTodosForDebug() {
+        let now = Date()
+
+        for index in 1...25 {
+            let todo = TodoItem(
+                text: "Debug open todo \(index)",
+                sourceText: "",
+                sourceNote: nil
+            )
+            todo.createdAt = now.addingTimeInterval(TimeInterval(-index))
+            todo.updatedAt = todo.createdAt
+            todo.isSourceTextAvailable = false
+            modelContext.insert(todo)
+        }
+
+        for index in 1...25 {
+            let todo = TodoItem(
+                text: "Debug completed todo \(index)",
+                sourceText: "",
+                sourceNote: nil
+            )
+            todo.createdAt = now.addingTimeInterval(TimeInterval(-(index + 25)))
+            todo.updatedAt = todo.createdAt
+            todo.isCompleted = true
+            todo.completedAt = now.addingTimeInterval(TimeInterval(-index))
+            todo.isSourceTextAvailable = false
+            modelContext.insert(todo)
+        }
+
+        do {
+            try modelContext.save()
+            isCompletedTodoSectionExpanded = true
+            sidebarSelection = .todoList
+            print("💾 Filled debug todos - CloudKit sync queued")
+        } catch {
+            print("❌ Failed to fill debug todos: \(error)")
         }
     }
 
