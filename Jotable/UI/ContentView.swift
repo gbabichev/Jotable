@@ -550,6 +550,12 @@ struct ContentView: View {
                         todoSourceDestination(for: noteID)
                     }
             }
+            .onChange(of: todoSourceNavigationPath) { _, path in
+                if path.isEmpty {
+                    selectedItemIDs.removeAll()
+                    isEditorActive = false
+                }
+            }
         } else {
             todoListColumnContent
         }
@@ -1216,17 +1222,25 @@ struct ContentView: View {
 
     private func openSourceNote(for todo: TodoItem) {
         guard let note = sourceNote(for: todo) else { return }
-        selectedItemIDs = [note.persistentModelID]
-        lastSelectedNoteID = note.id.uuidString
-        isEditorActive = true
 
         #if os(iOS)
         if shouldPushTodoSourceInTodoList {
+            selectedItemIDs.removeAll()
+            categoryAssignmentPreservedSelectionID = nil
+            lastSelectedNoteID = ""
+            isEditorActive = true
             todoSourceNavigationPath = [note.id]
-        } else if UIDevice.current.userInterfaceIdiom == .phone {
+            return
+        }
+
+        if UIDevice.current.userInterfaceIdiom == .phone {
             splitViewVisibility = .detailOnly
         }
         #endif
+
+        selectedItemIDs = [note.persistentModelID]
+        lastSelectedNoteID = note.id.uuidString
+        isEditorActive = true
     }
 
     private func toggleTodoCompletion(_ todo: TodoItem) {
