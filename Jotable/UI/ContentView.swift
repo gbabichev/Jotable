@@ -269,6 +269,10 @@ struct ContentView: View {
     private var shouldPushTodoSourceInTodoList: Bool {
         horizontalSizeClass == .compact || UIDevice.current.userInterfaceIdiom == .phone
     }
+
+    private var addTodoSheetHeight: CGFloat {
+        260
+    }
     #endif
 
     private var notesListMinimumColumnWidth: CGFloat {
@@ -639,6 +643,11 @@ struct ContentView: View {
             AddTodoView { text in
                 createStandaloneTodo(from: text)
             }
+            #if os(iOS)
+            .presentationCompactAdaptation(.sheet)
+            .presentationDetents([.height(addTodoSheetHeight)])
+            .presentationDragIndicator(.visible)
+            #endif
         }
         #if os(macOS)
         .onReceive(NotificationCenter.default.publisher(for: .toggleEditorFocusRequested)) { _ in
