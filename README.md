@@ -61,6 +61,12 @@ Just a clean, focused space for your thoughts.
 
 ## 📝 Changelog
 
+### 1.5.0
+- Added: 
+  - Todo List. Select text in a note, add it to a todo-list. 
+- Fixed:
+  - Improved auto-correct on iOS. 
+
 ### 1.4.0
 - Added: 
   - "Focus Mode" on iPad and Mac. You can now make notes take up the full window. 
