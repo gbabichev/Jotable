@@ -630,9 +630,11 @@ struct ContentView: View {
                     Label("New Todo", systemImage: "plus")
                 }
 
+                #if !os(macOS)
                 if isCloudSyncIndicatorVisible {
                     CloudSyncToolbarIndicator()
                 }
+                #endif
             }
         }
     }
