@@ -929,7 +929,7 @@ struct ContentView: View {
             startExport: startExport,
             handleImport: handleImport
         )
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        //.toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         #endif
     }
 
