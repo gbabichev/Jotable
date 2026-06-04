@@ -159,8 +159,21 @@ struct ContentView: View {
             if lhs.isCompleted != rhs.isCompleted {
                 return !lhs.isCompleted
             }
+
+            return todoSortPrecedes(lhs, rhs)
+        }
+    }
+
+    private func todoSortPrecedes(_ lhs: TodoItem, _ rhs: TodoItem) -> Bool {
+        if lhs.sortOrder != rhs.sortOrder {
+            return lhs.sortOrder > rhs.sortOrder
+        }
+
+        if lhs.createdAt != rhs.createdAt {
             return lhs.createdAt > rhs.createdAt
         }
+
+        return lhs.id.uuidString < rhs.id.uuidString
     }
 
     private var filteredOpenTodos: [TodoItem] {
@@ -624,19 +637,28 @@ struct ContentView: View {
         .navigationSplitViewColumnWidth(min: notesListMinimumColumnWidth, ideal: notesListIdealColumnWidth, max: 800)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    showingAddTodo = true
-                } label: {
-                    Label("New Todo", systemImage: "plus")
+                if !isEditing {
+                    Button {
+                        showingAddTodo = true
+                    } label: {
+                        Label("New Todo", systemImage: "plus")
+                    }
                 }
 
                 #if !os(macOS)
+                if !filteredTodos.isEmpty {
+                    EditButton()
+                }
+
                 if isCloudSyncIndicatorVisible {
                     CloudSyncToolbarIndicator()
                 }
                 #endif
             }
         }
+        #if os(iOS)
+        .environment(\.editMode, $editMode)
+        #endif
     }
 
     @ViewBuilder
@@ -1142,6 +1164,9 @@ struct ContentView: View {
                 ForEach(filteredOpenTodos) { todo in
                     todoRow(for: todo)
                 }
+                .onMove { offsets, destination in
+                    moveTodos(in: filteredOpenTodos, from: offsets, to: destination)
+                }
                 .onDelete { offsets in
                     deleteTodos(from: filteredOpenTodos, offsets: offsets)
                 }
@@ -1155,6 +1180,9 @@ struct ContentView: View {
                 if isCompletedTodoSectionExpanded {
                     ForEach(filteredCompletedTodos) { todo in
                         todoRow(for: todo)
+                    }
+                    .onMove { offsets, destination in
+                        moveTodos(in: filteredCompletedTodos, from: offsets, to: destination)
                     }
                     .onDelete { offsets in
                         deleteTodos(from: filteredCompletedTodos, offsets: offsets)
@@ -1170,6 +1198,9 @@ struct ContentView: View {
             ForEach(filteredOpenTodos) { todo in
                 todoRow(for: todo)
             }
+            .onMove { offsets, destination in
+                moveTodos(in: filteredOpenTodos, from: offsets, to: destination)
+            }
             .onDelete { offsets in
                 deleteTodos(from: filteredOpenTodos, offsets: offsets)
             }
@@ -1180,6 +1211,9 @@ struct ContentView: View {
             if isCompletedTodoSectionExpanded {
                 ForEach(filteredCompletedTodos) { todo in
                     todoRow(for: todo)
+                }
+                .onMove { offsets, destination in
+                    moveTodos(in: filteredCompletedTodos, from: offsets, to: destination)
                 }
                 .onDelete { offsets in
                     deleteTodos(from: filteredCompletedTodos, offsets: offsets)
@@ -1313,7 +1347,8 @@ struct ContentView: View {
         let todo = TodoItem(
             text: todoText,
             sourceText: "",
-            sourceNote: nil
+            sourceNote: nil,
+            sortOrder: nextTodoSortOrder()
         )
         todo.isSourceTextAvailable = false
         modelContext.insert(todo)
@@ -1337,6 +1372,7 @@ struct ContentView: View {
             )
             todo.createdAt = now.addingTimeInterval(TimeInterval(-index))
             todo.updatedAt = todo.createdAt
+            todo.sortOrder = 50 - index
             todo.isSourceTextAvailable = false
             modelContext.insert(todo)
         }
@@ -1349,6 +1385,7 @@ struct ContentView: View {
             )
             todo.createdAt = now.addingTimeInterval(TimeInterval(-(index + 25)))
             todo.updatedAt = todo.createdAt
+            todo.sortOrder = 25 - index
             todo.isCompleted = true
             todo.completedAt = now.addingTimeInterval(TimeInterval(-index))
             todo.isSourceTextAvailable = false
@@ -1371,6 +1408,10 @@ struct ContentView: View {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: " ")
+    }
+
+    private func nextTodoSortOrder() -> Int {
+        (allTodos.map(\.sortOrder).max() ?? 0) + 1
     }
 
     @discardableResult
@@ -1563,6 +1604,24 @@ struct ContentView: View {
             print("💾 Items reordered successfully - CloudKit sync queued")
         } catch {
             print("❌ Failed to save reordered items: \(error)")
+        }
+    }
+
+    private func moveTodos(in todos: [TodoItem], from source: IndexSet, to destination: Int) {
+        var reorderedTodos = Array(todos)
+        reorderedTodos.move(fromOffsets: source, toOffset: destination)
+
+        let topSortOrder = max(reorderedTodos.count, allTodos.map(\.sortOrder).max() ?? 0)
+        for (index, todo) in reorderedTodos.enumerated() {
+            todo.sortOrder = topSortOrder - index
+            todo.updatedAt = Date()
+        }
+
+        do {
+            try modelContext.save()
+            print("💾 Todos reordered successfully - CloudKit sync queued")
+        } catch {
+            print("❌ Failed to save reordered todos: \(error)")
         }
     }
     

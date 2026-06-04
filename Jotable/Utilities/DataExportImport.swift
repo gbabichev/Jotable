@@ -35,6 +35,7 @@ struct ExportedTodo: Codable {
     let updatedAt: Date
     let isCompleted: Bool
     let completedAt: Date?
+    let sortOrder: Int?
     let sourceNoteIndex: Int?
     let sourceNoteTitleSnapshot: String
     let sourceCategoryNameSnapshot: String
@@ -52,7 +53,7 @@ enum DataExportImport {
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         let todoDescriptor = FetchDescriptor<TodoItem>(
-            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            sortBy: [SortDescriptor(\.sortOrder, order: .reverse), SortDescriptor(\.createdAt, order: .reverse)]
         )
 
         let categories = try context.fetch(categoryDescriptor)
@@ -104,6 +105,7 @@ enum DataExportImport {
                 updatedAt: todo.updatedAt,
                 isCompleted: todo.isCompleted,
                 completedAt: todo.completedAt,
+                sortOrder: todo.sortOrder,
                 sourceNoteIndex: sourceNoteIndex,
                 sourceNoteTitleSnapshot: todo.sourceNoteTitleSnapshot,
                 sourceCategoryNameSnapshot: todo.sourceCategoryNameSnapshot,
@@ -162,7 +164,7 @@ enum DataExportImport {
         }
 
         let importedTodos = package.todos ?? []
-        for todoData in importedTodos {
+        for (index, todoData) in importedTodos.enumerated() {
             let sourceNote: Item? = {
                 guard let sourceNoteIndex = todoData.sourceNoteIndex,
                       sourceNoteIndex < createdNotes.count else {
@@ -182,6 +184,7 @@ enum DataExportImport {
             todo.updatedAt = todoData.updatedAt
             todo.isCompleted = todoData.isCompleted
             todo.completedAt = todoData.completedAt
+            todo.sortOrder = todoData.sortOrder ?? (importedTodos.count - index)
             todo.sourceNoteTitleSnapshot = todoData.sourceNoteTitleSnapshot
             todo.sourceCategoryNameSnapshot = todoData.sourceCategoryNameSnapshot
             todo.isSourceTextAvailable = todoData.isSourceTextAvailable ?? true

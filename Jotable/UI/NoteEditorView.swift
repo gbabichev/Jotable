@@ -121,7 +121,8 @@ struct NoteEditorView: View {
             sourceText: request.text,
             sourceNote: item,
             sourceRangeLocation: request.selectedRangeLocation,
-            sourceRangeLength: request.selectedRangeLength
+            sourceRangeLength: request.selectedRangeLength,
+            sortOrder: nextTodoSortOrder()
         )
         modelContext.insert(todo)
         applyTodoMarker(todo, range: NSRange(location: request.selectedRangeLocation, length: request.selectedRangeLength))
@@ -147,6 +148,10 @@ struct NoteEditorView: View {
         allTodos.filter { todo in
             todo.sourceNote == item || todo.sourceNoteID == item.id.uuidString
         }
+    }
+
+    private func nextTodoSortOrder() -> Int {
+        (allTodos.map(\.sortOrder).max() ?? 0) + 1
     }
 
     private var todoRenderSignature: String {

@@ -20,6 +20,7 @@ final class TodoItem {
     var updatedAt: Date = Date()
     var isCompleted: Bool = false
     var completedAt: Date?
+    var sortOrder: Int = 0
 
     var sourceText: String = ""
     var sourceNoteID: String = ""
@@ -36,7 +37,8 @@ final class TodoItem {
         sourceText: String,
         sourceNote: Item?,
         sourceRangeLocation: Int = 0,
-        sourceRangeLength: Int = 0
+        sourceRangeLength: Int = 0,
+        sortOrder: Int = 0
     ) {
         let now = Date()
         self.id = UUID()
@@ -45,6 +47,7 @@ final class TodoItem {
         self.updatedAt = now
         self.isCompleted = false
         self.completedAt = nil
+        self.sortOrder = sortOrder
         self.sourceText = sourceText
         self.sourceNote = sourceNote
         self.sourceNoteID = sourceNote?.id.uuidString ?? ""
