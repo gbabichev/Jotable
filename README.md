@@ -50,9 +50,9 @@ Just a clean, focused space for your thoughts.
 
 ## 🖥️ Install & Minimum Requirements
 
-- macOS 26.0 or later  
+- macOS 26.0 or later
 - Apple Silicon & Intel (Not tested on Intel)
-- ~20 MB free disk space  
+- ~20 MB free disk space
 
 
 ### ⚙️ Installation
@@ -61,96 +61,104 @@ Just a clean, focused space for your thoughts.
 
 ## 📝 Changelog
 
+### 1.5.2
+- Added:
+  - Sorting to todo list.
+  - Due Dates & Priorities to todo's.
+
+### 1.5.1
+- Improved title bars on macOS
+
 ### 1.5.0
-- Added: 
-  - Todo List. Select text in a note, add it to a todo-list. 
+- Added:
+  - Todo List. Select text in a note, add it to a todo-list.
 - Fixed:
-  - Improved auto-correct on iOS. 
+  - Improved auto-correct on iOS.
 
 ### 1.4.0
-- Added: 
-  - "Focus Mode" on iPad and Mac. You can now make notes take up the full window. 
+- Added:
+  - "Focus Mode" on iPad and Mac. You can now make notes take up the full window.
 - Fixed:
-  - Changing a note category to a Hidden or Private category no longer takes you out of that category. 
+  - Changing a note category to a Hidden or Private category no longer takes you out of that category.
 
 ### 1.3.1
 - Added:
   - "Empty Trash" context menu
-  - Padding to the bottom of the editor, so when typing on the last line its easier to see. 
-- Fixed: 
-  - Improved text editor on Mac to prevent ghosting in edge cases. 
+  - Padding to the bottom of the editor, so when typing on the last line its easier to see.
+- Fixed:
+  - Improved text editor on Mac to prevent ghosting in edge cases.
 
 ### 1.3.0
 - Added:
-  - Recently Deleted support. When notes are deleted, they move to 'Trash'. After 30 days, notes will automatically delete. Notes can be recovered from Trash. 
+  - Recently Deleted support. When notes are deleted, they move to 'Trash'. After 30 days, notes will automatically delete. Notes can be recovered from Trash.
   - Mac - Spruced up Password Generator.
   - Access to Password Generator available from a right click of the App Icon in the Dock on Mac, and from the Home Screen on iOS.
   - iCloud sync indicator.
 
 - Fixed:
   - Mac "New Note" shortcut was not working properly if app window was closed.
-  - Adding a dash, bullet, number, or checkbox and inserting a new line would delete the line. 
-  - Inserting images is more consistent. 
+  - Adding a dash, bullet, number, or checkbox and inserting a new line would delete the line.
+  - Inserting images is more consistent.
 
 ### 1.2.2
 - Fixed
-  - Undo not working properly in certain conditions. 
+  - Undo not working properly in certain conditions.
   - Private categories can no longer be deleted without biometric authentication.
 - Improved
   - iOS multi-note deletion experience.
 
 ### 1.2.1
 - Added
- - Additional "Hide from Home" option along with "Require FaceID" or "Require TouchID" depending on available biometrics. 
+  - Additional "Hide from Home" option along with "Require FaceID" or "Require TouchID" depending on available biometrics.
 
 - Changed
- - Renamed "Lock Category" & "Unlock Category" to "Require FaceID".
+  - Renamed "Lock Category" & "Unlock Category" to "Require FaceID".
 
 - Fixed
- - Notes are no longer marked "updated" when they are just opened. 
- - iOS now properly surfaces a "Delete" button when multipe notes are selected. 
+  - Notes are no longer marked "updated" when they are just opened.
+  - iOS now properly surfaces a "Delete" button when multipe notes are selected.
 
 ### 1.2.0
-- Added
- - Password Generator Tool. 
- - Last open note is now remembered, and re-open on app launch. 
- - Multi note delete.
- - Inserted images are now resizeable. 
- - Added context menu for main app icon on iOS & macOS to quickly make a new note. 
- - macOS: Keyboard shortcuts for Bolt, Italics. 
+- Added:
+  - Password Generator Tool.
+  - Last open note is now remembered, and re-open on app launch.
+  - Multi note delete.
+  - Inserted images are now resizeable.
+  - Added context menu for main app icon on iOS & macOS to quickly make a new note.
+  - macOS: Keyboard shortcuts for Bolt, Italics.
 
- - Fixed
-  - Edge cases with text box insertion. 
-  - Preview will more effectively show the first text, not just the first line. 
-  - Authentication loop when jumping between private categories. 
+ - Fixed:
+   - Edge cases with text box insertion.
+   - Preview will more effectively show the first text, not just the first line.
+   - Authentication loop when jumping between private categories.
 
 ### 1.1.1
-- Bugfixes with the Paste as Plaintext feature. 
-- Bugfixes with inserting Checkbox / Dash / Bullet / Numbers into lines with emojis & other characters. 
+- Bugfixes with the Paste as Plaintext feature.
+- Bugfixes with inserting Checkbox / Dash / Bullet / Numbers into lines with emojis & other characters.
 - Checkboxes on iOS now properly support Shake to Undo.
 
 ### 1.1.0
 - Added private categories. (FaceID / TouchID required to unlock)
-- Added clickable checkboxes. Click to toggle! 
+- Added clickable checkboxes. Click to toggle!
 - Added Insert Date & Insert Time tools.
-- Added Insert Bullet tool. 
-- Added Highlighter tool. 
-- Added Italics Font. 
-- Added pasteable images. 
+- Added Insert Bullet tool.
+- Added Highlighter tool.
+- Added Italics Font.
+- Added pasteable images.
 - Added "paste plaintext" on Mac. (cmd+shift+v)
 - Added Insert Checkbox / Dash / Bullet / Numbering on selected text.
 - Added editable Links on iOS.
 - Lots of bugfixes.
 
 ### 1.0.0
-- Initial Release. 
+- Initial Release.
 
 ## 📄 License
 
-MIT — free for personal and commercial use. 
+MIT — free for personal and commercial use.
 
 ## Privacy
 <a href="Documentation/PrivacyPolicy.html">Privacy Policy</a>
 
-## Support 
+## Support
 <a href="Documentation/Support.html">Support</a>
