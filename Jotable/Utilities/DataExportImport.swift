@@ -36,6 +36,8 @@ struct ExportedTodo: Codable {
     let isCompleted: Bool
     let completedAt: Date?
     let sortOrder: Int?
+    let dueDate: Date?
+    let priorityRawValue: Int?
     let sourceNoteIndex: Int?
     let sourceNoteTitleSnapshot: String
     let sourceCategoryNameSnapshot: String
@@ -106,6 +108,8 @@ enum DataExportImport {
                 isCompleted: todo.isCompleted,
                 completedAt: todo.completedAt,
                 sortOrder: todo.sortOrder,
+                dueDate: todo.dueDate,
+                priorityRawValue: todo.priorityRawValue,
                 sourceNoteIndex: sourceNoteIndex,
                 sourceNoteTitleSnapshot: todo.sourceNoteTitleSnapshot,
                 sourceCategoryNameSnapshot: todo.sourceCategoryNameSnapshot,
@@ -185,6 +189,8 @@ enum DataExportImport {
             todo.isCompleted = todoData.isCompleted
             todo.completedAt = todoData.completedAt
             todo.sortOrder = todoData.sortOrder ?? (importedTodos.count - index)
+            todo.dueDate = todoData.dueDate.map { Calendar.current.startOfDay(for: $0) }
+            todo.priorityRawValue = todoData.priorityRawValue ?? TodoPriority.normal.rawValue
             todo.sourceNoteTitleSnapshot = todoData.sourceNoteTitleSnapshot
             todo.sourceCategoryNameSnapshot = todoData.sourceCategoryNameSnapshot
             todo.isSourceTextAvailable = todoData.isSourceTextAvailable ?? true

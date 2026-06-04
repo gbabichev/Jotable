@@ -10,8 +10,11 @@ struct AddTodoView: View {
     @FocusState private var isTodoFocused: Bool
 
     @State private var todoText = ""
+    @State private var hasDueDate = false
+    @State private var dueDate = Date()
+    @State private var priority: TodoPriority = .normal
 
-    let onAdd: (String) -> Void
+    let onAdd: (StandaloneTodoDraft) -> Void
 
     private var trimmedTodoText: String {
         todoText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -58,9 +61,26 @@ struct AddTodoView: View {
             }
             .padding(.horizontal, 20)
 
+            VStack(alignment: .leading, spacing: 12) {
+                Picker("Priority", selection: $priority) {
+                    ForEach(TodoPriority.allCases) { priority in
+                        Text(priority.title).tag(priority)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Toggle("Due Date", isOn: $hasDueDate)
+
+                if hasDueDate {
+                    DatePicker("Due", selection: $dueDate, displayedComponents: .date)
+                        .datePickerStyle(.compact)
+                }
+            }
+            .padding(.horizontal, 20)
+
             Spacer(minLength: 20)
         }
-        .frame(minWidth: 360, minHeight: 180)
+        .frame(minWidth: 360, minHeight: 300)
         .onAppear {
             isTodoFocused = true
         }
@@ -68,7 +88,13 @@ struct AddTodoView: View {
 
     private func addTodo() {
         guard !trimmedTodoText.isEmpty else { return }
-        onAdd(trimmedTodoText)
+        onAdd(
+            StandaloneTodoDraft(
+                text: trimmedTodoText,
+                dueDate: hasDueDate ? dueDate : nil,
+                priority: priority
+            )
+        )
         dismiss()
     }
 }

@@ -12,6 +12,28 @@ struct TodoCreationRequest {
     let selectedRangeLength: Int
 }
 
+struct StandaloneTodoDraft {
+    let text: String
+    let dueDate: Date?
+    let priority: TodoPriority
+}
+
+enum TodoPriority: Int, CaseIterable, Identifiable, Codable, Sendable {
+    case low = 0
+    case normal = 1
+    case high = 2
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .low: "Low"
+        case .normal: "Normal"
+        case .high: "High"
+        }
+    }
+}
+
 @Model
 final class TodoItem {
     var id: UUID = UUID()
@@ -21,6 +43,8 @@ final class TodoItem {
     var isCompleted: Bool = false
     var completedAt: Date?
     var sortOrder: Int = 0
+    var dueDate: Date?
+    var priorityRawValue: Int = TodoPriority.normal.rawValue
 
     var sourceText: String = ""
     var sourceNoteID: String = ""
@@ -38,7 +62,9 @@ final class TodoItem {
         sourceNote: Item?,
         sourceRangeLocation: Int = 0,
         sourceRangeLength: Int = 0,
-        sortOrder: Int = 0
+        sortOrder: Int = 0,
+        dueDate: Date? = nil,
+        priority: TodoPriority = .normal
     ) {
         let now = Date()
         self.id = UUID()
@@ -48,6 +74,8 @@ final class TodoItem {
         self.isCompleted = false
         self.completedAt = nil
         self.sortOrder = sortOrder
+        self.dueDate = dueDate
+        self.priorityRawValue = priority.rawValue
         self.sourceText = sourceText
         self.sourceNote = sourceNote
         self.sourceNoteID = sourceNote?.id.uuidString ?? ""
@@ -56,5 +84,16 @@ final class TodoItem {
         self.sourceRangeLocation = sourceRangeLocation
         self.sourceRangeLength = sourceRangeLength
         self.isSourceTextAvailable = true
+    }
+}
+
+extension TodoItem {
+    var priority: TodoPriority {
+        get {
+            TodoPriority(rawValue: priorityRawValue) ?? .normal
+        }
+        set {
+            priorityRawValue = newValue.rawValue
+        }
     }
 }

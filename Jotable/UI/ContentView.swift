@@ -307,7 +307,7 @@ struct ContentView: View {
     }
 
     private var addTodoSheetHeight: CGFloat {
-        260
+        360
     }
 
     private var addCategorySheetHeight: CGFloat {
@@ -807,8 +807,8 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showingAddTodo) {
-            AddTodoView { text in
-                createStandaloneTodo(from: text)
+            AddTodoView { draft in
+                createStandaloneTodo(from: draft)
             }
             #if os(iOS)
             .presentationCompactAdaptation(.sheet)
@@ -1295,6 +1295,9 @@ struct ContentView: View {
             updateText: { text in
                 updateStandaloneTodo(todo, text: text)
             },
+            updateMetadata: { dueDate, priority in
+                updateTodoMetadata(todo, dueDate: dueDate, priority: priority)
+            },
             openSource: {
                 openSourceNote(for: todo)
             }
@@ -1340,15 +1343,17 @@ struct ContentView: View {
         todo.sourceNote == nil && todo.sourceNoteID.isEmpty
     }
 
-    private func createStandaloneTodo(from text: String) {
-        let todoText = normalizedStandaloneTodoText(from: text)
+    private func createStandaloneTodo(from draft: StandaloneTodoDraft) {
+        let todoText = normalizedStandaloneTodoText(from: draft.text)
         guard !todoText.isEmpty else { return }
 
         let todo = TodoItem(
             text: todoText,
             sourceText: "",
             sourceNote: nil,
-            sortOrder: nextTodoSortOrder()
+            sortOrder: nextTodoSortOrder(),
+            dueDate: normalizedDueDate(draft.dueDate),
+            priority: draft.priority
         )
         todo.isSourceTextAvailable = false
         modelContext.insert(todo)
@@ -1363,29 +1368,67 @@ struct ContentView: View {
 
     private func fillTodosForDebug() {
         let now = Date()
+        let calendar = Calendar.current
+        let openTodoSeeds = [
+            "Review launch checklist",
+            "Follow up on onboarding notes",
+            "Draft customer recap",
+            "Confirm release owner",
+            "Clean up meeting action items",
+            "Check dashboard numbers",
+            "Write QA handoff",
+            "Prepare hiring feedback",
+            "Update roadmap notes",
+            "Send pricing answer"
+        ]
+        let completedTodoSeeds = [
+            "Archived sprint notes",
+            "Closed support follow-up",
+            "Resolved copy review",
+            "Filed analytics summary",
+            "Sent design feedback",
+            "Updated account notes",
+            "Finished weekly planning",
+            "Logged customer request",
+            "Reviewed changelog",
+            "Closed release task"
+        ]
+        let openDueOffsets = [-3, -1, 0, 1, 2, 5, 7, 14]
+        let completedDueOffsets = [-21, -14, -7, -3, -1, 0, 2]
+        let startingSortOrder = nextTodoSortOrder() + 50
 
         for index in 1...25 {
             let todo = TodoItem(
-                text: "Debug open todo \(index)",
+                text: "\(openTodoSeeds.randomElement() ?? "Debug open todo") #\(index)",
                 sourceText: "",
                 sourceNote: nil
             )
             todo.createdAt = now.addingTimeInterval(TimeInterval(-index))
             todo.updatedAt = todo.createdAt
-            todo.sortOrder = 50 - index
+            todo.sortOrder = startingSortOrder - index
+            todo.priority = TodoPriority.allCases.randomElement() ?? .normal
+            if index % 3 != 0,
+               let dueDate = calendar.date(byAdding: .day, value: openDueOffsets.randomElement() ?? 0, to: now) {
+                todo.dueDate = calendar.startOfDay(for: dueDate)
+            }
             todo.isSourceTextAvailable = false
             modelContext.insert(todo)
         }
 
         for index in 1...25 {
             let todo = TodoItem(
-                text: "Debug completed todo \(index)",
+                text: "\(completedTodoSeeds.randomElement() ?? "Debug completed todo") #\(index)",
                 sourceText: "",
                 sourceNote: nil
             )
             todo.createdAt = now.addingTimeInterval(TimeInterval(-(index + 25)))
             todo.updatedAt = todo.createdAt
-            todo.sortOrder = 25 - index
+            todo.sortOrder = startingSortOrder - 25 - index
+            todo.priority = TodoPriority.allCases.randomElement() ?? .normal
+            if index % 4 != 0,
+               let dueDate = calendar.date(byAdding: .day, value: completedDueOffsets.randomElement() ?? 0, to: now) {
+                todo.dueDate = calendar.startOfDay(for: dueDate)
+            }
             todo.isCompleted = true
             todo.completedAt = now.addingTimeInterval(TimeInterval(-index))
             todo.isSourceTextAvailable = false
@@ -1414,6 +1457,10 @@ struct ContentView: View {
         (allTodos.map(\.sortOrder).max() ?? 0) + 1
     }
 
+    private func normalizedDueDate(_ dueDate: Date?) -> Date? {
+        dueDate.map { Calendar.current.startOfDay(for: $0) }
+    }
+
     @discardableResult
     private func updateStandaloneTodo(_ todo: TodoItem, text: String) -> String {
         guard isStandaloneTodo(todo) else { return todo.text }
@@ -1433,6 +1480,22 @@ struct ContentView: View {
         }
 
         return todo.text
+    }
+
+    private func updateTodoMetadata(_ todo: TodoItem, dueDate: Date?, priority: TodoPriority) {
+        let normalizedDate = normalizedDueDate(dueDate)
+        guard todo.dueDate != normalizedDate || todo.priority != priority else { return }
+
+        todo.dueDate = normalizedDate
+        todo.priority = priority
+        todo.updatedAt = Date()
+
+        do {
+            try modelContext.save()
+            print("💾 Todo metadata updated - CloudKit sync queued")
+        } catch {
+            print("❌ Failed to update todo metadata: \(error)")
+        }
     }
 
     private func sourceNote(for todo: TodoItem) -> Item? {
@@ -2826,9 +2889,13 @@ struct TodoRowView: View {
     let canOpenSource: Bool
     let toggleCompletion: () -> Void
     let updateText: (String) -> String
+    let updateMetadata: (Date?, TodoPriority) -> Void
     let openSource: () -> Void
 
     @State private var draftText = ""
+    @State private var hasDueDate = false
+    @State private var draftDueDate = Date()
+    @State private var draftPriority: TodoPriority = .normal
     @State private var isInfoPresented = false
     @FocusState private var isTextFocused: Bool
 
@@ -2890,10 +2957,29 @@ struct TodoRowView: View {
         }
     }
 
+    @ViewBuilder
+    private var metadataContent: some View {
+        if todo.priority != .normal || todo.dueDate != nil {
+            HStack(spacing: 8) {
+                if todo.priority != .normal {
+                    Label(todo.priority.title, systemImage: priorityIcon(for: todo.priority))
+                        .foregroundStyle(priorityColor(for: todo.priority))
+                }
+
+                if let dueDate = todo.dueDate {
+                    Label(dueDateLabel(for: dueDate), systemImage: "calendar")
+                        .foregroundStyle(dueDateColor(for: dueDate))
+                }
+            }
+            .font(.caption)
+        }
+    }
+
     private var rowContent: some View {
         HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
                 titleContent
+                metadataContent
 
                 HStack(spacing: 4) {
                     Image(systemName: sourceIcon)
@@ -2912,6 +2998,9 @@ struct TodoRowView: View {
 
     private var infoButton: some View {
         Button {
+            if !isInfoPresented {
+                syncMetadataDrafts()
+            }
             isInfoPresented.toggle()
         } label: {
             Image(systemName: "info.circle")
@@ -2934,7 +3023,7 @@ struct TodoRowView: View {
     }
 
     private var todoInfoSheetHeight: CGFloat {
-        todo.completedAt == nil ? 170 : 220
+        todo.completedAt == nil ? 340 : 390
     }
 
     private var todoInfoPopover: some View {
@@ -2942,8 +3031,30 @@ struct TodoRowView: View {
             Text("Todo Info")
                 .font(.headline)
 
+            VStack(alignment: .leading, spacing: 10) {
+                Picker("Priority", selection: $draftPriority) {
+                    ForEach(TodoPriority.allCases) { priority in
+                        Text(priority.title).tag(priority)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Toggle("Due Date", isOn: $hasDueDate)
+
+                if hasDueDate {
+                    DatePicker("Due", selection: $draftDueDate, displayedComponents: .date)
+                        .datePickerStyle(.compact)
+                }
+            }
+
+            Divider()
+
             VStack(alignment: .leading, spacing: 8) {
                 dateRow(title: "Created", date: todo.createdAt)
+
+                if let dueDate = todo.dueDate {
+                    dateRow(title: "Due", date: dueDate, includesTime: false)
+                }
 
                 if let completedAt = todo.completedAt {
                     dateRow(title: "Completed", date: completedAt)
@@ -2954,24 +3065,69 @@ struct TodoRowView: View {
         #if os(iOS)
         .frame(maxWidth: .infinity, alignment: .leading)
         #else
-        .frame(minWidth: 220, alignment: .leading)
+        .frame(minWidth: 280, alignment: .leading)
         #endif
     }
 
-    private func dateRow(title: String, date: Date) -> some View {
+    private func dateRow(title: String, date: Date, includesTime: Bool = true) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Text(formattedDate(date))
+            Text(formattedDate(date, includesTime: includesTime))
                 .font(.body)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func formattedDate(_ date: Date) -> String {
-        date.formatted(date: .abbreviated, time: .shortened)
+    private func formattedDate(_ date: Date, includesTime: Bool = true) -> String {
+        if includesTime {
+            return date.formatted(date: .abbreviated, time: .shortened)
+        }
+
+        return date.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    private func priorityIcon(for priority: TodoPriority) -> String {
+        switch priority {
+        case .low: "arrow.down.circle"
+        case .normal: "minus.circle"
+        case .high: "exclamationmark.circle.fill"
+        }
+    }
+
+    private func priorityColor(for priority: TodoPriority) -> Color {
+        switch priority {
+        case .low: .secondary
+        case .normal: .secondary
+        case .high: .red
+        }
+    }
+
+    private func dueDateLabel(for dueDate: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(dueDate) {
+            return "Today"
+        }
+        if calendar.isDateInTomorrow(dueDate) {
+            return "Tomorrow"
+        }
+        if !todo.isCompleted && dueDate < calendar.startOfDay(for: Date()) {
+            return "Overdue"
+        }
+        return dueDate.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    private func dueDateColor(for dueDate: Date) -> Color {
+        let calendar = Calendar.current
+        if !todo.isCompleted && dueDate < calendar.startOfDay(for: Date()) {
+            return .red
+        }
+        if calendar.isDateInToday(dueDate) {
+            return .orange
+        }
+        return .secondary
     }
 
     var body: some View {
@@ -3004,11 +3160,28 @@ struct TodoRowView: View {
         .contentShape(Rectangle())
         .onAppear {
             draftText = todo.text
+            syncMetadataDrafts()
         }
         .onChange(of: todo.text) { _, newValue in
             if !isTextFocused {
                 draftText = newValue
             }
+        }
+        .onChange(of: todo.dueDate) { _, _ in
+            syncMetadataDrafts()
+        }
+        .onChange(of: todo.priorityRawValue) { _, _ in
+            syncMetadataDrafts()
+        }
+        .onChange(of: hasDueDate) { _, _ in
+            commitMetadataEdit()
+        }
+        .onChange(of: draftDueDate) { _, _ in
+            guard hasDueDate else { return }
+            commitMetadataEdit()
+        }
+        .onChange(of: draftPriority) { _, _ in
+            commitMetadataEdit()
         }
     }
 
@@ -3019,6 +3192,17 @@ struct TodoRowView: View {
         if draftText != savedText {
             draftText = savedText
         }
+    }
+
+    private func syncMetadataDrafts() {
+        draftDueDate = todo.dueDate ?? Date()
+        draftPriority = todo.priority
+        hasDueDate = todo.dueDate != nil
+    }
+
+    private func commitMetadataEdit() {
+        guard isInfoPresented else { return }
+        updateMetadata(hasDueDate ? draftDueDate : nil, draftPriority)
     }
 }
 
