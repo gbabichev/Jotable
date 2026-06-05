@@ -703,6 +703,7 @@ struct ContentView: View {
             #if os(iOS)
             .listStyle(.plain)
             .listSectionSpacing(.compact)
+            .contentMargins(.top, 0, for: .scrollContent)
             .scrollDismissesKeyboard(.interactively)
             #endif
         }
@@ -722,10 +723,14 @@ struct ContentView: View {
         }
 
         if hasHiddenPrivateTodos {
-            return "Private todos are hidden."
+            return privateTodoHiddenMessage
         }
 
         return "No todo items yet."
+    }
+
+    private var privateTodoHiddenMessage: String {
+        "Some todos from private notes are hidden. Use the toolbar button to show them."
     }
 
     #if os(iOS)
@@ -1189,9 +1194,19 @@ struct ContentView: View {
 
     @ViewBuilder
     private var todoListContent: some View {
+        #if os(macOS)
+        if hasHiddenPrivateTodos {
+            privateTodoHiddenNotice
+        }
+        #endif
+
         #if os(iOS)
         if !filteredOpenTodos.isEmpty {
             Section {
+                if hasHiddenPrivateTodos {
+                    privateTodoHiddenNotice
+                }
+
                 ForEach(filteredOpenTodos) { todo in
                     todoRow(for: todo)
                 }
@@ -1208,6 +1223,10 @@ struct ContentView: View {
 
         if !filteredCompletedTodos.isEmpty {
             Section {
+                if hasHiddenPrivateTodos && filteredOpenTodos.isEmpty {
+                    privateTodoHiddenNotice
+                }
+
                 if isCompletedTodoSectionExpanded {
                     ForEach(filteredCompletedTodos) { todo in
                         todoRow(for: todo)
@@ -1251,6 +1270,28 @@ struct ContentView: View {
                 }
             }
         }
+        #endif
+    }
+
+    private var privateTodoHiddenNotice: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "lock")
+                .font(.caption)
+                .frame(width: 18, height: 18)
+
+            Text(privateTodoHiddenMessage)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        #if os(iOS)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
+        .listRowInsets(EdgeInsets(top: 2, leading: 20, bottom: 6, trailing: 20))
+        .listRowSeparator(.hidden)
+        #else
+        .padding(.vertical, 4)
+        .listRowSeparator(.hidden)
         #endif
     }
 
