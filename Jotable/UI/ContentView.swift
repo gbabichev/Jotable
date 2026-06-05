@@ -129,14 +129,8 @@ struct ContentView: View {
 
     private var visibleTodos: [TodoItem] {
         allTodos.filter { todo in
-            if let linkedNote = linkedSourceNote(for: todo) {
-                guard !linkedNote.isInTrash else { return false }
-
-                guard let category = linkedNote.category else { return true }
-                return !category.isPrivate && !category.isHiddenFromHome
-            }
-
-            return true
+            guard let linkedNote = linkedSourceNote(for: todo) else { return true }
+            return !linkedNote.isInTrash
         }
     }
 
@@ -274,7 +268,11 @@ struct ContentView: View {
         guard selectedItemIDs.count == 1, let selectedID = selectedItemIDs.first else { return nil }
         #endif
         if isViewingTodoList {
-            return allItems.first { $0.persistentModelID == selectedID && !$0.isInTrash }
+            return allItems.first { item in
+                item.persistentModelID == selectedID &&
+                    !item.isInTrash &&
+                    canAccessNoteFromTodoList(item)
+            }
         }
 
         if let visibleItem = filteredItems.first(where: { $0.persistentModelID == selectedID }) {
@@ -1540,6 +1538,25 @@ struct ContentView: View {
     private func openSourceNote(for todo: TodoItem) {
         guard let note = sourceNote(for: todo) else { return }
 
+        guard canAccessNoteFromTodoList(note) else {
+            authenticateWithBiometrics(reason: "Authenticate to access this private note") { success in
+                guard success else { return }
+                self.isAuthenticatedForPrivateAccess = true
+                self.lastAuthenticationTime = Date()
+                self.openSourceNoteAfterAccessCheck(note)
+            }
+            return
+        }
+
+        openSourceNoteAfterAccessCheck(note)
+    }
+
+    private func canAccessNoteFromTodoList(_ note: Item) -> Bool {
+        guard note.category?.isPrivate == true else { return true }
+        return isAuthenticationValid
+    }
+
+    private func openSourceNoteAfterAccessCheck(_ note: Item) {
         #if os(iOS)
         if shouldPushTodoSourceInTodoList {
             selectedItemIDs.removeAll()
@@ -2906,7 +2923,7 @@ struct TodoRowView: View {
 
         let title = sourceTextAvailable ? sourceTitle : "\(sourceTitle) - source text removed"
         if let sourceCategoryName {
-            return "\(sourceCategoryName) / \(title)"
+            return "\(sourceCategoryName) • \(title)"
         }
         return title
     }
