@@ -127,10 +127,20 @@ struct ContentView: View {
         return false
     }
 
-    private var visibleTodos: [TodoItem] {
+    private var todoListTodos: [TodoItem] {
         allTodos.filter { todo in
             guard let linkedNote = linkedSourceNote(for: todo) else { return true }
             return !linkedNote.isInTrash
+        }
+    }
+
+    private var hasHiddenPrivateTodos: Bool {
+        !isAuthenticationValid && todoListTodos.contains(where: isPrivateTodo)
+    }
+
+    private var visibleTodos: [TodoItem] {
+        todoListTodos.filter { todo in
+            !isPrivateTodo(todo) || isAuthenticationValid
         }
     }
 
@@ -643,6 +653,16 @@ struct ContentView: View {
                     }
                 }
 
+                if hasHiddenPrivateTodos {
+                    Button {
+                        unlockPrivateTodos()
+                    } label: {
+                        Label("Show Private Todos", systemImage: biometricToggleUI.enableIcon)
+                    }
+                    .accessibilityLabel("Show private todos")
+                    .help("Authenticate to show todos from private notes")
+                }
+
                 #if !os(macOS)
                 if !filteredTodos.isEmpty {
                     EditButton()
@@ -692,14 +712,27 @@ struct ContentView: View {
         ContentUnavailableView {
             Label("No Todos", systemImage: "checklist")
         } description: {
-            Text(searchText.isEmpty ? "No todo items yet." : "No matching todos.")
+            Text(todoEmptyStateDescription)
         }
+    }
+
+    private var todoEmptyStateDescription: String {
+        if !searchText.isEmpty {
+            return "No matching todos."
+        }
+
+        if hasHiddenPrivateTodos {
+            return "Private todos are hidden."
+        }
+
+        return "No todo items yet."
     }
 
     #if os(iOS)
     @ViewBuilder
     private func todoSourceDestination(for noteID: UUID) -> some View {
-        if let note = allItems.first(where: { $0.id == noteID && !$0.isInTrash }) {
+        if let note = allItems.first(where: { $0.id == noteID && !$0.isInTrash }),
+           canAccessNoteFromTodoList(note) {
             NoteEditorView(
                 item: note,
                 isEditorActive: $isEditorActive,
@@ -713,9 +746,9 @@ struct ContentView: View {
             .id(note.id)
         } else {
             ContentUnavailableView {
-                Label("Note Unavailable", systemImage: "exclamationmark.triangle")
+                Label("Note Unavailable", systemImage: "lock")
             } description: {
-                Text("The source note for this todo could not be opened.")
+                Text("The source note for this todo is unavailable or requires authentication.")
             }
         }
     }
@@ -1280,7 +1313,7 @@ struct ContentView: View {
     }
 
     private func todoRow(for todo: TodoItem) -> some View {
-        TodoRowView(
+        let row = TodoRowView(
             todo: todo,
             sourceTitle: sourceTitle(for: todo),
             sourceCategoryName: sourceCategoryName(for: todo),
@@ -1300,6 +1333,11 @@ struct ContentView: View {
                 openSourceNote(for: todo)
             }
         )
+
+        #if os(iOS)
+        return row
+        #else
+        return row
         .contextMenu {
             if !isStandaloneTodo(todo) {
                 Button {
@@ -1326,6 +1364,7 @@ struct ContentView: View {
                 Label("Delete Todo", systemImage: "trash")
             }
         }
+        #endif
     }
     
     // Delete a single item
@@ -1339,6 +1378,10 @@ struct ContentView: View {
 
     private func isStandaloneTodo(_ todo: TodoItem) -> Bool {
         todo.sourceNote == nil && todo.sourceNoteID.isEmpty
+    }
+
+    private func isPrivateTodo(_ todo: TodoItem) -> Bool {
+        linkedSourceNote(for: todo)?.category?.isPrivate == true
     }
 
     private func createStandaloneTodo(from draft: StandaloneTodoDraft) {
@@ -1549,6 +1592,14 @@ struct ContentView: View {
         }
 
         openSourceNoteAfterAccessCheck(note)
+    }
+
+    private func unlockPrivateTodos() {
+        authenticateWithBiometrics(reason: "Authenticate to show private todos") { success in
+            guard success else { return }
+            self.isAuthenticatedForPrivateAccess = true
+            self.lastAuthenticationTime = Date()
+        }
     }
 
     private func canAccessNoteFromTodoList(_ note: Item) -> Bool {
