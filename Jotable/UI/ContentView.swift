@@ -662,6 +662,13 @@ struct ContentView: View {
             List(selection: listSelectionBinding) {
                 notesListContent
             }
+            #if os(macOS)
+            // Keep AppKit's cached table-row estimate in sync with the actual
+            // two-line SwiftUI row. macOS otherwise uses its compact default
+            // for short, non-scrolling lists and clips the preview until the
+            // split view or window forces a native row-height recalculation.
+            .environment(\.defaultMinListRowHeight, 56)
+            #endif
         }
     }
 
@@ -1217,6 +1224,7 @@ struct ContentView: View {
     private var notesListContent: some View {
         ForEach(filteredItems) { item in
             NoteRowView(item: item, isTrashContext: isViewingTrash)
+                .modelContainer(JotableApp.sharedDocumentContainer)
                 .tag(item.id)
                 .id(item.id)
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -2164,18 +2172,38 @@ struct ContentView: View {
             newItem.category = selectedCategory
         }
 
+        // A note and its document are one logical object even though their
+        // persistence is split across stores. Insert the document first so a
+        // newly rendered row can query its empty body immediately.
+        let documentContext = JotableApp.sharedDocumentContainer.mainContext
+        let newDocument = NoteDocument(
+            noteID: newItem.id.uuidString,
+            plainText: content,
+            attributedContent: attributedContent,
+            updatedAt: newItem.timestamp
+        )
+        documentContext.insert(newDocument)
         modelContext.insert(newItem)
 
         do {
             try modelContext.save()
-            print("💾 New item created and saved - CloudKit sync queued")
-            // Set selection immediately
-            selectedItemIDs = [newItem.id]
-            return newItem
         } catch {
+            documentContext.delete(newDocument)
             print("❌ Failed to save new item: \(error)")
             return nil
         }
+
+        do {
+            try documentContext.save()
+        } catch {
+            // The editor can recreate the document from Item's fallback fields.
+            print("❌ Failed to save new note document: \(error)")
+        }
+
+        print("💾 New item created and saved - CloudKit sync queued")
+        // Set selection immediately
+        selectedItemIDs = [newItem.id]
+        return newItem
     }
 
     private func addItem() {
@@ -3409,17 +3437,44 @@ struct TodoRowView: View {
 struct NoteRowView: View {
     let item: Item
     let isTrashContext: Bool
+    @Query private var documents: [NoteDocument]
     private let attachmentPreviewToken = "Image"
     private let trashRetentionDays = 30
+
+    init(item: Item, isTrashContext: Bool) {
+        self.item = item
+        self.isTrashContext = isTrashContext
+
+        let noteID = item.id.uuidString
+        _documents = Query(
+            filter: #Predicate<NoteDocument> { document in
+                document.noteID == noteID
+            },
+            sort: [SortDescriptor(\NoteDocument.updatedAt, order: .reverse)]
+        )
+
+    }
+
+    private var document: NoteDocument? {
+        documents.first
+    }
+
+    private var bodyText: String {
+        document?.plainText ?? item.content
+    }
+
+    private var modifiedAt: Date {
+        document?.updatedAt ?? item.timestamp
+    }
     
-    private var previewText: String {
-        let normalized = item.content.replacingOccurrences(
+    private var previewText: String? {
+        let normalized = bodyText.replacingOccurrences(
             of: "\u{FFFC}+",
             with: attachmentPreviewToken,
             options: .regularExpression
         )
         let trimmed = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "Start writing..." }
+        guard !trimmed.isEmpty else { return nil }
         
         // Use the first non-empty line to avoid blank previews when the note starts with newlines
         let firstNonEmptyLine = trimmed
@@ -3427,6 +3482,18 @@ struct NoteRowView: View {
             .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         
         return firstNonEmptyLine ?? trimmed
+    }
+
+    private var preview: some View {
+        ZStack(alignment: .leading) {
+            Text("Start writing...")
+                .foregroundStyle(.secondary.opacity(0.65))
+                .opacity(previewText == nil ? 1 : 0)
+
+            Text(previewText ?? "Start writing...")
+                .foregroundStyle(.secondary)
+                .opacity(previewText == nil ? 0 : 1)
+        }
     }
 
     private var trashExpiryDate: Date? {
@@ -3474,7 +3541,7 @@ struct NoteRowView: View {
                                 .fill(Color.orange.opacity(0.12))
                         )
                 } else {
-                    Text(item.timestamp, format: .relative(presentation: .named))
+                    Text(modifiedAt, format: .relative(presentation: .named))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -3488,10 +3555,10 @@ struct NoteRowView: View {
                 }
             }
             
-            Text(previewText)
+            preview
                 .font(.subheadline)
-                .foregroundStyle(previewText == "Start writing..." ? .tertiary : .secondary)
                 .lineLimit(1)
+                .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
 
             if isTrashContext, let trashDeletionDateText {
                 Text(trashDeletionDateText)
@@ -3499,6 +3566,7 @@ struct NoteRowView: View {
                     .foregroundStyle(.tertiary)
             }
         }
+        .frame(minHeight: 48, alignment: .top)
         .padding(.vertical, 4)
         .contentShape(Rectangle())
         .id(item.id)
