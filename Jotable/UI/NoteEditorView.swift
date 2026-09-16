@@ -129,6 +129,54 @@ struct NoteEditorView: View, Equatable {
     }
 }
 
+private struct NoteDocumentSnapshot: Equatable {
+    let plainText: String
+    let attributedContent: Data?
+    let updatedAt: Date
+}
+
+// NoteEditorDocumentView must keep the metadata ModelContext for Item and
+// TodoItem. This child reads the separate document container and forwards value
+// snapshots, allowing CloudKit imports to refresh an already-mounted editor.
+private struct NoteDocumentQueryBridge: View {
+    @Query private var documents: [NoteDocument]
+    let update: (NoteDocumentSnapshot) -> Void
+
+    init(noteID: String, update: @escaping (NoteDocumentSnapshot) -> Void) {
+        self.update = update
+        _documents = Query(
+            filter: #Predicate<NoteDocument> { document in
+                document.noteID == noteID
+            },
+            sort: [SortDescriptor(\NoteDocument.updatedAt, order: .reverse)]
+        )
+    }
+
+    private var snapshot: NoteDocumentSnapshot? {
+        guard let document = documents.first else { return nil }
+        return NoteDocumentSnapshot(
+            plainText: document.plainText,
+            attributedContent: document.attributedContent,
+            updatedAt: document.updatedAt
+        )
+    }
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear {
+                if let snapshot {
+                    update(snapshot)
+                }
+            }
+            .onChange(of: snapshot) { _, newSnapshot in
+                if let newSnapshot {
+                    update(newSnapshot)
+                }
+            }
+    }
+}
+
 private struct NoteEditorDocumentView: View {
     @Bindable var item: Item
     @Environment(\.modelContext) private var modelContext
@@ -166,6 +214,9 @@ private struct NoteEditorDocumentView: View {
     @State private var isApplyingTodoRendering = false
     @State private var pendingPersistenceWorkItem: DispatchWorkItem?
     @State private var pendingTodoSync = false
+    @State private var lastObservedDocumentUpdate: Date?
+    @State private var lastLocalDocumentUpdate: Date?
+    @State private var externalContentUpdateToken: UUID?
 #if !os(macOS)
     @State private var linkEditRequest: LinkEditContext?
 #endif
@@ -220,6 +271,13 @@ private struct NoteEditorDocumentView: View {
             }
             .onChange(of: todoRenderSignature) { _, _ in
                 applyTodoCompletionRenderingIfNeeded()
+            }
+            .background {
+                NoteDocumentQueryBridge(
+                    noteID: item.id.uuidString,
+                    update: applyDocumentSnapshot
+                )
+                .modelContainer(JotableApp.sharedDocumentContainer)
             }
     }
 
@@ -345,6 +403,7 @@ private struct NoteEditorDocumentView: View {
             presentFormatMenuTrigger: $presentFormatMenuTrigger,
             resetColorTrigger: $resetColorTrigger,
             pastePlaintextTrigger: $pastePlaintextTrigger,
+            externalUpdateToken: externalContentUpdateToken,
             onAddSelectedTextToTodo: createTodoFromSelection
         )
         #else
@@ -368,6 +427,7 @@ private struct NoteEditorDocumentView: View {
             presentFormatMenuTrigger: $presentFormatMenuTrigger,
             resetColorTrigger: $resetColorTrigger,
             linkEditRequest: $linkEditRequest,
+            externalUpdateToken: externalContentUpdateToken,
             onAddSelectedTextToTodo: createTodoFromSelection
         )
         #endif
@@ -453,6 +513,9 @@ private struct NoteEditorDocumentView: View {
 
     private func loadContentIfNeeded() {
         let document = fetchNoteDocument()
+        if let document {
+            lastObservedDocumentUpdate = document.updatedAt
+        }
         let attributedData = document?.attributedContent ?? item.attributedContent
         let plainText = document?.plainText ?? item.content
 
@@ -470,6 +533,43 @@ private struct NoteEditorDocumentView: View {
             DispatchQueue.main.async {
                 isLoadingContent = false
             }
+        }
+    }
+
+    private func applyDocumentSnapshot(_ snapshot: NoteDocumentSnapshot) {
+        guard snapshot.updatedAt != lastObservedDocumentUpdate else { return }
+        lastObservedDocumentUpdate = snapshot.updatedAt
+
+        // Query notifications also include this editor's own writes. They are
+        // acknowledgements, not remote edits, and must not reset the selection.
+        if snapshot.updatedAt == lastLocalDocumentUpdate {
+            return
+        }
+
+        // Preserve an in-flight local keystroke. Its scheduled save is the
+        // user's newest edit and will produce a subsequent document revision.
+        guard pendingPersistenceWorkItem == nil else { return }
+
+        let incoming: NSAttributedString
+        if let data = snapshot.attributedContent,
+           let attributed = unarchiveAttributedString(data) {
+            incoming = attributed
+        } else {
+            incoming = NSAttributedString(string: snapshot.plainText)
+        }
+
+        guard !incoming.isEqual(to: richText.value) else {
+            lastSyncedRichText = incoming
+            return
+        }
+
+        isLoadingContent = true
+        externalContentUpdateToken = UUID()
+        richText = AttributedTextWrapper(value: incoming)
+        lastSyncedRichText = incoming
+        DispatchQueue.main.async {
+            isLoadingContent = false
+            applyTodoCompletionRenderingIfNeeded()
         }
     }
 
@@ -526,6 +626,8 @@ private struct NoteEditorDocumentView: View {
             document.plainText = attributedString.string
             document.attributedContent = archivedContent
             document.updatedAt = now
+            lastLocalDocumentUpdate = now
+            lastObservedDocumentUpdate = now
             pendingPersistenceWorkItem = nil
             saveDocumentChanges()
             if metadataChanged {
@@ -540,7 +642,8 @@ private struct NoteEditorDocumentView: View {
         var descriptor = FetchDescriptor<NoteDocument>(
             predicate: #Predicate { document in
                 document.noteID == noteID
-            }
+            },
+            sortBy: [SortDescriptor(\NoteDocument.updatedAt, order: .reverse)]
         )
         descriptor.fetchLimit = 1
         return try? JotableApp.sharedDocumentContainer.mainContext.fetch(descriptor).first

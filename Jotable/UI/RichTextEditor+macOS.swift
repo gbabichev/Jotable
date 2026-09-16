@@ -534,6 +534,7 @@ struct RichTextEditor: NSViewRepresentable {
     @Binding var presentFormatMenuTrigger: UUID?
     @Binding var resetColorTrigger: UUID?
     @Binding var pastePlaintextTrigger: UUID?
+    var externalUpdateToken: UUID?
     var onAddSelectedTextToTodo: (TodoCreationRequest) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
@@ -630,6 +631,7 @@ struct RichTextEditor: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = context.coordinator.textView else { return }
+        context.coordinator.parent = self
         context.coordinator.updateBottomBuffer(for: textView)
         let now = Date()
         let timeSinceLastUpdate = now.timeIntervalSince(context.coordinator.lastUpdateNSViewTime)
@@ -645,8 +647,9 @@ struct RichTextEditor: NSViewRepresentable {
             presentFormatMenuTrigger != context.coordinator.lastFormatMenuTrigger ||
             resetColorTrigger != context.coordinator.lastResetColorTrigger ||
             pastePlaintextTrigger != context.coordinator.lastPlaintextPasteTrigger
+        let hasExternalDocumentUpdate = externalUpdateToken != context.coordinator.lastExternalUpdateToken
 
-        if !hasPendingEditorCommand &&
+        if !hasPendingEditorCommand && !hasExternalDocumentUpdate &&
             timeSinceLastUpdate < 0.05 &&
             context.coordinator.lastUpdateNSViewText.isEqual(to: text) {
             return
@@ -662,7 +665,22 @@ struct RichTextEditor: NSViewRepresentable {
             let isRapidFeedback = timeSinceLastChange < 0.01
             let shouldApplyTodoRenderingUpdate = hasTodoCompletionRenderingUpdate(from: currentText, to: text)
 
-            if shouldApplyTodoRenderingUpdate {
+            if hasExternalDocumentUpdate {
+                if !text.isEqual(to: currentText) {
+                    context.coordinator.isProgrammaticUpdate = true
+
+                    let selection = textView.selectedRange
+                    textView.textStorage?.setAttributedString(text)
+                    let location = min(selection.location, text.length)
+                    let length = min(selection.length, text.length - location)
+                    textView.setSelectedRange(NSRange(location: location, length: length))
+                    (textView as? DynamicColorTextView)?.forceFullRedraw()
+
+                    context.coordinator.isProgrammaticUpdate = false
+                    context.coordinator.applyTypingAttributes(to: textView)
+                }
+                context.coordinator.lastExternalUpdateToken = externalUpdateToken
+            } else if shouldApplyTodoRenderingUpdate {
                 context.coordinator.isProgrammaticUpdate = true
 
                 let cursorPosition = textView.selectedRange
@@ -851,6 +869,7 @@ struct RichTextEditor: NSViewRepresentable {
         var lastTextDidChangeTime: TimeInterval = 0
         var lastUpdateNSViewTime: Date = .distantPast
         var lastUpdateNSViewText: NSAttributedString = NSAttributedString()
+        var lastExternalUpdateToken: UUID?
 
         private func pushTextToParent(_ text: NSAttributedString) {
             let snapshot = NSAttributedString(attributedString: text)
@@ -1126,6 +1145,7 @@ struct RichTextEditor: NSViewRepresentable {
 
         init(_ parent: RichTextEditor) {
             self.parent = parent
+            self.lastExternalUpdateToken = parent.externalUpdateToken
             self.activeColor = parent.activeColor
             self.activeHighlighter = parent.activeHighlighter
             self.activeFontSize = parent.activeFontSize

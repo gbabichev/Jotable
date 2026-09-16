@@ -269,6 +269,7 @@ struct RichTextEditor: UIViewRepresentable {
     @Binding var presentFormatMenuTrigger: UUID?
     @Binding var resetColorTrigger: UUID?
     @Binding var linkEditRequest: LinkEditContext?
+    var externalUpdateToken: UUID?
     var onAddSelectedTextToTodo: (TodoCreationRequest) -> Void = { _ in }
     @Environment(\.colorScheme) var colorScheme
 
@@ -327,6 +328,7 @@ struct RichTextEditor: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UITextView, context: Context) {
+        context.coordinator.parent = self
         context.coordinator.textView = uiView
         context.coordinator.updateBottomBuffer(for: uiView)
 
@@ -335,10 +337,12 @@ struct RichTextEditor: UIViewRepresentable {
         // Only process significant updates, not every state change
         let now = Date()
         let timeSinceLastUpdate = now.timeIntervalSince(context.coordinator.lastUpdateUIViewTime)
+        let hasExternalDocumentUpdate = externalUpdateToken != context.coordinator.lastExternalUpdateToken
 
         // During native sheet interaction, only update every 50ms
         // This dramatically reduces redundant work while keeping the UI responsive
-        if timeSinceLastUpdate < 0.05 && context.coordinator.lastUpdateUIViewText == text {
+        if !hasExternalDocumentUpdate &&
+            timeSinceLastUpdate < 0.05 && context.coordinator.lastUpdateUIViewText == text {
             // Skip this update - it's a duplicate within the throttle window
             return
         }
@@ -363,7 +367,18 @@ struct RichTextEditor: UIViewRepresentable {
             let shouldDeferTextUpdate = isComposingText ||
                 (isRecentLocalEdit && context.coordinator.currentTextMatchesLastLocalEdit(currentText) && !shouldApplyTodoRenderingUpdate)
 
-            if shouldApplyTodoRenderingUpdate {
+            if hasExternalDocumentUpdate && !isComposingText {
+                if !text.isEqual(to: currentText) {
+                    context.coordinator.isProgrammaticUpdate = true
+                    let cursorPosition = uiView.selectedRange
+                    uiView.attributedText = text
+                    uiView.textStorage.delegate = context.coordinator
+                    context.coordinator.setCursorPosition(cursorPosition, in: uiView)
+                    context.coordinator.isProgrammaticUpdate = false
+                    context.coordinator.applyTypingAttributes(to: uiView)
+                }
+                context.coordinator.lastExternalUpdateToken = externalUpdateToken
+            } else if shouldApplyTodoRenderingUpdate {
                 context.coordinator.isProgrammaticUpdate = true
                 let cursorPosition = uiView.selectedRange
                 uiView.attributedText = text
@@ -531,6 +546,7 @@ struct RichTextEditor: UIViewRepresentable {
         private var hadMarkedTextInLastChange = false
         var lastUpdateUIViewTime: Date = Date.distantPast
         var lastUpdateUIViewText: NSAttributedString = NSAttributedString()
+        var lastExternalUpdateToken: UUID?
 
         func currentTextMatchesLastLocalEdit(_ text: NSAttributedString) -> Bool {
             text.string == lastLocalTextViewString
@@ -664,6 +680,7 @@ struct RichTextEditor: UIViewRepresentable {
 
         init(_ parent: RichTextEditor) {
             self.parent = parent
+            self.lastExternalUpdateToken = parent.externalUpdateToken
             self.activeColor = parent.activeColor
             self.activeHighlighter = parent.activeHighlighter
             self.activeFontSize = parent.activeFontSize
