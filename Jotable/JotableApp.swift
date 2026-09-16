@@ -223,6 +223,8 @@ struct JotableApp: App {
     #endif
     @State private var isEditorExpanded = false
     @State private var isEditorActive = false
+    @State private var isAuthenticatedForPrivateAccess = false
+    @State private var lastAuthenticationTime: Date?
 
     var body: some Scene {
         WindowGroup {
@@ -230,7 +232,9 @@ struct JotableApp: App {
             ContentView(
                 pastePlaintextTrigger: $pastePlaintextTrigger,
                 isEditorExpanded: $isEditorExpanded,
-                isEditorActive: $isEditorActive
+                isEditorActive: $isEditorActive,
+                isAuthenticatedForPrivateAccess: $isAuthenticatedForPrivateAccess,
+                lastAuthenticationTime: $lastAuthenticationTime
             )
                 .onOpenURL { url in
                     AppActionRouter.handleIncomingURL(url)
@@ -256,7 +260,9 @@ struct JotableApp: App {
             #else
             ContentView(
                 isEditorExpanded: $isEditorExpanded,
-                isEditorActive: $isEditorActive
+                isEditorActive: $isEditorActive,
+                isAuthenticatedForPrivateAccess: $isAuthenticatedForPrivateAccess,
+                lastAuthenticationTime: $lastAuthenticationTime
             )
                 .onOpenURL { url in
                     AppActionRouter.handleIncomingURL(url)

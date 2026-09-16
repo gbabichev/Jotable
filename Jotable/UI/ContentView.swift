@@ -42,7 +42,7 @@ struct ContentView: View {
     // make List briefly select a different row and reconstruct the editor's
     // toolbar even though the logical note selection did not change.
     @State private var selectedItemIDs: Set<UUID> = []
-    @State private var categoryAssignmentPreservedSelectionID: UUID?
+    @State private var offListPreservedSelectionID: UUID?
     #if os(iOS)
     @State private var splitViewVisibility: NavigationSplitViewVisibility = UIDevice.current.userInterfaceIdiom == .pad ? .all : .automatic
     #endif
@@ -55,8 +55,11 @@ struct ContentView: View {
     @State private var searchText = ""
     @State private var authenticatingCategoryID: PersistentIdentifier?
     @State private var isRevertingSelection = false
-    @State private var isAuthenticatedForPrivateAccess = false
-    @State private var lastAuthenticationTime: Date?
+    // The unlock session belongs to the app, rather than an individual window.
+    // Bindings keep it alive when the last macOS window is closed and reopened,
+    // while still resetting it when the app process exits.
+    @Binding var isAuthenticatedForPrivateAccess: Bool
+    @Binding var lastAuthenticationTime: Date?
     @State private var hasShownNoAuthWarning = false
     @State private var showAuthError = false
     @State private var authErrorMessage = ""
@@ -98,40 +101,54 @@ struct ContentView: View {
     init(
         pastePlaintextTrigger: Binding<UUID?>,
         isEditorExpanded: Binding<Bool>,
-        isEditorActive: Binding<Bool>
+        isEditorActive: Binding<Bool>,
+        isAuthenticatedForPrivateAccess: Binding<Bool>,
+        lastAuthenticationTime: Binding<Date?>
     ) {
         _pastePlaintextTrigger = pastePlaintextTrigger
         _isEditorExpanded = isEditorExpanded
         _isEditorActive = isEditorActive
-        _selectedItemIDs = State(initialValue: Self.initialSelectionIDs())
+        _isAuthenticatedForPrivateAccess = isAuthenticatedForPrivateAccess
+        _lastAuthenticationTime = lastAuthenticationTime
+        let initialSelection = Self.initialSelectionState()
+        _selectedItemIDs = State(initialValue: initialSelection.ids)
+        _offListPreservedSelectionID = State(initialValue: initialSelection.offListID)
     }
     #else
     init(
         isEditorExpanded: Binding<Bool>,
-        isEditorActive: Binding<Bool>
+        isEditorActive: Binding<Bool>,
+        isAuthenticatedForPrivateAccess: Binding<Bool>,
+        lastAuthenticationTime: Binding<Date?>
     ) {
         _isEditorExpanded = isEditorExpanded
         _isEditorActive = isEditorActive
-        _selectedItemIDs = State(initialValue: Self.initialSelectionIDs())
+        _isAuthenticatedForPrivateAccess = isAuthenticatedForPrivateAccess
+        _lastAuthenticationTime = lastAuthenticationTime
+        let initialSelection = Self.initialSelectionState()
+        _selectedItemIDs = State(initialValue: initialSelection.ids)
+        _offListPreservedSelectionID = State(initialValue: initialSelection.offListID)
     }
     #endif
 
     // Restore the editor selection before NavigationSplitView builds its first
     // toolbar. Restoring in onAppear inserts the editor's toolbar contributors
     // after the window is visible, which macOS animates as a conspicuous blink.
-    private static func initialSelectionIDs() -> Set<UUID> {
+    private static func initialSelectionState() -> (ids: Set<UUID>, offListID: UUID?) {
         let context = JotableApp.sharedModelContainer.mainContext
         guard let items = try? context.fetch(FetchDescriptor<Item>()) else {
-            return []
+            return ([], nil)
         }
 
         if let storedID = UserDefaults.standard.string(forKey: "lastSelectedNoteID"),
            !storedID.isEmpty,
            let item = items.first(where: { $0.id.uuidString == storedID && !$0.isInTrash }) {
-            return [item.id]
+            let category = item.category
+            let isOffList = category?.isHiddenFromHome == true || category?.isPrivate == true
+            return ([item.id], isOffList ? item.id : nil)
         }
 
-        return []
+        return ([], nil)
     }
 
     // Check if authentication is still valid
@@ -347,8 +364,29 @@ struct ContentView: View {
             return visibleItem
         }
 
-        guard categoryAssignmentPreservedSelectionID == selectedID else { return nil }
-        return allItems.first { $0.id == selectedID && !$0.isInTrash }
+        guard let selectedItem = allItems.first(where: { $0.id == selectedID && !$0.isInTrash }) else {
+            return nil
+        }
+
+        if offListPreservedSelectionID == selectedID {
+            return selectedItem.category?.isPrivate == true && !isAuthenticationValid
+                ? nil
+                : selectedItem
+        }
+
+        return canPresentOffListSelection(selectedItem) ? selectedItem : nil
+    }
+
+    /// Hidden notes are intentionally absent from All Notes, but that should
+    /// not prevent an already-selected note from reopening in the editor.
+    /// Private notes follow the same path only while the in-memory unlock
+    /// session is still valid.
+    private func canPresentOffListSelection(_ item: Item) -> Bool {
+        guard !item.isInTrash, let category = item.category else { return false }
+        if category.isPrivate {
+            return isAuthenticationValid
+        }
+        return category.isHiddenFromHome
     }
 
     private var listSelectionBinding: Binding<Set<UUID>> { $selectedItemIDs }
@@ -445,7 +483,7 @@ struct ContentView: View {
         .listStyle(SidebarListStyle())
         .navigationTitle("Jotable")
         .onChange(of: selectedItemIDs) { _, _ in
-            if let preservedID = categoryAssignmentPreservedSelectionID,
+            if let preservedID = offListPreservedSelectionID,
                !selectedItemIDs.contains(preservedID) {
                 if selectedItemIDs.isEmpty,
                    allItems.contains(where: { $0.id == preservedID && !$0.isInTrash }) {
@@ -453,7 +491,7 @@ struct ContentView: View {
                     return
                 }
 
-                categoryAssignmentPreservedSelectionID = nil
+                offListPreservedSelectionID = nil
             }
 
             let newSelectedItem = primarySelectedItem
@@ -514,8 +552,7 @@ struct ContentView: View {
                     DispatchQueue.main.async {
                         if success {
                             // Mark as authenticated for private access and record time
-                            self.isAuthenticatedForPrivateAccess = true
-                            self.lastAuthenticationTime = Date()
+                            self.beginPrivateAccessSession()
                             self.authenticatingCategoryID = categoryID
                             self.sidebarSelection = newValue
                         } else {
@@ -915,6 +952,7 @@ struct ContentView: View {
             #if !os(macOS)
             setupCloudKitNotifications()
             #endif
+            enforceAuthenticationState()
             restoreLastSelectedNoteIfNeeded()
             disableFocusModeIfEditorIsEmpty()
             DispatchQueue.main.async {
@@ -1011,23 +1049,24 @@ struct ContentView: View {
 
             let visibleIDs = Set(filteredItems.map(\.id))
 
-            // Trim selection to visible list items, except for the note just moved
-            // into a hidden/private category while it is open in the editor.
+            // Trim selection to visible list items. An intentionally hidden note
+            // may remain open, as may a private note during a valid unlock session.
             selectedItemIDs = Set(selectedItemIDs.filter { id in
                 if visibleIDs.contains(id) {
                     return true
                 }
 
-                guard id == categoryAssignmentPreservedSelectionID,
-                      let item = allItems.first(where: { $0.id == id }) else {
+                guard let item = allItems.first(where: { $0.id == id }) else {
                     return false
                 }
-                return !item.isInTrash
+                return id == offListPreservedSelectionID
+                    ? !item.isInTrash && (item.category?.isPrivate != true || isAuthenticationValid)
+                    : canPresentOffListSelection(item)
             })
 
-            if let preservedID = categoryAssignmentPreservedSelectionID,
+            if let preservedID = offListPreservedSelectionID,
                visibleIDs.contains(preservedID) {
-                categoryAssignmentPreservedSelectionID = nil
+                offListPreservedSelectionID = nil
             }
             disableFocusModeIfEditorIsEmpty()
         }
@@ -1036,17 +1075,22 @@ struct ContentView: View {
             if newPhase == .active {
                 cleanupLegacyTrashCategories()
                 purgeExpiredTrash()
-                if !isAuthenticationValid {
-                    // Authentication expired - clear it and revert to All Notes if viewing private category
-                    isAuthenticatedForPrivateAccess = false
-                    lastAuthenticationTime = nil
-
-                    if case .category(let category) = sidebarSelection, category.isPrivate {
-                        sidebarSelection = .allNotes
-                        selectedItemIDs.removeAll()
-                    }
-                }
+                enforceAuthenticationState()
+                restoreLastSelectedNoteIfNeeded()
             }
+        }
+        .task(id: lastAuthenticationTime) {
+            guard isAuthenticatedForPrivateAccess,
+                  let lastAuthenticationTime else {
+                return
+            }
+
+            let remaining = authenticationTimeoutInterval - Date().timeIntervalSince(lastAuthenticationTime)
+            if remaining > 0 {
+                try? await Task.sleep(for: .seconds(remaining))
+            }
+            guard !Task.isCancelled else { return }
+            enforceAuthenticationState()
         }
         .onChange(of: isViewingTodoList) { _, isViewing in
             if !isViewing {
@@ -1722,8 +1766,7 @@ struct ContentView: View {
         guard canAccessNoteFromTodoList(note) else {
             authenticateWithBiometrics(reason: "Authenticate to access this private note") { success in
                 guard success else { return }
-                self.isAuthenticatedForPrivateAccess = true
-                self.lastAuthenticationTime = Date()
+                self.beginPrivateAccessSession()
                 self.openSourceNoteAfterAccessCheck(note)
             }
             return
@@ -1735,8 +1778,7 @@ struct ContentView: View {
     private func unlockPrivateTodos() {
         authenticateWithBiometrics(reason: "Authenticate to show private todos") { success in
             guard success else { return }
-            self.isAuthenticatedForPrivateAccess = true
-            self.lastAuthenticationTime = Date()
+            self.beginPrivateAccessSession()
         }
     }
 
@@ -1749,7 +1791,7 @@ struct ContentView: View {
         #if os(iOS)
         if shouldPushTodoSourceInTodoList {
             selectedItemIDs.removeAll()
-            categoryAssignmentPreservedSelectionID = nil
+            offListPreservedSelectionID = nil
             lastSelectedNoteID = ""
             isEditorActive = true
             todoSourceNavigationPath = [note.id]
@@ -2598,9 +2640,9 @@ struct ContentView: View {
         }
 
         if categoryIsHiddenFromAllNotes(category) {
-            categoryAssignmentPreservedSelectionID = item.id
+            offListPreservedSelectionID = item.id
         } else {
-            categoryAssignmentPreservedSelectionID = nil
+            offListPreservedSelectionID = nil
         }
     }
 
@@ -2612,10 +2654,57 @@ struct ContentView: View {
     private func restoreLastSelectedNoteIfNeeded() {
         guard selectedItemIDs.isEmpty, !lastSelectedNoteID.isEmpty else { return }
 
-        if let match = filteredItems.first(where: { $0.id.uuidString == lastSelectedNoteID }) ??
-            allItems.first(where: { $0.id.uuidString == lastSelectedNoteID }) {
-            selectedItemIDs = [match.id]
+        guard let match = allItems.first(where: {
+            $0.id.uuidString == lastSelectedNoteID && !$0.isInTrash
+        }) else { return }
+
+        guard filteredItems.contains(where: { $0.id == match.id }) ||
+                canPresentOffListSelection(match) else {
+            return
         }
+
+        if !filteredItems.contains(where: { $0.id == match.id }) {
+            offListPreservedSelectionID = match.id
+        }
+        selectedItemIDs = [match.id]
+    }
+
+    private func beginPrivateAccessSession() {
+        isAuthenticatedForPrivateAccess = true
+        lastAuthenticationTime = Date()
+    }
+
+    /// Relock private content without affecting an ordinary hidden note. This
+    /// runs both when the scene becomes active and when the five-minute session
+    /// timer expires while the app remains open.
+    private func enforceAuthenticationState() {
+        guard !isAuthenticationValid else { return }
+
+        isAuthenticatedForPrivateAccess = false
+        lastAuthenticationTime = nil
+
+        let selectedPrivateNote = selectedItemIDs.contains { selectedID in
+            allItems.contains { $0.id == selectedID && $0.category?.isPrivate == true }
+        }
+        let storedPrivateNote = allItems.contains {
+            $0.id.uuidString == lastSelectedNoteID && $0.category?.isPrivate == true
+        }
+        let isViewingPrivateCategory: Bool
+        if case .category(let category) = sidebarSelection {
+            isViewingPrivateCategory = category.isPrivate
+        } else {
+            isViewingPrivateCategory = false
+        }
+
+        guard selectedPrivateNote || storedPrivateNote || isViewingPrivateCategory else {
+            return
+        }
+
+        sidebarSelection = .allNotes
+        selectedItemIDs.removeAll()
+        offListPreservedSelectionID = nil
+        lastSelectedNoteID = ""
+        setEditorExpanded(false)
     }
 
     #if !os(macOS)
