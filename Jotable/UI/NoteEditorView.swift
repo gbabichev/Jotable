@@ -6,29 +6,33 @@ import AppKit
 import UIKit
 #endif
 
-struct NoteEditorView: View {
-    @Bindable var item: Item
-    @Environment(\.modelContext) private var modelContext
-    @Query(sort: \TodoItem.createdAt, order: .reverse) private var allTodos: [TodoItem]
-    @FocusState private var isTitleFocused: Bool
+struct NoteEditorView: View, Equatable {
+    let item: Item
+    // Keep identity outside SwiftData observation. Reading identity through the
+    // model can subscribe this toolbar-owning view to metadata refreshes.
+    let itemID: UUID
     #if os(macOS)
     @Binding var pastePlaintextTrigger: UUID?
-    #endif
     @Binding var isEditorActive: Bool
-    #if os(iOS)
+    @State private var isEditorExpanded = false
+    #else
+    @State private var pastePlaintextTrigger: UUID?
+    @Binding var isEditorActive: Bool
     @Binding var isEditorExpanded: Bool
     #endif
     @Binding var passwordGeneratorTargetNoteID: UUID?
     var onCategoryAssignment: (Item, Category?) -> Void = { _, _ in }
     var onToggleEditorFocus: () -> Void = {}
-    @State private var richText = AttributedTextWrapper(value: NSAttributedString(string: ""))
+
+    // Keep toolbar state above the document editor. Text changes then invalidate
+    // only NoteEditorDocumentView instead of rebuilding the window toolbar.
     @State private var activeColor: RichTextColor = .automatic
     @State private var activeHighlighter: HighlighterColor = .none
     @State private var activeFontSize: FontSize = .normal
-    @State private var isBold: Bool = false
-    @State private var isItalic: Bool = false
-    @State private var isUnderlined: Bool = false
-    @State private var isStrikethrough: Bool = false
+    @State private var isBold = false
+    @State private var isItalic = false
+    @State private var isUnderlined = false
+    @State private var isStrikethrough = false
     @State private var insertUncheckedCheckboxTrigger: UUID?
     @State private var insertDashTrigger: UUID?
     @State private var insertBulletTrigger: UUID?
@@ -41,14 +45,127 @@ struct NoteEditorView: View {
     @State private var plainTextInsertionRequest: PlainTextInsertionRequest?
     @State private var presentFormatMenuTrigger: UUID?
     @State private var resetColorTrigger: UUID?
-    @State private var tempURLData: (String, String)? = nil
-    @State private var showingAddURLDialog: Bool = false
-    @State private var showingPasswordGenerator: Bool = false
+    @State private var tempURLData: (String, String)?
+    @State private var showingAddURLDialog = false
+    @State private var showingPasswordGenerator = false
+
+    static func == (lhs: NoteEditorView, rhs: NoteEditorView) -> Bool {
+        lhs.itemID == rhs.itemID
+    }
+
+    var body: some View {
+        NoteEditorDocumentView(
+            item: item,
+            pastePlaintextTrigger: $pastePlaintextTrigger,
+            passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID,
+            onCategoryAssignment: onCategoryAssignment,
+            activeColor: $activeColor,
+            activeHighlighter: $activeHighlighter,
+            activeFontSize: $activeFontSize,
+            isBold: $isBold,
+            isItalic: $isItalic,
+            isUnderlined: $isUnderlined,
+            isStrikethrough: $isStrikethrough,
+            insertUncheckedCheckboxTrigger: $insertUncheckedCheckboxTrigger,
+            insertDashTrigger: $insertDashTrigger,
+            insertBulletTrigger: $insertBulletTrigger,
+            insertNumberingTrigger: $insertNumberingTrigger,
+            dateInsertionRequest: $dateInsertionRequest,
+            timeInsertionRequest: $timeInsertionRequest,
+            insertURLTrigger: $insertURLTrigger,
+            plainTextInsertionRequest: $plainTextInsertionRequest,
+            presentFormatMenuTrigger: $presentFormatMenuTrigger,
+            resetColorTrigger: $resetColorTrigger,
+            tempURLData: $tempURLData,
+            showingAddURLDialog: $showingAddURLDialog,
+            showingPasswordGenerator: $showingPasswordGenerator
+        )
+        .toolbar {
+#if os(iOS)
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                ToolbarItem(id: "noteEditor.focus", placement: .topBarTrailing) {
+                    Button {
+                        onToggleEditorFocus()
+                    } label: {
+                        Label(
+                            isEditorExpanded ? "Show Note List" : "Focus Editor",
+                            systemImage: isEditorExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
+                        )
+                    }
+                }
+            }
+#endif
+
+            ToolbarItem(id: "noteEditor.insert", placement: .primaryAction) {
+                ListToolbar(
+                    insertUncheckedCheckboxTrigger: $insertUncheckedCheckboxTrigger,
+                    insertDashTrigger: $insertDashTrigger,
+                    insertBulletTrigger: $insertBulletTrigger,
+                    insertNumberingTrigger: $insertNumberingTrigger,
+                    dateInsertionRequest: $dateInsertionRequest,
+                    dateInsertionFormat: $dateInsertionFormat,
+                    timeInsertionRequest: $timeInsertionRequest,
+                    timeInsertionFormat: $timeInsertionFormat,
+                    showingAddURLDialog: $showingAddURLDialog,
+                    tempURLData: $tempURLData,
+                    showingPasswordGenerator: $showingPasswordGenerator
+                )
+            }
+
+            ToolbarItem(id: "noteEditor.format", placement: .primaryAction) {
+                FontToolbar(
+                    activeColor: $activeColor,
+                    activeHighlighter: $activeHighlighter,
+                    activeFontSize: $activeFontSize,
+                    isBold: $isBold,
+                    isItalic: $isItalic,
+                    isUnderlined: $isUnderlined,
+                    isStrikethrough: $isStrikethrough,
+                    presentFormatMenuTrigger: $presentFormatMenuTrigger,
+                    resetColorTrigger: $resetColorTrigger
+                )
+            }
+        }
+    }
+}
+
+private struct NoteEditorDocumentView: View {
+    @Bindable var item: Item
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
+    @FocusState private var isTitleFocused: Bool
+    @Binding var pastePlaintextTrigger: UUID?
+    @Binding var passwordGeneratorTargetNoteID: UUID?
+    var onCategoryAssignment: (Item, Category?) -> Void = { _, _ in }
+    @State private var richText = AttributedTextWrapper(value: NSAttributedString(string: ""))
+    @Binding var activeColor: RichTextColor
+    @Binding var activeHighlighter: HighlighterColor
+    @Binding var activeFontSize: FontSize
+    @Binding var isBold: Bool
+    @Binding var isItalic: Bool
+    @Binding var isUnderlined: Bool
+    @Binding var isStrikethrough: Bool
+    @Binding var insertUncheckedCheckboxTrigger: UUID?
+    @Binding var insertDashTrigger: UUID?
+    @Binding var insertBulletTrigger: UUID?
+    @Binding var insertNumberingTrigger: UUID?
+    @Binding var dateInsertionRequest: DateInsertionRequest?
+    @Binding var timeInsertionRequest: TimeInsertionRequest?
+    @Binding var insertURLTrigger: URLInsertionRequest?
+    @Binding var plainTextInsertionRequest: PlainTextInsertionRequest?
+    @Binding var presentFormatMenuTrigger: UUID?
+    @Binding var resetColorTrigger: UUID?
+    @Binding var tempURLData: (String, String)?
+    @Binding var showingAddURLDialog: Bool
+    @Binding var showingPasswordGenerator: Bool
+    @State private var draftTitle: String?
     @State private var headerHeight: CGFloat = 0
     @State private var lastSyncedRichText: NSAttributedString?
     @State private var skipNextAttributedContentChange = false
     @State private var isLoadingContent = false
     @State private var isApplyingTodoRendering = false
+    @State private var pendingPersistenceWorkItem: DispatchWorkItem?
+    @State private var pendingTodoSync = false
 #if !os(macOS)
     @State private var linkEditRequest: LinkEditContext?
 #endif
@@ -144,9 +261,17 @@ struct NoteEditorView: View {
             .joined(separator: " ")
     }
 
+    private var allTodos: [TodoItem] {
+        var descriptor = FetchDescriptor<TodoItem>(
+            sortBy: [SortDescriptor(\TodoItem.createdAt, order: .reverse)]
+        )
+        descriptor.includePendingChanges = true
+        return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
     private var currentTodos: [TodoItem] {
         allTodos.filter { todo in
-            todo.sourceNote == item || todo.sourceNoteID == item.id.uuidString
+            todo.sourceNoteID == item.id.uuidString
         }
     }
 
@@ -155,7 +280,7 @@ struct NoteEditorView: View {
     }
 
     private var todoRenderSignature: String {
-        currentTodos
+        return currentTodos
             .map { "\($0.id.uuidString):\($0.isCompleted):\($0.isSourceTextAvailable)" }
             .sorted()
             .joined(separator: "|")
@@ -172,12 +297,12 @@ struct NoteEditorView: View {
         currentText.addAttribute(TodoTextAttributes.todoIDKey, value: todo.id.uuidString, range: range)
         currentText.removeAttribute(TodoTextAttributes.completionRenderedKey, range: range)
         currentText.removeAttribute(TodoTextAttributes.originalStrikethroughStyleKey, range: range)
-        item.content = currentText.string
-        item.attributedContent = archiveAttributedString(currentText)
-        item.timestamp = Date()
-        skipNextAttributedContentChange = true
+        pendingPersistenceWorkItem?.cancel()
+        pendingPersistenceWorkItem = nil
+        pendingTodoSync = false
         richText = AttributedTextWrapper(value: currentText)
         lastSyncedRichText = currentText
+        persist(currentText)
     }
 
     private var richTextEditorView: some View {
@@ -254,6 +379,10 @@ struct NoteEditorView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     NoteHeaderView(
                         item: item,
+                        title: Binding(
+                            get: { draftTitle ?? item.title },
+                            set: { draftTitle = $0 }
+                        ),
                         onCategoryAssignment: onCategoryAssignment,
                         onHeaderHeightChange: { height in
                             headerHeight = height
@@ -277,7 +406,7 @@ struct NoteEditorView: View {
             loadContentIfNeeded()
             applyTodoCompletionRenderingIfNeeded()
             lastSyncedRichText = richText.value
-            if item.title.isEmpty && item.content.isEmpty {
+            if item.title.isEmpty && richText.value.string.isEmpty {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     isTitleFocused = true
                 }
@@ -292,72 +421,42 @@ struct NoteEditorView: View {
             loadContentIfNeeded()
             applyTodoCompletionRenderingIfNeeded()
         }
+        .onChange(of: item.title) { _, newTitle in
+            guard pendingPersistenceWorkItem == nil else { return }
+            if draftTitle != newTitle {
+                draftTitle = newTitle
+            }
+        }
+        .onChange(of: draftTitle) { _, newTitle in
+            guard let newTitle else { return }
+            guard newTitle != item.title else { return }
+            schedulePersistence(of: richText.value, syncTodos: false)
+        }
         .onChange(of: richText) { _, newWrapper in
             if isLoadingContent {
                 return
             }
-            if !isApplyingTodoRendering {
-                syncTodosFromAttributedText(newWrapper.value)
-            }
-            item.content = newWrapper.value.string
-            item.attributedContent = archiveAttributedString(newWrapper.value)
-            item.timestamp = Date()
-            skipNextAttributedContentChange = true
-            saveChanges()
+            let shouldSyncTodos = !isApplyingTodoRendering
             isApplyingTodoRendering = false
+            schedulePersistence(of: newWrapper.value, syncTodos: shouldSyncTodos)
         }
         .onDisappear {
-            saveChanges()
+            flushPendingPersistence()
         }
-        .toolbar {
-            #if os(iOS)
-            if UIDevice.current.userInterfaceIdiom == .pad {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        onToggleEditorFocus()
-                    } label: {
-                        Label(
-                            isEditorExpanded ? "Show Note List" : "Focus Editor",
-                            systemImage: isEditorExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
-                        )
-                    }
-                }
-            }
-            #endif
-
-            ToolbarItemGroup(placement: .primaryAction) {
-                ListToolbar(
-                    insertUncheckedCheckboxTrigger: $insertUncheckedCheckboxTrigger,
-                    insertDashTrigger: $insertDashTrigger,
-                    insertBulletTrigger: $insertBulletTrigger,
-                    insertNumberingTrigger: $insertNumberingTrigger,
-                    dateInsertionRequest: $dateInsertionRequest,
-                    dateInsertionFormat: $dateInsertionFormat,
-                    timeInsertionRequest: $timeInsertionRequest,
-                    timeInsertionFormat: $timeInsertionFormat,
-                    showingAddURLDialog: $showingAddURLDialog,
-                    tempURLData: $tempURLData,
-                    showingPasswordGenerator: $showingPasswordGenerator
-                )
-
-                FontToolbar(
-                    activeColor: $activeColor,
-                    activeHighlighter: $activeHighlighter,
-                    activeFontSize: $activeFontSize,
-                    isBold: $isBold,
-                    isItalic: $isItalic,
-                    isUnderlined: $isUnderlined,
-                    isStrikethrough: $isStrikethrough,
-                    presentFormatMenuTrigger: $presentFormatMenuTrigger,
-                    resetColorTrigger: $resetColorTrigger
-                )
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase != .active {
+                flushPendingPersistence()
             }
         }
     }
 
 
     private func loadContentIfNeeded() {
-        if let data = item.attributedContent, let attributed = unarchiveAttributedString(data) {
+        let document = fetchNoteDocument()
+        let attributedData = document?.attributedContent ?? item.attributedContent
+        let plainText = document?.plainText ?? item.content
+
+        if let data = attributedData, let attributed = unarchiveAttributedString(data) {
             if !attributed.isEqual(to: richText.value) {
                 isLoadingContent = true
                 richText = AttributedTextWrapper(value: attributed)
@@ -365,9 +464,9 @@ struct NoteEditorView: View {
                     isLoadingContent = false
                 }
             }
-        } else if richText.value.string != item.content {
+        } else if richText.value.string != plainText {
             isLoadingContent = true
-            richText = AttributedTextWrapper(value: NSAttributedString(string: item.content))
+            richText = AttributedTextWrapper(value: NSAttributedString(string: plainText))
             DispatchQueue.main.async {
                 isLoadingContent = false
             }
@@ -378,6 +477,95 @@ struct NoteEditorView: View {
         DispatchQueue.main.async {
             richText = AttributedTextWrapper(value: snapshot)
             lastSyncedRichText = snapshot
+        }
+    }
+
+    private func schedulePersistence(of attributedString: NSAttributedString, syncTodos: Bool) {
+        pendingPersistenceWorkItem?.cancel()
+        pendingTodoSync = pendingTodoSync || syncTodos
+
+        let snapshot = NSAttributedString(attributedString: attributedString)
+        let workItem = DispatchWorkItem {
+            persist(snapshot)
+        }
+        pendingPersistenceWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
+    }
+
+    private func flushPendingPersistence() {
+        guard pendingPersistenceWorkItem != nil else {
+            saveChanges()
+            return
+        }
+
+        pendingPersistenceWorkItem?.cancel()
+        pendingPersistenceWorkItem = nil
+        persist(richText.value)
+    }
+
+    private func persist(_ attributedString: NSAttributedString) {
+        let document = noteDocumentForEditing()
+        let archivedContent = archiveAttributedString(attributedString)
+        let now = Date()
+        var metadataChanged = false
+        var persistenceTransaction = Transaction(animation: nil)
+        persistenceTransaction.disablesAnimations = true
+        withTransaction(persistenceTransaction) {
+            if pendingTodoSync {
+                syncTodosFromAttributedText(attributedString)
+                pendingTodoSync = false
+            }
+
+            if let draftTitle {
+                if item.title != draftTitle {
+                    item.title = draftTitle
+                    item.timestamp = now
+                    metadataChanged = true
+                }
+            }
+            document.plainText = attributedString.string
+            document.attributedContent = archivedContent
+            document.updatedAt = now
+            pendingPersistenceWorkItem = nil
+            saveDocumentChanges()
+            if metadataChanged {
+                saveChanges()
+            }
+        }
+
+    }
+
+    private func fetchNoteDocument() -> NoteDocument? {
+        let noteID = item.id.uuidString
+        var descriptor = FetchDescriptor<NoteDocument>(
+            predicate: #Predicate { document in
+                document.noteID == noteID
+            }
+        )
+        descriptor.fetchLimit = 1
+        return try? JotableApp.sharedDocumentContainer.mainContext.fetch(descriptor).first
+    }
+
+    private func noteDocumentForEditing() -> NoteDocument {
+        if let document = fetchNoteDocument() {
+            return document
+        }
+
+        let document = NoteDocument(
+            noteID: item.id.uuidString,
+            plainText: item.content,
+            attributedContent: item.attributedContent,
+            updatedAt: item.timestamp
+        )
+        JotableApp.sharedDocumentContainer.mainContext.insert(document)
+        return document
+    }
+
+    private func saveDocumentChanges() {
+        do {
+            try JotableApp.sharedDocumentContainer.mainContext.save()
+        } catch {
+            print("❌ Failed to save note document: \(error.localizedDescription)")
         }
     }
 
@@ -726,7 +914,8 @@ private struct AttributedTextWrapper: Equatable {
 // Extracted to a separate view to prevent state cascade from title TextEditor to RichTextEditor
 // This isolation is critical for preventing the native format sheet freeze
 private struct NoteHeaderView: View {
-    @Bindable var item: Item
+    let item: Item
+    @Binding var title: String
     @State private var showingCategoryPicker = false
     @State private var headerHeight: CGFloat = 0
 
@@ -735,10 +924,12 @@ private struct NoteHeaderView: View {
 
     init(
         item: Item,
+        title: Binding<String>,
         onCategoryAssignment: @escaping (Item, Category?) -> Void,
         onHeaderHeightChange: @escaping (CGFloat) -> Void
     ) {
-        self._item = Bindable(item)
+        self.item = item
+        self._title = title
         self.onCategoryAssignment = onCategoryAssignment
         self.onHeaderHeightChange = onHeaderHeightChange
     }
@@ -761,12 +952,10 @@ private struct NoteHeaderView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            TextField("Note Title", text: $item.title)
+            TextField("Note Title", text: $title)
                 .font(.title2.weight(.medium))
                 .textFieldStyle(.plain)
                 //.lineLimit(2)
-                // NO onChange handler - this was the root cause of the freeze
-                // Title changes are saved on app exit only
 
             Button(action: { showingCategoryPicker = true }) {
                 HStack(spacing: 6) {

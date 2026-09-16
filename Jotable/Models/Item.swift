@@ -23,9 +23,6 @@ final class Item {
     var previousCategory: Category?
     var trashedAt: Date?
 
-    @Relationship(deleteRule: .cascade, inverse: \TodoItem.sourceNote)
-    var todos: [TodoItem]? = []
-
     init(timestamp: Date = Date(), title: String = "", content: String = "") {
         let now = Date()
         self.id = UUID()
@@ -37,7 +34,6 @@ final class Item {
         self.category = nil
         self.previousCategory = nil
         self.trashedAt = nil
-        self.todos = []
     }
 }
 

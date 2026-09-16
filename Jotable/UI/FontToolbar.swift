@@ -95,47 +95,19 @@ struct FontToolbar: View {
             Divider()
 
             // MARK: - Text Formatting Section
-            Button {
-                isBold.toggle()
-            } label: {
-                HStack {
-                    Image(systemName: isBold ? "checkmark" : "bold")
-                    Text("Bold")
-                }
-            }
+            Toggle("Bold", isOn: $isBold)
             #if os(macOS)
             .keyboardShortcut("b", modifiers: .command)
             #endif
 
-            Button {
-                isItalic.toggle()
-            } label: {
-                HStack {
-                    Image(systemName: isItalic ? "checkmark" : "italic")
-                    Text("Italic")
-                }
-            }
+            Toggle("Italic", isOn: $isItalic)
             #if os(macOS)
             .keyboardShortcut("i", modifiers: .command)
             #endif
 
-            Button {
-                isUnderlined.toggle()
-            } label: {
-                HStack {
-                    Image(systemName: isUnderlined ? "checkmark" : "underline")
-                    Text("Underline")
-                }
-            }
+            Toggle("Underline", isOn: $isUnderlined)
 
-            Button {
-                isStrikethrough.toggle()
-            } label: {
-                HStack {
-                    Image(systemName: isStrikethrough ? "checkmark" : "strikethrough")
-                    Text("Strikethrough")
-                }
-            }
+            Toggle("Strikethrough", isOn: $isStrikethrough)
         } label: {
             Image(systemName: "character.circle")
         }

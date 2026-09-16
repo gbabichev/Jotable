@@ -54,8 +54,6 @@ final class TodoItem {
     var sourceRangeLength: Int = 0
     var isSourceTextAvailable: Bool = true
 
-    var sourceNote: Item? = nil
-
     init(
         text: String,
         sourceText: String,
@@ -77,7 +75,6 @@ final class TodoItem {
         self.dueDate = dueDate
         self.priorityRawValue = priority.rawValue
         self.sourceText = sourceText
-        self.sourceNote = sourceNote
         self.sourceNoteID = sourceNote?.id.uuidString ?? ""
         self.sourceNoteTitleSnapshot = sourceNote?.title ?? ""
         self.sourceCategoryNameSnapshot = sourceNote?.category?.name ?? ""

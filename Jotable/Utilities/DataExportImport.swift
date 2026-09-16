@@ -48,12 +48,14 @@ struct ExportedTodo: Codable {
 
 enum DataExportImport {
     static func exportAll(from context: ModelContext) throws -> Data {
+        let documentContext = JotableApp.sharedDocumentContainer.mainContext
         let categoryDescriptor = FetchDescriptor<Category>(
             sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.timestamp)]
         )
         let noteDescriptor = FetchDescriptor<Item>(
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
+        let documentDescriptor = FetchDescriptor<NoteDocument>()
         let todoDescriptor = FetchDescriptor<TodoItem>(
             sortBy: [SortDescriptor(\.sortOrder, order: .reverse), SortDescriptor(\.createdAt, order: .reverse)]
         )
@@ -62,7 +64,12 @@ enum DataExportImport {
             .filter { !$0.isSystemTrash }
         let notes = try context.fetch(noteDescriptor)
             .filter { !$0.isInTrash }
+        let documents = try documentContext.fetch(documentDescriptor)
         let todos = try context.fetch(todoDescriptor)
+        let documentsByNoteID = Dictionary(
+            documents.map { ($0.noteID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
 
         let exportedCategories: [ExportedCategory] = categories.enumerated().map { index, category in
             ExportedCategory(
@@ -81,24 +88,25 @@ enum DataExportImport {
 
         let exportedNotes: [ExportedNote] = notes.map { note in
             let categoryIndex = note.category.flatMap { categoryIndexMap[$0.persistentModelID] }
-            let attributedBase64 = note.attributedContent?.base64EncodedString()
+            let document = documentsByNoteID[note.id.uuidString]
+            let attributedBase64 = (document?.attributedContent ?? note.attributedContent)?.base64EncodedString()
 
             return ExportedNote(
                 title: note.title,
-                content: note.content,
+                content: document?.plainText ?? note.content,
                 createdAt: note.createdAt,
-                timestamp: note.timestamp,
+                timestamp: document?.updatedAt ?? note.timestamp,
                 categoryIndex: categoryIndex,
                 attributedContentBase64: attributedBase64
             )
         }
 
-        let noteIndexMap: [PersistentIdentifier: Int] = Dictionary(uniqueKeysWithValues: notes.enumerated().map { index, note in
-            (note.persistentModelID, index)
+        let noteIndexMap: [String: Int] = Dictionary(uniqueKeysWithValues: notes.enumerated().map { index, note in
+            (note.id.uuidString, index)
         })
 
         let exportedTodos: [ExportedTodo] = todos.map { todo in
-            let sourceNoteIndex = todo.sourceNote.flatMap { noteIndexMap[$0.persistentModelID] }
+            let sourceNoteIndex = noteIndexMap[todo.sourceNoteID]
 
             return ExportedTodo(
                 text: todo.text,
@@ -132,6 +140,7 @@ enum DataExportImport {
 
     @discardableResult
     static func importPackage(from data: Data, into context: ModelContext) throws -> (importedCategories: Int, importedNotes: Int, importedTodos: Int) {
+        let documentContext = JotableApp.sharedDocumentContainer.mainContext
         let decoder = JSONDecoder()
         let package = try decoder.decode(ExportPackage.self, from: data)
 
@@ -164,6 +173,13 @@ enum DataExportImport {
                 note.attributedContent = attributedData
             }
             context.insert(note)
+            let document = NoteDocument(
+                noteID: note.id.uuidString,
+                plainText: noteData.content,
+                attributedContent: note.attributedContent,
+                updatedAt: noteData.timestamp
+            )
+            documentContext.insert(document)
             createdNotes.append(note)
         }
 
@@ -198,6 +214,7 @@ enum DataExportImport {
         }
 
         try context.save()
+        try documentContext.save()
         return (createdCategories.count, package.notes.count, importedTodos.count)
     }
 }

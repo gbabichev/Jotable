@@ -2,43 +2,43 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>remote-notification</string>
-	</array>
-	<key>UIApplicationShortcutItems</key>
-	<array>
-		<dict>
-			<key>UIApplicationShortcutItemType</key>
-			<string>com.jotable.newNote</string>
-			<key>UIApplicationShortcutItemTitle</key>
-			<string>New Note</string>
-			<key>UIApplicationShortcutItemIconType</key>
-			<string>UIApplicationShortcutIconTypeCompose</string>
-		</dict>
-		<dict>
-			<key>UIApplicationShortcutItemType</key>
-			<string>com.jotable.generatePassword</string>
-			<key>UIApplicationShortcutItemTitle</key>
-			<string>Generate Password</string>
-			<key>UIApplicationShortcutItemIconSymbolName</key>
-			<string>key.fill</string>
-		</dict>
-	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.jotable.url</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>jotable</string>
 			</array>
-			<key>CFBundleURLName</key>
-			<string>com.jotable.url</string>
 		</dict>
 	</array>
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>com.jotable.newNote</string>
+	</array>
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeCompose</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>New Note</string>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.jotable.newNote</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>key.fill</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Generate Password</string>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.jotable.generatePassword</string>
+		</dict>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
 	</array>
 </dict>
 </plist>

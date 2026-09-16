@@ -195,6 +195,28 @@ struct JotableApp: App {
         }
     }()
 
+    // Note bodies use a distinct store and context so their high-frequency
+    // saves cannot advance the metadata container's history observer.
+    static let sharedDocumentContainer: ModelContainer = {
+        do {
+            let schema = Schema([NoteDocument.self])
+            let storeURL = URL.applicationSupportDirectory
+                .appending(path: "JotableDocuments.store")
+            let config = ModelConfiguration(
+                "JotableDocuments",
+                schema: schema,
+                url: storeURL,
+                cloudKitDatabase: .automatic
+            )
+
+            let container = try ModelContainer(for: schema, configurations: [config])
+            return container
+        } catch {
+            print("❌ Failed to create NoteDocument container: \(error)")
+            fatalError("Could not create NoteDocument container: \(error)")
+        }
+    }()
+
     #if os(macOS)
     @State private var pastePlaintextTrigger: UUID?
     @State private var isAboutPresented = false

@@ -29,7 +29,6 @@ struct ContentView: View {
     // Changed from timestamp to createdAt for stable sorting based on creation date
     @Query(sort: \Item.createdAt, order: .reverse) private var allItems: [Item]
     @Query(sort: \Category.sortOrder) private var categories: [Category]
-    @Query(sort: \TodoItem.createdAt, order: .reverse) private var allTodos: [TodoItem]
     @AppStorage("lastSelectedNoteID") private var lastSelectedNoteID: String = ""
 
     #if os(macOS)
@@ -38,12 +37,14 @@ struct ContentView: View {
     @Binding var isEditorExpanded: Bool
     @Binding var isEditorActive: Bool
 
-    @State private var selectedItemIDs: Set<PersistentIdentifier> = []
-    @State private var categoryAssignmentPreservedSelectionID: PersistentIdentifier?
+    // Use Jotable's model UUIDs for UI selection. SwiftData persistent
+    // identifiers can be refaulted while CloudKit applies a merge, which can
+    // make List briefly select a different row and reconstruct the editor's
+    // toolbar even though the logical note selection did not change.
+    @State private var selectedItemIDs: Set<UUID> = []
+    @State private var categoryAssignmentPreservedSelectionID: UUID?
     #if os(iOS)
     @State private var splitViewVisibility: NavigationSplitViewVisibility = UIDevice.current.userInterfaceIdiom == .pad ? .all : .automatic
-    #else
-    @State private var splitViewVisibility: NavigationSplitViewVisibility = .automatic
     #endif
     @State private var sidebarSelection: SidebarSelection? = .allNotes
     @State private var showingAddCategory = false
@@ -60,10 +61,13 @@ struct ContentView: View {
     @State private var showAuthError = false
     @State private var authErrorMessage = ""
     @State private var showingCategoryPickerForItem: Item?
+    @State private var todoSnapshot: [TodoItem]?
+    #if !os(macOS)
     @State private var activeCloudSyncEventIDs: Set<UUID> = []
     @State private var cloudKitEventObserver: NSObjectProtocol?
     @State private var isCloudSyncIndicatorVisible = false
     @State private var cloudSyncHideWorkItem: DispatchWorkItem?
+    #endif
     @State private var passwordGeneratorTargetNoteID: UUID?
     @State private var showingExternalPasswordGenerator = false
     #if os(macOS)
@@ -89,6 +93,46 @@ struct ContentView: View {
 
     // Authentication timeout: 5 minutes
     private let authenticationTimeoutInterval: TimeInterval = 5 * 60
+
+    #if os(macOS)
+    init(
+        pastePlaintextTrigger: Binding<UUID?>,
+        isEditorExpanded: Binding<Bool>,
+        isEditorActive: Binding<Bool>
+    ) {
+        _pastePlaintextTrigger = pastePlaintextTrigger
+        _isEditorExpanded = isEditorExpanded
+        _isEditorActive = isEditorActive
+        _selectedItemIDs = State(initialValue: Self.initialSelectionIDs())
+    }
+    #else
+    init(
+        isEditorExpanded: Binding<Bool>,
+        isEditorActive: Binding<Bool>
+    ) {
+        _isEditorExpanded = isEditorExpanded
+        _isEditorActive = isEditorActive
+        _selectedItemIDs = State(initialValue: Self.initialSelectionIDs())
+    }
+    #endif
+
+    // Restore the editor selection before NavigationSplitView builds its first
+    // toolbar. Restoring in onAppear inserts the editor's toolbar contributors
+    // after the window is visible, which macOS animates as a conspicuous blink.
+    private static func initialSelectionIDs() -> Set<UUID> {
+        let context = JotableApp.sharedModelContainer.mainContext
+        guard let items = try? context.fetch(FetchDescriptor<Item>()) else {
+            return []
+        }
+
+        if let storedID = UserDefaults.standard.string(forKey: "lastSelectedNoteID"),
+           !storedID.isEmpty,
+           let item = items.first(where: { $0.id.uuidString == storedID && !$0.isInTrash }) {
+            return [item.id]
+        }
+
+        return []
+    }
 
     // Check if authentication is still valid
     private var isAuthenticationValid: Bool {
@@ -125,6 +169,20 @@ struct ContentView: View {
             return true
         }
         return false
+    }
+
+    // TodoItem is intentionally not a root @Query. Its CloudKit merges should
+    // not invalidate the notes window and reconstruct the native toolbar.
+    private var allTodos: [TodoItem] {
+        if let todoSnapshot {
+            return todoSnapshot
+        }
+
+        var descriptor = FetchDescriptor<TodoItem>(
+            sortBy: [SortDescriptor(\TodoItem.createdAt, order: .reverse)]
+        )
+        descriptor.includePendingChanges = true
+        return (try? modelContext.fetch(descriptor)) ?? []
     }
 
     private var todoListTodos: [TodoItem] {
@@ -279,21 +337,21 @@ struct ContentView: View {
         #endif
         if isViewingTodoList {
             return allItems.first { item in
-                item.persistentModelID == selectedID &&
+                item.id == selectedID &&
                     !item.isInTrash &&
                     canAccessNoteFromTodoList(item)
             }
         }
 
-        if let visibleItem = filteredItems.first(where: { $0.persistentModelID == selectedID }) {
+        if let visibleItem = filteredItems.first(where: { $0.id == selectedID }) {
             return visibleItem
         }
 
         guard categoryAssignmentPreservedSelectionID == selectedID else { return nil }
-        return allItems.first { $0.persistentModelID == selectedID && !$0.isInTrash }
+        return allItems.first { $0.id == selectedID && !$0.isInTrash }
     }
 
-    private var listSelectionBinding: Binding<Set<PersistentIdentifier>> { $selectedItemIDs }
+    private var listSelectionBinding: Binding<Set<UUID>> { $selectedItemIDs }
 
     private var canExpandEditor: Bool {
         #if os(macOS)
@@ -324,12 +382,16 @@ struct ContentView: View {
     #endif
 
     private var notesListMinimumColumnWidth: CGFloat {
+        #if os(macOS)
+        return 250
+        #else
         switch splitViewVisibility {
         case .doubleColumn, .detailOnly:
             return 450
         default:
             return 250
         }
+        #endif
     }
 
     private var notesListIdealColumnWidth: CGFloat {
@@ -346,6 +408,22 @@ struct ContentView: View {
     }
 
     private var standardNavigationSplitView: some View {
+        #if os(macOS)
+        // Let AppKit own sidebar visibility internally. Binding macOS's initial
+        // split-view negotiation into ContentView invalidates the entire detail
+        // hierarchy and briefly removes its native toolbar contributors.
+        NavigationSplitView {
+            sidebarColumn
+        } content: {
+            if isViewingTodoList {
+                todoListColumn
+            } else {
+                notesListColumn
+            }
+        } detail: {
+            detailColumn
+        }
+        #else
         NavigationSplitView(columnVisibility: $splitViewVisibility) {
             sidebarColumn
         } content: {
@@ -357,6 +435,7 @@ struct ContentView: View {
         } detail: {
             detailColumn
         }
+        #endif
     }
 
     private var sidebarColumn: some View {
@@ -369,7 +448,7 @@ struct ContentView: View {
             if let preservedID = categoryAssignmentPreservedSelectionID,
                !selectedItemIDs.contains(preservedID) {
                 if selectedItemIDs.isEmpty,
-                   allItems.contains(where: { $0.persistentModelID == preservedID && !$0.isInTrash }) {
+                   allItems.contains(where: { $0.id == preservedID && !$0.isInTrash }) {
                     selectedItemIDs = [preservedID]
                     return
                 }
@@ -740,6 +819,7 @@ struct ContentView: View {
            canAccessNoteFromTodoList(note) {
             NoteEditorView(
                 item: note,
+                itemID: note.id,
                 isEditorActive: $isEditorActive,
                 isEditorExpanded: $isEditorExpanded,
                 passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID,
@@ -748,6 +828,7 @@ struct ContentView: View {
                     setEditorExpanded(!isEditorExpanded)
                 }
             )
+            .equatable()
             .id(note.id)
         } else {
             ContentUnavailableView {
@@ -765,15 +846,18 @@ struct ContentView: View {
                 #if os(macOS)
                 NoteEditorView(
                     item: selectedItem,
+                    itemID: selectedItem.id,
                     pastePlaintextTrigger: $pastePlaintextTrigger,
                     isEditorActive: $isEditorActive,
                     passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID,
                     onCategoryAssignment: prepareSelectionForCategoryAssignment
                 )
+                    .equatable()
                     .id(selectedItem.id) // Force view recreation when switching notes
                 #else
                 NoteEditorView(
                     item: selectedItem,
+                    itemID: selectedItem.id,
                     isEditorActive: $isEditorActive,
                     isEditorExpanded: $isEditorExpanded,
                     passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID,
@@ -782,6 +866,7 @@ struct ContentView: View {
                         setEditorExpanded(!isEditorExpanded)
                     }
                 )
+                    .equatable()
                     .id(selectedItem.id) // Force view recreation when switching notes
                 #endif
             } else {
@@ -799,6 +884,13 @@ struct ContentView: View {
     
     var body: some View {
         navigationContent
+        .background {
+            if isViewingTodoList {
+                TodoQueryBridge { todos in
+                    todoSnapshot = todos
+                }
+            }
+        }
 #if DEBUG
         .overlay(alignment: .bottomTrailing) {
             BetaTag()
@@ -807,20 +899,15 @@ struct ContentView: View {
 #endif
         #if os(macOS)
         .overlay(alignment: .bottomLeading) {
-            if isCloudSyncIndicatorVisible {
-                CloudSyncToolbarIndicator()
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .padding(16)
-                    .transition(.opacity)
-            }
+            CloudSyncStatusOverlay()
         }
         #endif
         .onAppear {
             cleanupLegacyTrashCategories()
             purgeExpiredTrash()
+            #if !os(macOS)
             setupCloudKitNotifications()
+            #endif
             restoreLastSelectedNoteIfNeeded()
             disableFocusModeIfEditorIsEmpty()
             DispatchQueue.main.async {
@@ -828,7 +915,9 @@ struct ContentView: View {
             }
         }
         .onDisappear {
+            #if !os(macOS)
             tearDownCloudKitNotifications()
+            #endif
         }
         .onReceive(NotificationCenter.default.publisher(for: .createNewNoteRequested)) { _ in
             handleExternalNewNoteRequest()
@@ -858,7 +947,7 @@ struct ContentView: View {
         }
         .toolbar {
             if canExpandEditor {
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItem(id: "contentView.editorFocus", placement: .primaryAction) {
                     Button {
                         setEditorExpanded(!isEditorExpanded)
                     } label: {
@@ -892,7 +981,7 @@ struct ContentView: View {
         .onChange(of: allItems) { _, _ in
             // Trim selection to still-present items
             selectedItemIDs = Set(selectedItemIDs.filter { id in
-                allItems.contains(where: { $0.persistentModelID == id })
+                allItems.contains(where: { $0.id == id })
             })
 
             #if os(iOS)
@@ -913,7 +1002,7 @@ struct ContentView: View {
                 return
             }
 
-            let visibleIDs = Set(filteredItems.map(\.persistentModelID))
+            let visibleIDs = Set(filteredItems.map(\.id))
 
             // Trim selection to visible list items, except for the note just moved
             // into a hidden/private category while it is open in the editor.
@@ -923,7 +1012,7 @@ struct ContentView: View {
                 }
 
                 guard id == categoryAssignmentPreservedSelectionID,
-                      let item = allItems.first(where: { $0.persistentModelID == id }) else {
+                      let item = allItems.first(where: { $0.id == id }) else {
                     return false
                 }
                 return !item.isInTrash
@@ -950,6 +1039,11 @@ struct ContentView: View {
                         selectedItemIDs.removeAll()
                     }
                 }
+            }
+        }
+        .onChange(of: isViewingTodoList) { _, isViewing in
+            if !isViewing {
+                todoSnapshot = nil
             }
         }
         #if os(iOS)
@@ -987,7 +1081,6 @@ struct ContentView: View {
             startExport: startExport,
             handleImport: handleImport
         )
-        //.toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         #endif
     }
 
@@ -1124,7 +1217,7 @@ struct ContentView: View {
     private var notesListContent: some View {
         ForEach(filteredItems) { item in
             NoteRowView(item: item, isTrashContext: isViewingTrash)
-                .tag(item.persistentModelID)
+                .tag(item.id)
                 .id(item.id)
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button(role: .destructive) {
@@ -1161,7 +1254,7 @@ struct ContentView: View {
                     } else {
                         Button {
                             // Select the item for editing
-                            selectedItemIDs = [item.persistentModelID]
+                            selectedItemIDs = [item.id]
                         } label: {
                             Label("Edit", systemImage: "pencil")
                         }
@@ -1418,7 +1511,7 @@ struct ContentView: View {
     }
 
     private func isStandaloneTodo(_ todo: TodoItem) -> Bool {
-        todo.sourceNote == nil && todo.sourceNoteID.isEmpty
+        todo.sourceNoteID.isEmpty
     }
 
     private func isPrivateTodo(_ todo: TodoItem) -> Bool {
@@ -1589,10 +1682,6 @@ struct ContentView: View {
     }
 
     private func linkedSourceNote(for todo: TodoItem) -> Item? {
-        if let sourceNote = todo.sourceNote {
-            return sourceNote
-        }
-
         guard !todo.sourceNoteID.isEmpty else { return nil }
         return allItems.first { $0.id.uuidString == todo.sourceNoteID }
     }
@@ -1664,7 +1753,7 @@ struct ContentView: View {
         }
         #endif
 
-        selectedItemIDs = [note.persistentModelID]
+        selectedItemIDs = [note.id]
         lastSelectedNoteID = note.id.uuidString
         isEditorActive = true
     }
@@ -1726,13 +1815,13 @@ struct ContentView: View {
     }
 
     private func deleteTodosLinked(to item: Item) {
-        for todo in allTodos where todo.sourceNote == item || todo.sourceNoteID == item.id.uuidString {
+        for todo in allTodos where todo.sourceNoteID == item.id.uuidString {
             modelContext.delete(todo)
         }
     }
 
     private func deleteSelectedItems() {
-        let itemsToProcess = filteredItems.filter { selectedItemIDs.contains($0.persistentModelID) }
+        let itemsToProcess = filteredItems.filter { selectedItemIDs.contains($0.id) }
         guard !itemsToProcess.isEmpty else { return }
 
         if isViewingTrash {
@@ -1744,7 +1833,7 @@ struct ContentView: View {
 
     #if os(iOS)
     private func selectAllItems() {
-        selectedItemIDs = Set(filteredItems.map { $0.persistentModelID })
+        selectedItemIDs = Set(filteredItems.map(\.id))
     }
 
     private func deselectAllItems() {
@@ -1755,7 +1844,7 @@ struct ContentView: View {
         guard !filteredItems.isEmpty else { return false }
         let selectedIDs = selectedItemIDs
         return filteredItems.count == selectedIDs.count
-            && filteredItems.allSatisfy { selectedIDs.contains($0.persistentModelID) }
+            && filteredItems.allSatisfy { selectedIDs.contains($0.id) }
     }
     #endif
 
@@ -2081,7 +2170,7 @@ struct ContentView: View {
             try modelContext.save()
             print("💾 New item created and saved - CloudKit sync queued")
             // Set selection immediately
-            selectedItemIDs = [newItem.persistentModelID]
+            selectedItemIDs = [newItem.id]
             return newItem
         } catch {
             print("❌ Failed to save new item: \(error)")
@@ -2115,7 +2204,7 @@ struct ContentView: View {
 
         saveDebugSeedData(successMessage: "Created debug notes") {
             if let firstNote = notes.first {
-                selectedItemIDs = [firstNote.persistentModelID]
+                selectedItemIDs = [firstNote.id]
             }
         }
     }
@@ -2140,7 +2229,7 @@ struct ContentView: View {
                 sidebarSelection = .category(firstCategory)
             }
             if let firstNote {
-                selectedItemIDs = [firstNote.persistentModelID]
+                selectedItemIDs = [firstNote.id]
             }
         }
     }
@@ -2299,7 +2388,7 @@ struct ContentView: View {
 
         do {
             try modelContext.save()
-            selectedItemIDs = [note.persistentModelID]
+            selectedItemIDs = [note.id]
         } catch {
             print("Failed to create formatting test note: \(error)")
         }
@@ -2476,12 +2565,12 @@ struct ContentView: View {
 
     private func prepareSelectionForCategoryAssignment(item: Item, category: Category?) {
         guard selectedItemIDs.count == 1,
-              selectedItemIDs.contains(item.persistentModelID) else {
+              selectedItemIDs.contains(item.id) else {
             return
         }
 
         if categoryIsHiddenFromAllNotes(category) {
-            categoryAssignmentPreservedSelectionID = item.persistentModelID
+            categoryAssignmentPreservedSelectionID = item.id
         } else {
             categoryAssignmentPreservedSelectionID = nil
         }
@@ -2497,10 +2586,11 @@ struct ContentView: View {
 
         if let match = filteredItems.first(where: { $0.id.uuidString == lastSelectedNoteID }) ??
             allItems.first(where: { $0.id.uuidString == lastSelectedNoteID }) {
-            selectedItemIDs = [match.persistentModelID]
+            selectedItemIDs = [match.id]
         }
     }
 
+    #if !os(macOS)
     private func setupCloudKitNotifications() {
         guard cloudKitEventObserver == nil else { return }
 
@@ -2569,6 +2659,7 @@ struct ContentView: View {
             isCloudSyncIndicatorVisible = true
         }
     }
+    #endif
 
     private func cleanupLegacyTrashCategories() {
         let legacyTrashCategories = categories.filter { $0.isSystemTrash }
@@ -2606,8 +2697,8 @@ struct ContentView: View {
     private func moveItemToTrash(_ item: Item) {
         guard !item.isInTrash else { return }
 
-        if selectedItemIDs.contains(item.persistentModelID) {
-            selectedItemIDs.remove(item.persistentModelID)
+        if selectedItemIDs.contains(item.id) {
+            selectedItemIDs.remove(item.id)
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -2653,8 +2744,8 @@ struct ContentView: View {
     }
 
     private func permanentlyDeleteItem(_ item: Item) {
-        if selectedItemIDs.contains(item.persistentModelID) {
-            selectedItemIDs.remove(item.persistentModelID)
+        if selectedItemIDs.contains(item.id) {
+            selectedItemIDs.remove(item.id)
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -2727,8 +2818,8 @@ struct ContentView: View {
         guard !expiredItems.isEmpty else { return }
 
         for item in expiredItems {
-            if selectedItemIDs.contains(item.persistentModelID) {
-                selectedItemIDs.remove(item.persistentModelID)
+            if selectedItemIDs.contains(item.id) {
+                selectedItemIDs.remove(item.id)
             }
             deleteTodosLinked(to: item)
             modelContext.delete(item)
@@ -2887,7 +2978,7 @@ private extension View {
 private struct NotesToolbar: ToolbarContent {
     let isEditing: Bool
     let filteredItems: [Item]
-    let selectedItemIDs: Set<PersistentIdentifier>
+    let selectedItemIDs: Set<UUID>
     #if os(iOS)
     let allItemsIsEmpty: Bool
     let allFilteredItemsSelected: Bool
@@ -3410,11 +3501,146 @@ struct NoteRowView: View {
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
-        .id(item.persistentModelID)
+        .id(item.id)
     }
 }
 
+private struct TodoQueryBridge: View {
+    @Query(sort: \TodoItem.createdAt, order: .reverse) private var todos: [TodoItem]
+    let update: ([TodoItem]) -> Void
+
+    private var revision: String {
+        todos.map { todo in
+            [
+                todo.id.uuidString,
+                todo.text,
+                todo.updatedAt.timeIntervalSinceReferenceDate.description,
+                todo.isCompleted.description,
+                todo.sortOrder.description,
+                todo.sourceNoteID,
+                todo.isSourceTextAvailable.description
+            ].joined(separator: ":")
+        }
+        .joined(separator: "|")
+    }
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear {
+                update(todos)
+            }
+            .onChange(of: revision) { _, _ in
+                update(todos)
+            }
+    }
+}
+
+#if os(macOS)
+// CloudKit events are intentionally observed below ContentView's state boundary.
+// Sync-status changes should update this overlay, not the window toolbar hierarchy.
+private struct CloudSyncStatusOverlay: View {
+    @State private var activeEventIDs: Set<UUID> = []
+    @State private var eventObserver: NSObjectProtocol?
+    @State private var isVisible = false
+    @State private var hideWorkItem: DispatchWorkItem?
+
+    var body: some View {
+        Color.clear
+            .overlay(alignment: .bottomLeading) {
+            // Keep the badge hierarchy stable and avoid live Material here.
+            // On macOS 27, refreshing a Material surface while SwiftData merges
+            // changes replays the window's ThinFilmBackground effect, including
+            // the native toolbar glass.
+            CloudSyncToolbarIndicator(isActive: isVisible)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.primary.opacity(0.08), in: Capsule())
+                .opacity(isVisible ? 1 : 0)
+                .accessibilityHidden(!isVisible)
+                .padding(16)
+        }
+        .allowsHitTesting(false)
+        .onAppear(perform: startObserving)
+        .onDisappear(perform: stopObserving)
+    }
+
+    private func startObserving() {
+        guard eventObserver == nil else { return }
+
+        eventObserver = NotificationCenter.default.addObserver(
+            forName: NSPersistentCloudKitContainer.eventChangedNotification,
+            object: nil,
+            queue: .main
+        ) { notification in
+            guard let event = notification.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
+                    as? NSPersistentCloudKitContainer.Event else {
+                return
+            }
+
+            if event.type == .import || event.type == .export {
+                let eventIdentifier = event.identifier
+                let eventHasEnded = event.endDate != nil
+                Task { @MainActor in
+                    updateIndicator(for: eventIdentifier, hasEnded: eventHasEnded)
+                }
+            }
+
+            switch event.type {
+            case .setup:
+                print("   ☁️ CloudKit setup completed")
+            case .import:
+                print("   ⬇️ CloudKit import completed - Data imported from iCloud")
+            case .export:
+                print("   ⬆️ CloudKit export completed - Data saved to iCloud")
+            @unknown default:
+                print("   ❓ Unknown CloudKit event")
+            }
+
+            if let error = event.error {
+                print("   ⚠️ CloudKit error: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func stopObserving() {
+        if let eventObserver {
+            NotificationCenter.default.removeObserver(eventObserver)
+            self.eventObserver = nil
+        }
+        activeEventIDs.removeAll()
+        hideWorkItem?.cancel()
+        hideWorkItem = nil
+        isVisible = false
+    }
+
+    private func updateIndicator(for eventIdentifier: UUID, hasEnded: Bool) {
+        if hasEnded {
+            activeEventIDs.remove(eventIdentifier)
+        } else {
+            activeEventIDs.insert(eventIdentifier)
+        }
+
+        hideWorkItem?.cancel()
+        hideWorkItem = nil
+
+        if activeEventIDs.isEmpty {
+            let workItem = DispatchWorkItem {
+                guard activeEventIDs.isEmpty else { return }
+                isVisible = false
+            }
+            hideWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: workItem)
+        } else {
+            isVisible = true
+        }
+    }
+}
+#endif
+
 private struct CloudSyncToolbarIndicator: View {
+    var isActive = true
+
     #if os(macOS)
     @State private var isRotating = false
     #endif
@@ -3428,13 +3654,10 @@ private struct CloudSyncToolbarIndicator: View {
                 .frame(width: 24, height: 24, alignment: .center)
                 .padding(.horizontal, 4)
                 .onAppear {
-                    guard !isRotating else { return }
-                    withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
-                        isRotating = true
-                    }
+                    updateRotation(isActive: isActive)
                 }
-                .onDisappear {
-                    isRotating = false
+                .onChange(of: isActive) { _, newValue in
+                    updateRotation(isActive: newValue)
                 }
             #else
             ProgressView()
@@ -3444,6 +3667,23 @@ private struct CloudSyncToolbarIndicator: View {
         .help("Syncing with iCloud")
         .accessibilityLabel("Syncing with iCloud")
     }
+
+    #if os(macOS)
+    private func updateRotation(isActive: Bool) {
+        if isActive {
+            guard !isRotating else { return }
+            withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
+                isRotating = true
+            }
+        } else {
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                isRotating = false
+            }
+        }
+    }
+    #endif
 }
 
 #if os(macOS)
