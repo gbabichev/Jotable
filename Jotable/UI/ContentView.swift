@@ -20,6 +20,18 @@ enum SidebarSelection: Hashable {
     case category(Category)
 }
 
+private enum RestorableSidebarDestination: String {
+    case allNotes
+    case todoList
+
+    var sidebarSelection: SidebarSelection {
+        switch self {
+        case .allNotes: .allNotes
+        case .todoList: .todoList
+        }
+    }
+}
+
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
@@ -30,6 +42,8 @@ struct ContentView: View {
     @Query(sort: \Item.createdAt, order: .reverse) private var allItems: [Item]
     @Query(sort: \Category.sortOrder) private var categories: [Category]
     @AppStorage("lastSelectedNoteID") private var lastSelectedNoteID: String = ""
+    @AppStorage("lastSidebarDestination") private var lastSidebarDestination = RestorableSidebarDestination.allNotes.rawValue
+    @AppStorage("isCompletedTodoSectionExpanded") private var isCompletedTodoSectionExpanded = true
 
     #if os(macOS)
     @Binding var pastePlaintextTrigger: UUID?
@@ -49,7 +63,6 @@ struct ContentView: View {
     @State private var sidebarSelection: SidebarSelection? = .allNotes
     @State private var showingAddCategory = false
     @State private var showingAddTodo = false
-    @State private var isCompletedTodoSectionExpanded = true
     @State private var showingClearCompletedTodosConfirmation = false
     @State private var categoryToEdit: Category?
     @State private var searchText = ""
@@ -110,9 +123,13 @@ struct ContentView: View {
         _isEditorActive = isEditorActive
         _isAuthenticatedForPrivateAccess = isAuthenticatedForPrivateAccess
         _lastAuthenticationTime = lastAuthenticationTime
-        let initialSelection = Self.initialSelectionState()
+        let initialDestination = Self.initialSidebarDestination()
+        let initialSelection: (ids: Set<UUID>, offListID: UUID?) = initialDestination == .todoList
+            ? (ids: Set<UUID>(), offListID: nil)
+            : Self.initialSelectionState()
         _selectedItemIDs = State(initialValue: initialSelection.ids)
         _offListPreservedSelectionID = State(initialValue: initialSelection.offListID)
+        _sidebarSelection = State(initialValue: initialDestination.sidebarSelection)
     }
     #else
     init(
@@ -125,9 +142,13 @@ struct ContentView: View {
         _isEditorActive = isEditorActive
         _isAuthenticatedForPrivateAccess = isAuthenticatedForPrivateAccess
         _lastAuthenticationTime = lastAuthenticationTime
-        let initialSelection = Self.initialSelectionState()
+        let initialDestination = Self.initialSidebarDestination()
+        let initialSelection: (ids: Set<UUID>, offListID: UUID?) = initialDestination == .todoList
+            ? (ids: Set<UUID>(), offListID: nil)
+            : Self.initialSelectionState()
         _selectedItemIDs = State(initialValue: initialSelection.ids)
         _offListPreservedSelectionID = State(initialValue: initialSelection.offListID)
+        _sidebarSelection = State(initialValue: initialDestination.sidebarSelection)
     }
     #endif
 
@@ -149,6 +170,11 @@ struct ContentView: View {
         }
 
         return ([], nil)
+    }
+
+    private static func initialSidebarDestination() -> RestorableSidebarDestination {
+        let storedValue = UserDefaults.standard.string(forKey: "lastSidebarDestination")
+        return RestorableSidebarDestination(rawValue: storedValue ?? "") ?? .allNotes
     }
 
     // Check if authentication is still valid
@@ -509,6 +535,8 @@ struct ContentView: View {
             }
         }
         .onChange(of: sidebarSelection) { oldValue, newValue in
+            persistSidebarDestination(newValue)
+
             #if os(iOS)
             switch newValue {
             case .todoList:
@@ -2652,7 +2680,9 @@ struct ContentView: View {
     }
 
     private func restoreLastSelectedNoteIfNeeded() {
-        guard selectedItemIDs.isEmpty, !lastSelectedNoteID.isEmpty else { return }
+        guard !isViewingTodoList,
+              selectedItemIDs.isEmpty,
+              !lastSelectedNoteID.isEmpty else { return }
 
         guard let match = allItems.first(where: {
             $0.id.uuidString == lastSelectedNoteID && !$0.isInTrash
@@ -2667,6 +2697,19 @@ struct ContentView: View {
             offListPreservedSelectionID = match.id
         }
         selectedItemIDs = [match.id]
+    }
+
+    private func persistSidebarDestination(_ selection: SidebarSelection?) {
+        switch selection {
+        case .todoList:
+            lastSidebarDestination = RestorableSidebarDestination.todoList.rawValue
+        case .allNotes, .category, .trash:
+            // Trash is intentionally temporary. Categories continue to reopen
+            // through their selected note, while the stable fallback is All Notes.
+            lastSidebarDestination = RestorableSidebarDestination.allNotes.rawValue
+        case .none:
+            break
+        }
     }
 
     private func beginPrivateAccessSession() {
