@@ -2202,11 +2202,19 @@ struct ContentView: View {
                 return
             }
 
+            // Cancellation is an expected way to dismiss the system prompt,
+            // not an authentication error that needs a second alert.
+            if let laError = error as? LAError,
+               [.userCancel, .systemCancel, .appCancel].contains(laError.code) {
+                DispatchQueue.main.async {
+                    unsafeCompletion(false)
+                }
+                return
+            }
+
             let errorMessage: String
             if let laError = error as? LAError {
                 switch laError.code {
-                case .userCancel:
-                    errorMessage = "Authentication cancelled"
                 case .userFallback:
                     errorMessage = "Authentication failed"
                 case .authenticationFailed:

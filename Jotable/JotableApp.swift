@@ -81,6 +81,54 @@ private enum AppActionRouter {
 
 #if os(macOS)
 class MacAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(configureMainWindow(_:)),
+            name: NSWindow.didBecomeMainNotification,
+            object: nil
+        )
+
+        DispatchQueue.main.async { [weak self] in
+            NSApp.windows.forEach { self?.configureCloseButton(for: $0) }
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !flag,
+              let window = sender.windows.first(where: isJotableDocumentWindow) else {
+            return true
+        }
+
+        window.makeKeyAndOrderFront(nil)
+        return true
+    }
+
+    @objc private func configureMainWindow(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        configureCloseButton(for: window)
+    }
+
+    private func configureCloseButton(for window: NSWindow) {
+        guard isJotableDocumentWindow(window),
+              let closeButton = window.standardWindowButton(.closeButton) else { return }
+
+        closeButton.target = self
+        closeButton.action = #selector(hideApplication(_:))
+    }
+
+    private func isJotableDocumentWindow(_ window: NSWindow) -> Bool {
+        window.canBecomeMain && !(window is NSPanel)
+    }
+
+    @objc private func hideApplication(_ sender: NSButton) {
+        NSApp.hide(sender)
+    }
+
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let dockMenu = NSMenu()
 
