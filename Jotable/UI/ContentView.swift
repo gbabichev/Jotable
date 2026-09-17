@@ -428,7 +428,7 @@ struct ContentView: View {
     }
 
     private var shouldUseExpandedEditorLayout: Bool {
-        canExpandEditor && isEditorExpanded
+        canExpandEditor && isEditorExpanded && !isViewingTodoList && !isViewingTrash
     }
 
     #if os(iOS)
@@ -445,23 +445,6 @@ struct ContentView: View {
     }
     #endif
 
-    private var notesListMinimumColumnWidth: CGFloat {
-        #if os(macOS)
-        return 250
-        #else
-        switch splitViewVisibility {
-        case .doubleColumn, .detailOnly:
-            return 450
-        default:
-            return 250
-        }
-        #endif
-    }
-
-    private var notesListIdealColumnWidth: CGFloat {
-        return max(250, notesListMinimumColumnWidth)
-    }
-
     @ViewBuilder
     private var navigationContent: some View {
         if shouldUseExpandedEditorLayout {
@@ -473,9 +456,8 @@ struct ContentView: View {
 
     private var standardNavigationSplitView: some View {
         #if os(macOS)
-        // Let AppKit own sidebar visibility internally. Binding macOS's initial
-        // split-view negotiation into ContentView invalidates the entire detail
-        // hierarchy and briefly removes its native toolbar contributors.
+        // Keep one stable split-view hierarchy so AppKit can restore the
+        // user-adjusted divider positions when the window is recreated.
         NavigationSplitView {
             sidebarColumn
         } content: {
@@ -508,6 +490,7 @@ struct ContentView: View {
         }
         .listStyle(SidebarListStyle())
         .navigationTitle("Jotable")
+        .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 300)
         .onChange(of: selectedItemIDs) { _, _ in
             if let preservedID = offListPreservedSelectionID,
                !selectedItemIDs.contains(preservedID) {
@@ -591,7 +574,6 @@ struct ContentView: View {
                 }
             }
         }
-        .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 300)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction)
             {
@@ -669,7 +651,6 @@ struct ContentView: View {
         )
         .navigationTitle(currentNavigationTitle)
         .navigationSubtitle("\(filteredItems.count) \(filteredItems.count == 1 ? "note" : "notes")")
-        .navigationSplitViewColumnWidth(min: notesListMinimumColumnWidth, ideal: notesListIdealColumnWidth, max: 800)
         .toolbar {
             #if !os(macOS)
             if isCloudSyncIndicatorVisible {
@@ -791,9 +772,12 @@ struct ContentView: View {
             text: $searchText,
             prompt: "Search todos"
         )
+        #if os(macOS)
+        .navigationTitle("Open")
+        #else
         .navigationTitle("Todo List")
+        #endif
         .navigationSubtitle("\(openTodoCount) \(openTodoCount == 1 ? "open todo" : "open todos")")
-        .navigationSplitViewColumnWidth(min: notesListMinimumColumnWidth, ideal: notesListIdealColumnWidth, max: 800)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 if !isEditing {
@@ -830,34 +814,78 @@ struct ContentView: View {
         #endif
     }
 
+    #if os(macOS)
+    private var completedTodoListColumn: some View {
+        Group {
+            if filteredCompletedTodos.isEmpty {
+                ContentUnavailableView {
+                    Label("No Completed Todos", systemImage: "checkmark.square")
+                } description: {
+                    Text(searchText.isEmpty ? "Completed todos will appear here." : "No completed todos match your search.")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(filteredCompletedTodos) { todo in
+                        todoRow(for: todo)
+                    }
+                    .onMove { offsets, destination in
+                        moveTodos(in: filteredCompletedTodos, from: offsets, to: destination)
+                    }
+                    .onDelete { offsets in
+                        deleteTodos(from: filteredCompletedTodos, offsets: offsets)
+                    }
+                }
+                .contentMargins(.top, 0, for: .scrollContent)
+            }
+        }
+        .navigationTitle("Completed")
+        .navigationSubtitle("\(filteredCompletedTodos.count) \(filteredCompletedTodos.count == 1 ? "completed todo" : "completed todos")")
+        .toolbar {
+            if !filteredCompletedTodos.isEmpty {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(role: .destructive) {
+                        showingClearCompletedTodosConfirmation = true
+                    } label: {
+                        Label("Clear Completed", systemImage: "trash")
+                    }
+                    .help("Clear completed todos")
+                }
+            }
+        }
+    }
+    #endif
+
     @ViewBuilder
     private var todoListBody: some View {
-        if filteredTodos.isEmpty {
-            #if os(macOS)
+        #if os(macOS)
+        if filteredOpenTodos.isEmpty {
             todoEmptyState
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            #else
+        } else {
+            List {
+                todoListContent
+            }
+            .contentMargins(.top, 0, for: .scrollContent)
+        }
+        #else
+        if filteredTodos.isEmpty {
             ScrollView {
                 todoEmptyState
                     .frame(maxWidth: .infinity)
                     .frame(minHeight: 360)
             }
             .scrollDismissesKeyboard(.interactively)
-            #endif
         } else {
             List {
                 todoListContent
             }
-            #if os(macOS)
-            .contentMargins(.top, 0, for: .scrollContent)
-            #endif
-            #if os(iOS)
             .listStyle(.plain)
             .listSectionSpacing(.compact)
             .contentMargins(.top, 0, for: .scrollContent)
             .scrollDismissesKeyboard(.interactively)
-            #endif
         }
+        #endif
     }
 
     private var todoEmptyState: some View {
@@ -877,7 +905,11 @@ struct ContentView: View {
             return privateTodoHiddenMessage
         }
 
+        #if os(macOS)
+        return "No open todos."
+        #else
         return "No todo items yet."
+        #endif
     }
 
     private var privateTodoHiddenMessage: String {
@@ -914,42 +946,55 @@ struct ContentView: View {
 
     private var detailColumn: some View {
         NavigationStack {
-            if let selectedItem = primarySelectedItem {
-                #if os(macOS)
-                NoteEditorView(
-                    item: selectedItem,
-                    itemID: selectedItem.id,
-                    pastePlaintextTrigger: $pastePlaintextTrigger,
-                    isEditorActive: $isEditorActive,
-                    passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID,
-                    onCategoryAssignment: prepareSelectionForCategoryAssignment
-                )
-                    .equatable()
-                    .id(selectedItem.id) // Force view recreation when switching notes
-                #else
-                NoteEditorView(
-                    item: selectedItem,
-                    itemID: selectedItem.id,
-                    isEditorActive: $isEditorActive,
-                    isEditorExpanded: $isEditorExpanded,
-                    passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID,
-                    onCategoryAssignment: prepareSelectionForCategoryAssignment,
-                    onToggleEditorFocus: {
-                        setEditorExpanded(!isEditorExpanded)
-                    }
-                )
-                    .equatable()
-                    .id(selectedItem.id) // Force view recreation when switching notes
-                #endif
+            #if os(macOS)
+            if isViewingTodoList {
+                completedTodoListColumn
             } else {
-                ContentUnavailableView {
-                    Label("Select a Note", systemImage: "note.text")
-                } description: {
-                    Text("Choose a note from the sidebar to view and edit it, or create a new note.")
-                } actions: {
-                    Button("New Note", action: addItem)
-                        .buttonStyle(.borderedProminent)
+                noteDetailContent
+            }
+            #else
+            noteDetailContent
+            #endif
+        }
+    }
+
+    @ViewBuilder
+    private var noteDetailContent: some View {
+        if let selectedItem = primarySelectedItem {
+            #if os(macOS)
+            NoteEditorView(
+                item: selectedItem,
+                itemID: selectedItem.id,
+                pastePlaintextTrigger: $pastePlaintextTrigger,
+                isEditorActive: $isEditorActive,
+                passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID,
+                onCategoryAssignment: prepareSelectionForCategoryAssignment
+            )
+                .equatable()
+                .id(selectedItem.id) // Force view recreation when switching notes
+            #else
+            NoteEditorView(
+                item: selectedItem,
+                itemID: selectedItem.id,
+                isEditorActive: $isEditorActive,
+                isEditorExpanded: $isEditorExpanded,
+                passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID,
+                onCategoryAssignment: prepareSelectionForCategoryAssignment,
+                onToggleEditorFocus: {
+                    setEditorExpanded(!isEditorExpanded)
                 }
+            )
+                .equatable()
+                .id(selectedItem.id) // Force view recreation when switching notes
+            #endif
+        } else {
+            ContentUnavailableView {
+                Label("Select a Note", systemImage: "note.text")
+            } description: {
+                Text("Choose a note from the sidebar to view and edit it, or create a new note.")
+            } actions: {
+                Button("New Note", action: addItem)
+                    .buttonStyle(.borderedProminent)
             }
         }
     }
@@ -1016,10 +1061,11 @@ struct ContentView: View {
         }
         #if os(macOS)
         .onReceive(NotificationCenter.default.publisher(for: .toggleEditorFocusRequested)) { _ in
+            guard !isViewingTodoList && !isViewingTrash else { return }
             setEditorExpanded(!isEditorExpanded)
         }
         .toolbar {
-            if canExpandEditor {
+            if canExpandEditor && !isViewingTodoList && !isViewingTrash {
                 ToolbarItem(id: "contentView.editorFocus", placement: .primaryAction) {
                     Button {
                         setEditorExpanded(!isEditorExpanded)
@@ -1121,10 +1167,24 @@ struct ContentView: View {
             enforceAuthenticationState()
         }
         .onChange(of: isViewingTodoList) { _, isViewing in
-            if !isViewing {
+            if isViewing {
+                isEditorActive = false
+                setEditorExpanded(false)
+            } else {
                 todoSnapshot = nil
+                isEditorActive = primarySelectedItem != nil
             }
         }
+        #if os(macOS)
+        .onChange(of: isViewingTrash) { _, isViewing in
+            if isViewing {
+                isEditorActive = false
+                setEditorExpanded(false)
+            } else if !isViewingTodoList {
+                isEditorActive = primarySelectedItem != nil
+            }
+        }
+        #endif
         #if os(iOS)
         .onChange(of: isEditing) { _, editing in
             if !editing {
@@ -1417,7 +1477,6 @@ struct ContentView: View {
         }
         #else
         if !filteredOpenTodos.isEmpty {
-            todoSectionHeader("Open", isFirstSection: true)
             ForEach(filteredOpenTodos) { todo in
                 todoRow(for: todo)
             }
@@ -1426,21 +1485,6 @@ struct ContentView: View {
             }
             .onDelete { offsets in
                 deleteTodos(from: filteredOpenTodos, offsets: offsets)
-            }
-        }
-
-        if !filteredCompletedTodos.isEmpty {
-            completedTodoSectionHeader(isFirstSection: filteredOpenTodos.isEmpty)
-            if isCompletedTodoSectionExpanded {
-                ForEach(filteredCompletedTodos) { todo in
-                    todoRow(for: todo)
-                }
-                .onMove { offsets, destination in
-                    moveTodos(in: filteredCompletedTodos, from: offsets, to: destination)
-                }
-                .onDelete { offsets in
-                    deleteTodos(from: filteredCompletedTodos, offsets: offsets)
-                }
             }
         }
         #endif
@@ -1831,6 +1875,15 @@ struct ContentView: View {
         }
         #endif
 
+        // Leaving the dedicated Todo workspace is intentional: source-note
+        // actions return to the note's category (or All Notes) and open it in
+        // the normal browser/editor workspace.
+        searchText = ""
+        if let category = note.category, !category.isSystemTrash {
+            sidebarSelection = .category(category)
+        } else {
+            sidebarSelection = .allNotes
+        }
         selectedItemIDs = [note.id]
         lastSelectedNoteID = note.id.uuidString
         isEditorActive = true
@@ -2191,7 +2244,7 @@ struct ContentView: View {
     }
 
     private func prepareExternalEditorPresentation() {
-        if isViewingTrash {
+        if isViewingTrash || isViewingTodoList {
             sidebarSelection = .allNotes
         }
 
