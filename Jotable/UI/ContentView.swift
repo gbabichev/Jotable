@@ -772,11 +772,7 @@ struct ContentView: View {
             text: $searchText,
             prompt: "Search todos"
         )
-        #if os(macOS)
-        .navigationTitle("Open")
-        #else
         .navigationTitle("Todo List")
-        #endif
         .navigationSubtitle("\(openTodoCount) \(openTodoCount == 1 ? "open todo" : "open todos")")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -839,11 +835,14 @@ struct ContentView: View {
                 .contentMargins(.top, 0, for: .scrollContent)
             }
         }
-        .navigationTitle("Completed")
-        .navigationSubtitle("\(filteredCompletedTodos.count) \(filteredCompletedTodos.count == 1 ? "completed todo" : "completed todos")")
+        .safeAreaBar(edge: .top, spacing: 0) {
+            todoColumnHeader("Completed", count: filteredCompletedTodos.count)
+        }
         .toolbar {
             if !filteredCompletedTodos.isEmpty {
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItemGroup(placement: .automatic) {
+                    Spacer()
+                    
                     Button(role: .destructive) {
                         showingClearCompletedTodosConfirmation = true
                     } label: {
@@ -859,14 +858,19 @@ struct ContentView: View {
     @ViewBuilder
     private var todoListBody: some View {
         #if os(macOS)
-        if filteredOpenTodos.isEmpty {
-            todoEmptyState
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            List {
-                todoListContent
+        Group {
+            if filteredOpenTodos.isEmpty {
+                todoEmptyState
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    todoListContent
+                }
+                .contentMargins(.top, 0, for: .scrollContent)
             }
-            .contentMargins(.top, 0, for: .scrollContent)
+        }
+        .safeAreaBar(edge: .top, spacing: 0) {
+            todoColumnHeader("Open", count: filteredOpenTodos.count)
         }
         #else
         if filteredTodos.isEmpty {
@@ -887,6 +891,24 @@ struct ContentView: View {
         }
         #endif
     }
+
+    #if os(macOS)
+    private func todoColumnHeader(_ title: String, count: Int) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(title)
+                .font(.headline)
+
+            Spacer(minLength: 8)
+
+            Text(count, format: .number)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+    #endif
 
     private var todoEmptyState: some View {
         ContentUnavailableView {
@@ -1812,7 +1834,7 @@ struct ContentView: View {
 
     private func sourceTitle(for todo: TodoItem) -> String {
         if isStandaloneTodo(todo) {
-            return "Standalone todo"
+            return ""
         }
 
         if let note = sourceNote(for: todo) {
@@ -3313,10 +3335,6 @@ struct TodoRowView: View {
     @FocusState private var isTextFocused: Bool
 
     private var sourceLabel: String {
-        guard isLinkedToNote else {
-            return "Standalone todo"
-        }
-
         let title = sourceTextAvailable ? sourceTitle : "\(sourceTitle) - source text removed"
         if let sourceCategoryName {
             return "\(sourceCategoryName) • \(title)"
@@ -3325,10 +3343,6 @@ struct TodoRowView: View {
     }
 
     private var sourceIcon: String {
-        guard isLinkedToNote else {
-            return "checklist"
-        }
-
         return canOpenSource ? "arrow.up.forward.square" : "exclamationmark.triangle"
     }
 
@@ -3337,7 +3351,7 @@ struct TodoRowView: View {
             return "Open source note"
         }
 
-        return isLinkedToNote ? "Source note is unavailable" : "Standalone todo"
+        return isLinkedToNote ? "Source note is unavailable" : "Edit todo"
     }
 
     @ViewBuilder
@@ -3394,14 +3408,16 @@ struct TodoRowView: View {
                 titleContent
                 metadataContent
 
-                HStack(spacing: 4) {
-                    Image(systemName: sourceIcon)
-                        .font(.caption)
-                    Text(sourceLabel)
-                        .lineLimit(1)
+                if isLinkedToNote {
+                    HStack(spacing: 4) {
+                        Image(systemName: sourceIcon)
+                            .font(.caption)
+                        Text(sourceLabel)
+                            .lineLimit(1)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(canOpenSource ? .secondary : .tertiary)
                 }
-                .font(.caption)
-                .foregroundStyle(canOpenSource ? .secondary : .tertiary)
             }
 
             Spacer(minLength: 0)
