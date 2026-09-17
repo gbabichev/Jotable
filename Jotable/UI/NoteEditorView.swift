@@ -404,6 +404,7 @@ private struct NoteEditorDocumentView: View {
             resetColorTrigger: $resetColorTrigger,
             pastePlaintextTrigger: $pastePlaintextTrigger,
             externalUpdateToken: externalContentUpdateToken,
+            usesExternalScrolling: true,
             onAddSelectedTextToTodo: createTodoFromSelection
         )
         #else
@@ -434,9 +435,20 @@ private struct NoteEditorDocumentView: View {
     }
 
     private var editorContent: some View {
-        GeometryReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+        Group {
+#if os(macOS)
+            // SwiftUI owns the one visible scroll surface so its native toolbar
+            // edge effect can track the document. The embedded AppKit editor
+            // expands to its text content instead of scrolling independently.
+            GeometryReader { proxy in
+                ScrollView {
+                    richTextEditorView
+                        .frame(width: max(proxy.size.width - 32, 1), alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, max(proxy.size.height * 0.35, 120))
+                }
+                .scrollEdgeEffectStyle(.soft, for: .top)
+                .safeAreaBar(edge: .top, spacing: 0) {
                     NoteHeaderView(
                         item: item,
                         title: Binding(
@@ -449,18 +461,38 @@ private struct NoteEditorDocumentView: View {
                         }
                     )
                     .padding(.horizontal)
-
-                    //Divider()
-                    
-                    richTextEditorView
-                        .frame(maxWidth: .infinity)
-                        .frame(minHeight: max(proxy.size.height - headerHeight - 12, 0))
-                        .padding(.horizontal)
                 }
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: proxy.size.height, alignment: .top)
             }
-            .scrollDismissesKeyboard(.interactively)
+#else
+            GeometryReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        NoteHeaderView(
+                            item: item,
+                            title: Binding(
+                                get: { draftTitle ?? item.title },
+                                set: { draftTitle = $0 }
+                            ),
+                            onCategoryAssignment: onCategoryAssignment,
+                            onHeaderHeightChange: { height in
+                                headerHeight = height
+                            }
+                        )
+                        .padding(.horizontal)
+
+                        //Divider()
+
+                        richTextEditorView
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: max(proxy.size.height - headerHeight - 12, 0))
+                            .padding(.horizontal)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: proxy.size.height, alignment: .top)
+                }
+                .scrollDismissesKeyboard(.interactively)
+            }
+#endif
         }
         .onAppear {
             loadContentIfNeeded()

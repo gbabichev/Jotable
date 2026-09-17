@@ -535,6 +535,7 @@ struct RichTextEditor: NSViewRepresentable {
     @Binding var resetColorTrigger: UUID?
     @Binding var pastePlaintextTrigger: UUID?
     var externalUpdateToken: UUID?
+    var usesExternalScrolling = false
     var onAddSelectedTextToTodo: (TodoCreationRequest) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
@@ -572,8 +573,11 @@ struct RichTextEditor: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
+        scrollView.hasVerticalScroller = !usesExternalScrolling
         scrollView.drawsBackground = false
+        if usesExternalScrolling {
+            scrollView.verticalScrollElasticity = .none
+        }
 
         let textView = DynamicColorTextView()
         textView.delegate = context.coordinator
@@ -627,6 +631,35 @@ struct RichTextEditor: NSViewRepresentable {
         }
 
         return scrollView
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: NSScrollView,
+        context: Context
+    ) -> CGSize? {
+        guard usesExternalScrolling,
+              let proposedWidth = proposal.width,
+              let textView = context.coordinator.textView,
+              let textContainer = textView.textContainer,
+              let layoutManager = textView.layoutManager else {
+            return nil
+        }
+
+        let width = max(proposedWidth, 1)
+        textView.setFrameSize(NSSize(width: width, height: textView.frame.height))
+        layoutManager.ensureLayout(for: textContainer)
+
+        let textHeight = layoutManager.usedRect(for: textContainer).height
+        let verticalInsets = textView.textContainerInset.height * 2
+        let height = ceil(textHeight + verticalInsets)
+        let fittedHeight = max(height, 1)
+
+        // An externally scrolling text view must keep its AppKit document view
+        // in lockstep with the size SwiftUI assigns to the representable.
+        textView.setFrameSize(NSSize(width: width, height: fittedHeight))
+
+        return CGSize(width: width, height: fittedHeight)
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
@@ -916,11 +949,10 @@ struct RichTextEditor: NSViewRepresentable {
         }
 
         func updateBottomBuffer(for textView: NSTextView) {
-            guard let dynamicTextView = textView as? DynamicColorTextView,
-                  let layoutManager = dynamicTextView.layoutManager else { return }
-            let font = dynamicTextView.font ?? NSFont.systemFont(ofSize: activeFontSize.rawValue)
-            let lineHeight = layoutManager.defaultLineHeight(for: font)
-            dynamicTextView.extraBottomPadding = lineHeight * 8
+            // The NSScrollView now owns the full editor viewport. It no longer
+            // needs an artificial document-height buffer to coexist with an
+            // enclosing SwiftUI ScrollView.
+            (textView as? DynamicColorTextView)?.extraBottomPadding = 0
         }
 
         private func registerUndoSnapshot(for textView: NSTextView,
