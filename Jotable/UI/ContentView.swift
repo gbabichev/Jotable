@@ -64,6 +64,7 @@ struct ContentView: View {
     @State private var showingAddCategory = false
     @State private var showingAddTodo = false
     @State private var showingClearCompletedTodosConfirmation = false
+    @State private var showingClearTrashConfirmation = false
     @State private var categoryToEdit: Category?
     @State private var searchText = ""
     @State private var authenticatingCategoryID: PersistentIdentifier?
@@ -461,11 +462,14 @@ struct ContentView: View {
         NavigationSplitView {
             sidebarColumn
         } content: {
-            if isViewingTodoList {
-                todoListColumn
-            } else {
-                notesListColumn
+            Group {
+                if isViewingTodoList {
+                    todoListColumn
+                } else {
+                    notesListColumn
+                }
             }
+            .navigationSplitViewColumnWidth(min: 350, ideal: 350, max: 400)
         } detail: {
             detailColumn
         }
@@ -685,6 +689,18 @@ struct ContentView: View {
                 addItem: addItem
             )
             #endif
+
+            if isViewingTrash {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(role: .destructive) {
+                        showingClearTrashConfirmation = true
+                    } label: {
+                        Label("Clear Trash", systemImage: "trash.slash")
+                    }
+                    .help("Permanently delete everything in Trash")
+                    .disabled(trashItems.isEmpty)
+                }
+            }
         }
         #if os(iOS)
         .environment(\.editMode, $editMode)
@@ -1229,6 +1245,15 @@ struct ContentView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(clearCompletedTodosConfirmationMessage)
+        }
+        .confirmationDialog("Clear Trash?", isPresented: $showingClearTrashConfirmation, titleVisibility: .visible) {
+            Button("Permanently Delete \(trashItemCount) \(trashItemCount == 1 ? "Note" : "Notes")", role: .destructive) {
+                emptyTrash()
+            }
+
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes everything in Trash. This action cannot be undone.")
         }
         #if os(macOS)
         .macImportExportPresentation(
