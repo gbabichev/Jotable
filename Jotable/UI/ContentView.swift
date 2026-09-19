@@ -65,6 +65,7 @@ struct ContentView: View {
     @State private var showingAddCategory = false
     @State private var showingAddTodo = false
     @State private var showingClearCompletedTodosConfirmation = false
+    @State private var selectedTodoIDs: Set<UUID> = []
     @State private var showingClearTrashConfirmation = false
     @State private var categoryToEdit: Category?
     @State private var searchText = ""
@@ -290,6 +291,17 @@ struct ContentView: View {
     private var filteredCompletedTodos: [TodoItem] {
         filteredTodos.filter(\.isCompleted)
     }
+
+    #if os(iOS)
+    private var todosAvailableForSelection: [TodoItem] {
+        shouldUseTwoColumnTodoLayout ? filteredOpenTodos : filteredTodos
+    }
+
+    private var allAvailableTodosSelected: Bool {
+        guard !todosAvailableForSelection.isEmpty else { return false }
+        return todosAvailableForSelection.allSatisfy { selectedTodoIDs.contains($0.id) }
+    }
+    #endif
 
     private var clearCompletedTodosButtonTitle: String {
         let count = filteredCompletedTodos.count
@@ -798,6 +810,29 @@ struct ContentView: View {
         .navigationSubtitle("\(openTodoCount) \(openTodoCount == 1 ? "open todo" : "open todos")")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                #if os(iOS)
+                if isEditing && !todosAvailableForSelection.isEmpty {
+                    Button(
+                        allAvailableTodosSelected ? "Deselect All" : "Select All",
+                        systemImage: allAvailableTodosSelected ? "minus.circle" : "checkmark.circle"
+                    ) {
+                        if allAvailableTodosSelected {
+                            selectedTodoIDs.removeAll()
+                        } else {
+                            selectedTodoIDs = Set(todosAvailableForSelection.map(\.id))
+                        }
+                    }
+                }
+
+                if isEditing && !selectedTodoIDs.isEmpty {
+                    Button(role: .destructive) {
+                        deleteSelectedTodos()
+                    } label: {
+                        Label("Delete Selected", systemImage: "trash")
+                    }
+                }
+                #endif
+
                 if !isEditing {
                     Button {
                         showingAddTodo = true
@@ -842,6 +877,22 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                #if os(iOS)
+                List(selection: $selectedTodoIDs) {
+                    ForEach(filteredCompletedTodos) { todo in
+                        todoRow(for: todo)
+                    }
+                    .onMove { offsets, destination in
+                        moveTodos(in: filteredCompletedTodos, from: offsets, to: destination)
+                    }
+                    .onDelete { offsets in
+                        deleteTodos(from: filteredCompletedTodos, offsets: offsets)
+                    }
+                }
+                .contentMargins(.top, 0, for: .scrollContent)
+                .listStyle(.plain)
+                .scrollDismissesKeyboard(.interactively)
+                #else
                 List {
                     ForEach(filteredCompletedTodos) { todo in
                         todoRow(for: todo)
@@ -854,9 +905,6 @@ struct ContentView: View {
                     }
                 }
                 .contentMargins(.top, 0, for: .scrollContent)
-                #if os(iOS)
-                .listStyle(.plain)
-                .scrollDismissesKeyboard(.interactively)
                 #endif
             }
         }
@@ -888,6 +936,9 @@ struct ContentView: View {
                 #endif
             }
         }
+        #if os(iOS)
+        .environment(\.editMode, $editMode)
+        #endif
     }
 
     @ViewBuilder
@@ -905,7 +956,7 @@ struct ContentView: View {
             }
             .scrollDismissesKeyboard(.interactively)
         } else {
-            List {
+            List(selection: $selectedTodoIDs) {
                 todoListContent
             }
             .listStyle(.plain)
@@ -922,13 +973,18 @@ struct ContentView: View {
                 todoEmptyState
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                #if os(iOS)
+                List(selection: $selectedTodoIDs) {
+                    openTodoListContent
+                }
+                .contentMargins(.top, 0, for: .scrollContent)
+                .listStyle(.plain)
+                .scrollDismissesKeyboard(.interactively)
+                #else
                 List {
                     openTodoListContent
                 }
                 .contentMargins(.top, 0, for: .scrollContent)
-                #if os(iOS)
-                .listStyle(.plain)
-                .scrollDismissesKeyboard(.interactively)
                 #endif
             }
         }
@@ -1258,6 +1314,7 @@ struct ContentView: View {
         .onChange(of: isEditing) { _, editing in
             if !editing {
                 selectedItemIDs.removeAll()
+                selectedTodoIDs.removeAll()
             }
         }
         #endif
@@ -1674,6 +1731,7 @@ struct ContentView: View {
 
         #if os(iOS)
         return row
+            .tag(todo.id)
         #else
         return row
         .contextMenu {
@@ -1992,6 +2050,25 @@ struct ContentView: View {
             print("❌ Failed to delete todo: \(error)")
         }
     }
+
+    #if os(iOS)
+    private func deleteSelectedTodos() {
+        let todosToDelete = filteredTodos.filter { selectedTodoIDs.contains($0.id) }
+        guard !todosToDelete.isEmpty else { return }
+
+        for todo in todosToDelete {
+            modelContext.delete(todo)
+        }
+        selectedTodoIDs.removeAll()
+
+        do {
+            try modelContext.save()
+            print("💾 Deleted \(todosToDelete.count) selected todos - CloudKit sync queued")
+        } catch {
+            print("❌ Failed to delete selected todos: \(error)")
+        }
+    }
+    #endif
 
     private func deleteTodos(from todos: [TodoItem], offsets: IndexSet) {
         let todosToDelete = offsets.map { todos[$0] }
