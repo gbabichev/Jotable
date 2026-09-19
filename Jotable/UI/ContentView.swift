@@ -37,6 +37,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     #endif
     // Changed from timestamp to createdAt for stable sorting based on creation date
     @Query(sort: \Item.createdAt, order: .reverse) private var allItems: [Item]
@@ -433,8 +434,13 @@ struct ContentView: View {
     }
 
     #if os(iOS)
+    private var shouldUseTwoColumnTodoLayout: Bool {
+        horizontalSizeClass == .regular ||
+            (UIDevice.current.userInterfaceIdiom == .phone && verticalSizeClass == .compact)
+    }
+
     private var shouldPushTodoSourceInTodoList: Bool {
-        horizontalSizeClass == .compact || UIDevice.current.userInterfaceIdiom == .phone
+        !shouldUseTwoColumnTodoLayout
     }
 
     private var addTodoSheetHeight: CGFloat {
@@ -826,7 +832,6 @@ struct ContentView: View {
         #endif
     }
 
-    #if os(macOS)
     private var completedTodoListColumn: some View {
         Group {
             if filteredCompletedTodos.isEmpty {
@@ -849,6 +854,10 @@ struct ContentView: View {
                     }
                 }
                 .contentMargins(.top, 0, for: .scrollContent)
+                #if os(iOS)
+                .listStyle(.plain)
+                .scrollDismissesKeyboard(.interactively)
+                #endif
             }
         }
         .safeAreaBar(edge: .top, spacing: 0) {
@@ -856,9 +865,10 @@ struct ContentView: View {
         }
         .toolbar {
             if !filteredCompletedTodos.isEmpty {
+                #if os(macOS)
                 ToolbarItemGroup(placement: .automatic) {
                     Spacer()
-                    
+
                     Button(role: .destructive) {
                         showingClearCompletedTodosConfirmation = true
                     } label: {
@@ -866,30 +876,28 @@ struct ContentView: View {
                     }
                     .help("Clear completed todos")
                 }
+                #else
+                ToolbarItem(placement: .primaryAction) {
+                    Button(role: .destructive) {
+                        showingClearCompletedTodosConfirmation = true
+                    } label: {
+                        Label("Clear Completed", systemImage: "trash")
+                    }
+                    .help("Clear completed todos")
+                }
+                #endif
             }
         }
     }
-    #endif
 
     @ViewBuilder
     private var todoListBody: some View {
         #if os(macOS)
-        Group {
-            if filteredOpenTodos.isEmpty {
-                todoEmptyState
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List {
-                    todoListContent
-                }
-                .contentMargins(.top, 0, for: .scrollContent)
-            }
-        }
-        .safeAreaBar(edge: .top, spacing: 0) {
-            todoColumnHeader("Open", count: filteredOpenTodos.count)
-        }
+        openTodoColumnBody
         #else
-        if filteredTodos.isEmpty {
+        if shouldUseTwoColumnTodoLayout {
+            openTodoColumnBody
+        } else if filteredTodos.isEmpty {
             ScrollView {
                 todoEmptyState
                     .frame(maxWidth: .infinity)
@@ -908,7 +916,27 @@ struct ContentView: View {
         #endif
     }
 
-    #if os(macOS)
+    private var openTodoColumnBody: some View {
+        Group {
+            if filteredOpenTodos.isEmpty {
+                todoEmptyState
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    openTodoListContent
+                }
+                .contentMargins(.top, 0, for: .scrollContent)
+                #if os(iOS)
+                .listStyle(.plain)
+                .scrollDismissesKeyboard(.interactively)
+                #endif
+            }
+        }
+        .safeAreaBar(edge: .top, spacing: 0) {
+            todoColumnHeader("Open", count: filteredOpenTodos.count)
+        }
+    }
+
     private func todoColumnHeader(_ title: String, count: Int) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(title)
@@ -924,7 +952,6 @@ struct ContentView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
-    #endif
 
     private var todoEmptyState: some View {
         ContentUnavailableView {
@@ -984,15 +1011,19 @@ struct ContentView: View {
 
     private var detailColumn: some View {
         NavigationStack {
-            #if os(macOS)
             if isViewingTodoList {
+                #if os(macOS)
                 completedTodoListColumn
+                #else
+                if shouldUseTwoColumnTodoLayout {
+                    completedTodoListColumn
+                } else {
+                    noteDetailContent
+                }
+                #endif
             } else {
                 noteDetailContent
             }
-            #else
-            noteDetailContent
-            #endif
         }
     }
 
@@ -1473,12 +1504,24 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private var todoListContent: some View {
-        #if os(macOS)
+    private var openTodoListContent: some View {
         if hasHiddenPrivateTodos {
             privateTodoHiddenNotice
         }
-        #endif
+
+        ForEach(filteredOpenTodos) { todo in
+            todoRow(for: todo)
+        }
+        .onMove { offsets, destination in
+            moveTodos(in: filteredOpenTodos, from: offsets, to: destination)
+        }
+        .onDelete { offsets in
+            deleteTodos(from: filteredOpenTodos, offsets: offsets)
+        }
+    }
+
+    @ViewBuilder
+    private var todoListContent: some View {
 
         #if os(iOS)
         if !filteredOpenTodos.isEmpty {
@@ -1523,17 +1566,7 @@ struct ContentView: View {
             }
         }
         #else
-        if !filteredOpenTodos.isEmpty {
-            ForEach(filteredOpenTodos) { todo in
-                todoRow(for: todo)
-            }
-            .onMove { offsets, destination in
-                moveTodos(in: filteredOpenTodos, from: offsets, to: destination)
-            }
-            .onDelete { offsets in
-                deleteTodos(from: filteredOpenTodos, offsets: offsets)
-            }
-        }
+        openTodoListContent
         #endif
     }
 
