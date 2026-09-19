@@ -271,6 +271,7 @@ struct RichTextEditor: UIViewRepresentable {
     @Binding var linkEditRequest: LinkEditContext?
     var externalUpdateToken: UUID?
     var onAddSelectedTextToTodo: (TodoCreationRequest) -> Void = { _ in }
+    var onToggleLinkedTodo: (String) -> Void = { _ in }
     @Environment(\.colorScheme) var colorScheme
 
     func makeCoordinator() -> Coordinator {
@@ -316,7 +317,7 @@ struct RichTextEditor: UIViewRepresentable {
         textView.keyboardDismissMode = .interactive
         textView.font = UIFont.systemFont(ofSize: activeFontSize.rawValue)
         textView.textColor = UIColor.label  // Set default to dynamic label color
-        textView.textContainerInset = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+        textView.textContainerInset = .zero
         textView.attributedText = text
         textView.textStorage.delegate = context.coordinator
         textView.allowsEditingTextAttributes = false
@@ -1248,6 +1249,12 @@ struct RichTextEditor: UIViewRepresentable {
 
             // Notify the text storage that attributes changed to trigger a layout update
             textView.textStorage.edited(.editedAttributes, range: range, changeInLength: 0)
+
+            if let linkedTodoID = TodoTextAttributes.linkedTodoID(from: checkbox.checkboxID) {
+                parent.onToggleLinkedTodo(linkedTodoID)
+                isProgrammaticUpdate = false
+                return false
+            }
 
             // Add a marker attribute to force change detection
             // since NSAttributedString.isEqual won't detect checkbox state changes

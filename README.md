@@ -61,6 +61,12 @@ Just a clean, focused space for your thoughts.
 
 ## 📝 Changelog
 
+### 1.6.0
+- Improved support on macOS & iOS 27.
+- Improved reopening of notes & todos in edge cases.
+- Redesigned Todos view.
+- Fixed 'insert date / time' not properly working to insert to the titlebar.
+
 ### 1.5.2
 - Added:
   - Sorting to todo list.

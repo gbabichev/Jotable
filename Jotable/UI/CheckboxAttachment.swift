@@ -108,9 +108,10 @@ class CheckboxTextAttachment: NSTextAttachment {
     // Compute checkbox image on-demand without storing
     private nonisolated func computeCheckboxImage(size: CGSize) -> UIImage? {
         let systemName = isChecked ? "checkmark.square.fill" : "square"
+        let isLinkedTodo = checkboxID.hasPrefix("com.jotable.linkedTodoCheckbox:")
 
         // Snap to whole pixels to avoid blurry rendering when fonts are fractional
-        let snappedSide = max(10, floor(size.width))
+        let snappedSide = max(10, floor(size.height))
         let config = UIImage.SymbolConfiguration(pointSize: snappedSide - 2, weight: .regular, scale: .medium)
         guard let symbolImage = UIImage(systemName: systemName, withConfiguration: config) else {
             return nil
@@ -121,8 +122,43 @@ class CheckboxTextAttachment: NSTextAttachment {
 
         // Create a renderer and draw the tinted symbol
         let renderer = UIGraphicsImageRenderer(size: size)
-        let newImage = renderer.image { context in
-            tintedSymbol.draw(in: CGRect(origin: .zero, size: size))
+        let newImage = renderer.image { _ in
+            let checkboxRect = CGRect(x: 0, y: 0, width: snappedSide, height: snappedSide)
+            tintedSymbol.draw(in: checkboxRect)
+
+            if isLinkedTodo,
+               let linkedSymbol = UIImage(
+                    systemName: "checklist",
+                    withConfiguration: UIImage.SymbolConfiguration(
+                        pointSize: snappedSide * 0.68,
+                        weight: .medium
+                    )
+               )?.withTintColor(
+                    isChecked ? .secondaryLabel : .systemBlue,
+                    renderingMode: .alwaysOriginal
+               ) {
+                let availableRect = CGRect(
+                    x: snappedSide + 3,
+                    y: 0,
+                    width: max(0, size.width - snappedSide - 3),
+                    height: snappedSide
+                )
+                let symbolSize = linkedSymbol.size
+                let scale = min(
+                    availableRect.width / max(symbolSize.width, 1),
+                    availableRect.height / max(symbolSize.height, 1)
+                )
+                let fittedSize = CGSize(
+                    width: symbolSize.width * scale,
+                    height: symbolSize.height * scale
+                )
+                linkedSymbol.draw(in: CGRect(
+                    x: availableRect.midX - fittedSize.width / 2,
+                    y: availableRect.midY - fittedSize.height / 2,
+                    width: fittedSize.width,
+                    height: fittedSize.height
+                ))
+            }
         }
 
         return newImage
@@ -159,7 +195,9 @@ class CheckboxTextAttachment: NSTextAttachment {
     // Override attachmentBounds to control the size and vertical alignment
     nonisolated override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: CGRect, glyphPosition position: CGPoint, characterIndex charIndex: Int) -> CGRect {
         let metrics = checkboxMetrics(for: lineFrag)
-        return CGRect(x: 0, y: metrics.baselineOffset, width: metrics.side, height: metrics.side)
+        let isLinkedTodo = checkboxID.hasPrefix("com.jotable.linkedTodoCheckbox:")
+        let width = isLinkedTodo ? metrics.side * 1.85 : metrics.side
+        return CGRect(x: 0, y: metrics.baselineOffset, width: width, height: metrics.side)
     }
 }
 
@@ -280,14 +318,15 @@ class CheckboxTextAttachment: NSTextAttachment {
     // Compute checkbox image on-demand without storing
     private nonisolated func computeCheckboxImage(size: NSSize) -> NSImage? {
         let systemName = isChecked ? "checkmark.square.fill" : "square"
+        let isLinkedTodo = checkboxID.hasPrefix("com.jotable.linkedTodoCheckbox:")
         let scale: CGFloat = 2.0  // Use 2x resolution for retina displays
 
 
         // Create a proper bitmap image with actual pixel data at 2x resolution
         if let symbolImage = NSImage(systemSymbolName: systemName, accessibilityDescription: nil) {
             // Create a bitmap representation at 2x resolution
-            let snappedSide = max(10, floor(size.width))
-            let pixelSize = NSSize(width: snappedSide * scale, height: snappedSide * scale)
+            let snappedSide = max(10, floor(size.height))
+            let pixelSize = NSSize(width: size.width * scale, height: size.height * scale)
             let bitmapRep = NSBitmapImageRep(
                 bitmapDataPlanes: nil,
                 pixelsWide: Int(pixelSize.width),
@@ -311,12 +350,56 @@ class CheckboxTextAttachment: NSTextAttachment {
             NSColor.clear.setFill()
             NSRect(origin: .zero, size: size).fill()
 
-            // Draw the symbol as a template, then colorize it with adaptive label color
-            symbolImage.draw(in: NSRect(origin: .zero, size: size), from: .zero, operation: .sourceOver, fraction: 1.0)
+            // Draw and tint the checkbox first.
+            symbolImage.draw(
+                in: NSRect(x: 0, y: 0, width: snappedSide, height: snappedSide),
+                from: .zero,
+                operation: .sourceOver,
+                fraction: 1.0
+            )
 
-            // Apply the adaptive label color using source-in compositing
             NSColor.labelColor.setFill()
-            NSRect(origin: .zero, size: size).fill(using: .sourceIn)
+            NSRect(x: 0, y: 0, width: snappedSide, height: snappedSide).fill(using: .sourceIn)
+
+            // Render the wider checklist symbol with a native symbol configuration
+            // and preserve its aspect ratio instead of stretching it into the slot.
+            if isLinkedTodo,
+               let linkedSymbol = NSImage(
+                    systemSymbolName: "checklist",
+                    accessibilityDescription: "Linked todo"
+               )?.withSymbolConfiguration(
+                    NSImage.SymbolConfiguration(
+                        pointSize: snappedSide * 0.68,
+                        weight: .medium
+                    ).applying(.init(hierarchicalColor: isChecked ? .secondaryLabelColor : .controlAccentColor))
+               ) {
+                let availableRect = NSRect(
+                    x: snappedSide + 3,
+                    y: 0,
+                    width: max(0, size.width - snappedSide - 3),
+                    height: snappedSide
+                )
+                let symbolSize = linkedSymbol.size
+                let fitScale = min(
+                    availableRect.width / max(symbolSize.width, 1),
+                    availableRect.height / max(symbolSize.height, 1)
+                )
+                let fittedSize = NSSize(
+                    width: symbolSize.width * fitScale,
+                    height: symbolSize.height * fitScale
+                )
+                linkedSymbol.draw(
+                    in: NSRect(
+                        x: availableRect.midX - fittedSize.width / 2,
+                        y: availableRect.midY - fittedSize.height / 2,
+                        width: fittedSize.width,
+                        height: fittedSize.height
+                    ),
+                    from: .zero,
+                    operation: .sourceOver,
+                    fraction: isChecked ? 0.65 : 0.85
+                )
+            }
 
             NSGraphicsContext.restoreGraphicsState()
 
@@ -362,7 +445,9 @@ class CheckboxTextAttachment: NSTextAttachment {
     // Override attachmentBounds to control the size and vertical alignment
     nonisolated override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: NSRect, glyphPosition position: NSPoint, characterIndex charIndex: Int) -> NSRect {
         let metrics = checkboxMetrics(for: lineFrag)
-        return NSRect(x: 0, y: metrics.baselineOffset, width: metrics.side, height: metrics.side)
+        let isLinkedTodo = checkboxID.hasPrefix("com.jotable.linkedTodoCheckbox:")
+        let width = isLinkedTodo ? metrics.side * 2.0 : metrics.side
+        return NSRect(x: 0, y: metrics.baselineOffset, width: width, height: metrics.side)
     }
 }
 

@@ -539,6 +539,7 @@ struct RichTextEditor: NSViewRepresentable {
     var minimumExternalHeight: CGFloat = 0
     var focusAtEndRequest: UUID?
     var onAddSelectedTextToTodo: (TodoCreationRequest) -> Void = { _ in }
+    var onToggleLinkedTodo: (String) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -1607,6 +1608,12 @@ struct RichTextEditor: NSViewRepresentable {
             }
 
             textView.layoutManager?.invalidateDisplay(forCharacterRange: effectiveRange)
+
+            if let linkedTodoID = TodoTextAttributes.linkedTodoID(from: attachment.checkboxID) {
+                parent.onToggleLinkedTodo(linkedTodoID)
+                isProgrammaticUpdate = false
+                return
+            }
 
             // Add a marker attribute to force change detection
             // since NSAttributedString.isEqual won't detect checkbox state changes

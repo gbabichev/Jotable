@@ -366,6 +366,22 @@ private struct NoteEditorDocumentView: View {
         }
     }
 
+    private func toggleLinkedTodo(_ todoID: String) {
+        guard let todo = currentTodos.first(where: { $0.id.uuidString == todoID }) else { return }
+
+        todo.isCompleted.toggle()
+        todo.completedAt = todo.isCompleted ? Date() : nil
+        todo.updatedAt = Date()
+
+        do {
+            try modelContext.save()
+            applyTodoCompletionRenderingIfNeeded()
+            print("💾 Linked todo updated from note - CloudKit sync queued")
+        } catch {
+            print("❌ Failed to update linked todo: \(error)")
+        }
+    }
+
     private func normalizedTodoText(from selectedText: String) -> String {
         selectedText
             .replacingOccurrences(of: "\u{FFFC}", with: "Image")
@@ -411,12 +427,60 @@ private struct NoteEditorDocumentView: View {
         currentText.addAttribute(TodoTextAttributes.todoIDKey, value: todo.id.uuidString, range: range)
         currentText.removeAttribute(TodoTextAttributes.completionRenderedKey, range: range)
         currentText.removeAttribute(TodoTextAttributes.originalStrikethroughStyleKey, range: range)
+        _ = insertLinkedTodoCheckbox(
+            todoID: todo.id.uuidString,
+            isCompleted: false,
+            near: range.location,
+            in: currentText
+        )
         pendingPersistenceWorkItem?.cancel()
         pendingPersistenceWorkItem = nil
         pendingTodoSync = false
         richText = AttributedTextWrapper(value: currentText)
         lastSyncedRichText = currentText
         persist(currentText)
+    }
+
+    private func insertLinkedTodoCheckbox(
+        todoID: String,
+        isCompleted: Bool,
+        near characterLocation: Int,
+        in attributedString: NSMutableAttributedString
+    ) -> Bool {
+        let linkedCheckboxID = TodoTextAttributes.linkedCheckboxID(for: todoID)
+        let fullRange = NSRange(location: 0, length: attributedString.length)
+        var alreadyExists = false
+        attributedString.enumerateAttribute(.attachment, in: fullRange) { value, _, stop in
+            if let checkbox = value as? CheckboxTextAttachment,
+               checkbox.checkboxID == linkedCheckboxID {
+                alreadyExists = true
+                stop.pointee = true
+            }
+        }
+        guard !alreadyExists else { return false }
+
+        let string = attributedString.string as NSString
+        let safeLocation = min(max(characterLocation, 0), string.length)
+        let lineRange = string.lineRange(for: NSRange(location: safeLocation, length: 0))
+        let checkbox = CheckboxTextAttachment(
+            checkboxID: linkedCheckboxID,
+            isChecked: isCompleted,
+            fontPointSize: activeFontSize.rawValue
+        )
+        let insertion = NSMutableAttributedString(attachment: checkbox)
+        #if os(macOS)
+        insertion.append(NSAttributedString(
+            string: " ",
+            attributes: [.font: NSFont.systemFont(ofSize: activeFontSize.rawValue)]
+        ))
+        #else
+        insertion.append(NSAttributedString(
+            string: " ",
+            attributes: [.font: UIFont.systemFont(ofSize: activeFontSize.rawValue)]
+        ))
+        #endif
+        attributedString.insert(insertion, at: lineRange.location)
+        return true
     }
 
     private func richTextEditorView(minimumExternalHeight: CGFloat = 0) -> some View {
@@ -463,7 +527,8 @@ private struct NoteEditorDocumentView: View {
             usesExternalScrolling: true,
             minimumExternalHeight: minimumExternalHeight,
             focusAtEndRequest: focusBodyAtEndRequest,
-            onAddSelectedTextToTodo: createTodoFromSelection
+            onAddSelectedTextToTodo: createTodoFromSelection,
+            onToggleLinkedTodo: toggleLinkedTodo
         )
         #else
         return RichTextEditor(
@@ -487,7 +552,8 @@ private struct NoteEditorDocumentView: View {
             resetColorTrigger: $resetColorTrigger,
             linkEditRequest: $linkEditRequest,
             externalUpdateToken: externalContentUpdateToken,
-            onAddSelectedTextToTodo: createTodoFromSelection
+            onAddSelectedTextToTodo: createTodoFromSelection,
+            onToggleLinkedTodo: toggleLinkedTodo
         )
         #endif
     }
@@ -881,10 +947,57 @@ private struct NoteEditorDocumentView: View {
 
         let rendered = NSMutableAttributedString(attributedString: richText.value)
         var changed = false
+
+        var todoAnchors: [String: Int] = [:]
+        let initialRange = NSRange(location: 0, length: rendered.length)
+        rendered.enumerateAttribute(TodoTextAttributes.todoIDKey, in: initialRange, options: []) { value, range, _ in
+            guard let todoID = value as? String,
+                  range.length > 0 else {
+                return
+            }
+            todoAnchors[todoID] = min(todoAnchors[todoID] ?? range.location, range.location)
+        }
+
+        for (todoID, anchor) in todoAnchors.sorted(by: { $0.value > $1.value }) {
+            guard let isCompleted = completionByID[todoID] else { continue }
+            if insertLinkedTodoCheckbox(
+                todoID: todoID,
+                isCompleted: isCompleted,
+                near: anchor,
+                in: rendered
+            ) {
+                changed = true
+            }
+        }
+
+        let checkboxScanRange = NSRange(location: 0, length: rendered.length)
+        var linkedCheckboxes: [(range: NSRange, todoID: String, checkbox: CheckboxTextAttachment)] = []
+        rendered.enumerateAttribute(.attachment, in: checkboxScanRange, options: []) { value, range, _ in
+            guard let checkbox = value as? CheckboxTextAttachment,
+                  let todoID = TodoTextAttributes.linkedTodoID(from: checkbox.checkboxID) else {
+                return
+            }
+            linkedCheckboxes.append((range, todoID, checkbox))
+        }
+
+        for linkedCheckbox in linkedCheckboxes {
+            guard let isCompleted = completionByID[linkedCheckbox.todoID],
+                  linkedCheckbox.checkbox.isChecked != isCompleted else {
+                continue
+            }
+            let replacement = CheckboxTextAttachment(
+                checkboxID: linkedCheckbox.checkbox.checkboxID,
+                isChecked: isCompleted,
+                fontPointSize: linkedCheckbox.checkbox.fontPointSize
+            )
+            rendered.addAttribute(.attachment, value: replacement, range: linkedCheckbox.range)
+            changed = true
+        }
+
         let fullRange = NSRange(location: 0, length: rendered.length)
 
         var markedRanges: [(todoID: String, range: NSRange)] = []
-        richText.value.enumerateAttribute(TodoTextAttributes.todoIDKey, in: fullRange, options: []) { value, range, _ in
+        rendered.enumerateAttribute(TodoTextAttributes.todoIDKey, in: fullRange, options: []) { value, range, _ in
             guard let todoID = value as? String,
                   range.length > 0 else {
                 return
