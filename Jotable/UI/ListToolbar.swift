@@ -5,13 +5,13 @@ struct ListToolbar: View {
     @Binding var insertDashTrigger: UUID?
     @Binding var insertBulletTrigger: UUID?
     @Binding var insertNumberingTrigger: UUID?
-    @Binding var dateInsertionRequest: DateInsertionRequest?
     @Binding var dateInsertionFormat: DateInsertionFormat
-    @Binding var timeInsertionRequest: TimeInsertionRequest?
     @Binding var timeInsertionFormat: TimeInsertionFormat
     @Binding var showingAddURLDialog: Bool
     @Binding var tempURLData: (String, String)?
     @Binding var showingPasswordGenerator: Bool
+    let insertDate: (DateInsertionFormat) -> Void
+    let insertTime: (TimeInsertionFormat) -> Void
 
     var body: some View {
 #if os(macOS)
@@ -89,7 +89,7 @@ struct ListToolbar: View {
                 ForEach(DateInsertionFormat.allCases) { format in
                     Button {
                         dateInsertionFormat = format
-                        dateInsertionRequest = DateInsertionRequest(format: format)
+                        insertDate(format)
                     } label: {
                         Text(format.formattedDate(from: currentDate))
                     }
@@ -103,7 +103,7 @@ struct ListToolbar: View {
                 ForEach(TimeInsertionFormat.allCases) { format in
                     Button {
                         timeInsertionFormat = format
-                        timeInsertionRequest = TimeInsertionRequest(format: format)
+                        insertTime(format)
                     } label: {
                         Text(format.formattedTime(from: currentTime))
                     }

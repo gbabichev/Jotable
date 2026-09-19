@@ -536,6 +536,8 @@ struct RichTextEditor: NSViewRepresentable {
     @Binding var pastePlaintextTrigger: UUID?
     var externalUpdateToken: UUID?
     var usesExternalScrolling = false
+    var minimumExternalHeight: CGFloat = 0
+    var focusAtEndRequest: UUID?
     var onAddSelectedTextToTodo: (TodoCreationRequest) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
@@ -653,7 +655,7 @@ struct RichTextEditor: NSViewRepresentable {
         let textHeight = layoutManager.usedRect(for: textContainer).height
         let verticalInsets = textView.textContainerInset.height * 2
         let height = ceil(textHeight + verticalInsets)
-        let fittedHeight = max(height, 1)
+        let fittedHeight = max(height, minimumExternalHeight, 1)
 
         // An externally scrolling text view must keep its AppKit document view
         // in lockstep with the size SwiftUI assigns to the representable.
@@ -679,7 +681,8 @@ struct RichTextEditor: NSViewRepresentable {
             plainTextInsertionRequest?.id != context.coordinator.lastPlainTextInsertionRequest?.id ||
             presentFormatMenuTrigger != context.coordinator.lastFormatMenuTrigger ||
             resetColorTrigger != context.coordinator.lastResetColorTrigger ||
-            pastePlaintextTrigger != context.coordinator.lastPlaintextPasteTrigger
+            pastePlaintextTrigger != context.coordinator.lastPlaintextPasteTrigger ||
+            focusAtEndRequest != context.coordinator.lastFocusAtEndRequest
         let hasExternalDocumentUpdate = externalUpdateToken != context.coordinator.lastExternalUpdateToken
 
         if !hasPendingEditorCommand && !hasExternalDocumentUpdate &&
@@ -862,6 +865,16 @@ struct RichTextEditor: NSViewRepresentable {
             }
         }
 
+        if focusAtEndRequest != context.coordinator.lastFocusAtEndRequest {
+            context.coordinator.lastFocusAtEndRequest = focusAtEndRequest
+            if focusAtEndRequest != nil {
+                textView.window?.makeFirstResponder(textView)
+                let end = textView.textStorage?.length ?? textView.string.utf16.count
+                textView.setSelectedRange(NSRange(location: end, length: 0))
+                context.coordinator.applyTypingAttributes(to: textView)
+            }
+        }
+
         // Note: Don't sync color state here during updateNSView - it gets called constantly
         // during the view render cycle and causes feedback loops. Only sync in textDidChange
         // and textViewDidChangeSelection which are user-triggered events.
@@ -903,6 +916,7 @@ struct RichTextEditor: NSViewRepresentable {
         var lastUpdateNSViewTime: Date = .distantPast
         var lastUpdateNSViewText: NSAttributedString = NSAttributedString()
         var lastExternalUpdateToken: UUID?
+        var lastFocusAtEndRequest: UUID?
 
         private func pushTextToParent(_ text: NSAttributedString) {
             let snapshot = NSAttributedString(attributedString: text)

@@ -102,13 +102,13 @@ struct NoteEditorView: View, Equatable {
                     insertDashTrigger: $insertDashTrigger,
                     insertBulletTrigger: $insertBulletTrigger,
                     insertNumberingTrigger: $insertNumberingTrigger,
-                    dateInsertionRequest: $dateInsertionRequest,
                     dateInsertionFormat: $dateInsertionFormat,
-                    timeInsertionRequest: $timeInsertionRequest,
                     timeInsertionFormat: $timeInsertionFormat,
                     showingAddURLDialog: $showingAddURLDialog,
                     tempURLData: $tempURLData,
-                    showingPasswordGenerator: $showingPasswordGenerator
+                    showingPasswordGenerator: $showingPasswordGenerator,
+                    insertDate: insertDate,
+                    insertTime: insertTime
                 )
             }
 
@@ -127,7 +127,61 @@ struct NoteEditorView: View, Equatable {
             }
         }
     }
+
+    private func insertDate(_ format: DateInsertionFormat) {
+        guard !insertTextAtCurrentCursor(format.formattedDate()) else { return }
+        dateInsertionRequest = DateInsertionRequest(format: format)
+    }
+
+    private func insertTime(_ format: TimeInsertionFormat) {
+        guard !insertTextAtCurrentCursor(format.formattedTime()) else { return }
+        timeInsertionRequest = TimeInsertionRequest(format: format)
+    }
+
+    /// Uses the platform text system so insertion follows the actual cursor,
+    /// whether it currently belongs to the title or the rich-text body.
+    private func insertTextAtCurrentCursor(_ text: String) -> Bool {
+        #if os(macOS)
+        guard let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
+              textView.isEditable else {
+            return false
+        }
+
+        textView.insertText(text, replacementRange: textView.selectedRange())
+        return true
+        #else
+        guard let window = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow),
+              let responder = window.firstResponderDescendant(),
+              let textInput = responder as? UIKeyInput else {
+            return false
+        }
+
+        textInput.insertText(text)
+        return true
+        #endif
+    }
 }
+
+#if os(iOS)
+private extension UIView {
+    func firstResponderDescendant() -> UIView? {
+        if isFirstResponder {
+            return self
+        }
+
+        for subview in subviews {
+            if let responder = subview.firstResponderDescendant() {
+                return responder
+            }
+        }
+
+        return nil
+    }
+}
+#endif
 
 private struct NoteDocumentSnapshot: Equatable {
     let plainText: String
@@ -208,6 +262,8 @@ private struct NoteEditorDocumentView: View {
     @Binding var showingPasswordGenerator: Bool
     @State private var draftTitle: String?
     @State private var headerHeight: CGFloat = 0
+    @State private var editorLayoutHeight: CGFloat = 0
+    @State private var focusBodyAtEndRequest: UUID?
     @State private var lastSyncedRichText: NSAttributedString?
     @State private var skipNextAttributedContentChange = false
     @State private var isLoadingContent = false
@@ -363,7 +419,7 @@ private struct NoteEditorDocumentView: View {
         persist(currentText)
     }
 
-    private var richTextEditorView: some View {
+    private func richTextEditorView(minimumExternalHeight: CGFloat = 0) -> some View {
         let textBinding = Binding(
             get: { richText.value },
             set: { newValue in
@@ -405,6 +461,8 @@ private struct NoteEditorDocumentView: View {
             pastePlaintextTrigger: $pastePlaintextTrigger,
             externalUpdateToken: externalContentUpdateToken,
             usesExternalScrolling: true,
+            minimumExternalHeight: minimumExternalHeight,
+            focusAtEndRequest: focusBodyAtEndRequest,
             onAddSelectedTextToTodo: createTodoFromSelection
         )
         #else
@@ -441,11 +499,33 @@ private struct NoteEditorDocumentView: View {
             // edge effect can track the document. The embedded AppKit editor
             // expands to its text content instead of scrolling independently.
             GeometryReader { proxy in
+                let minimumEditorHeight = max(proxy.size.height - headerHeight, 1)
+                let needsReadingBuffer = editorLayoutHeight > minimumEditorHeight + 1
+
                 ScrollView {
-                    richTextEditorView
+                    VStack(spacing: 0) {
+                        richTextEditorView(
+                            minimumExternalHeight: minimumEditorHeight
+                        )
                         .frame(width: max(proxy.size.width - 32, 1), alignment: .leading)
                         .padding(.horizontal, 16)
-                        .padding(.bottom, max(proxy.size.height * 0.35, 120))
+                        .onGeometryChange(for: CGFloat.self) { geometry in
+                            geometry.size.height
+                        } action: { height in
+                            editorLayoutHeight = height
+                        }
+
+                        if needsReadingBuffer {
+                            Color.clear
+                                .frame(maxWidth: .infinity)
+                                .frame(height: max(proxy.size.height * 0.35, 120))
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    focusBodyAtEndRequest = UUID()
+                                }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .scrollEdgeEffectStyle(.soft, for: .top)
                 .safeAreaBar(edge: .top, spacing: 0) {
@@ -482,7 +562,7 @@ private struct NoteEditorDocumentView: View {
 
                         //Divider()
 
-                        richTextEditorView
+                        richTextEditorView()
                             .frame(maxWidth: .infinity)
                             .frame(minHeight: max(proxy.size.height - headerHeight - 12, 0))
                             .padding(.horizontal)
