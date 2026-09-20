@@ -1092,6 +1092,7 @@ struct ContentView: View {
                 itemID: selectedItem.id,
                 pastePlaintextTrigger: $pastePlaintextTrigger,
                 isEditorActive: $isEditorActive,
+                isEditorExpanded: $isEditorExpanded,
                 passwordGeneratorTargetNoteID: $passwordGeneratorTargetNoteID,
                 onCategoryAssignment: prepareSelectionForCategoryAssignment
             )
@@ -1191,7 +1192,10 @@ struct ContentView: View {
         }
         .toolbar {
             if canExpandEditor && !isViewingTodoList && !isViewingTrash {
-                ToolbarItem(id: "contentView.editorFocus", placement: .primaryAction) {
+                ToolbarItem(
+                    id: "contentView.editorFocus",
+                    placement: isEditorExpanded ? .navigation : .primaryAction
+                ) {
                     Button {
                         setEditorExpanded(!isEditorExpanded)
                     } label: {

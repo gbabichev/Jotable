@@ -14,7 +14,7 @@ struct NoteEditorView: View, Equatable {
     #if os(macOS)
     @Binding var pastePlaintextTrigger: UUID?
     @Binding var isEditorActive: Bool
-    @State private var isEditorExpanded = false
+    @Binding var isEditorExpanded: Bool
     #else
     @State private var pastePlaintextTrigger: UUID?
     @Binding var isEditorActive: Bool
@@ -96,7 +96,7 @@ struct NoteEditorView: View, Equatable {
             }
 #endif
 
-            ToolbarItem(id: "noteEditor.insert", placement: .primaryAction) {
+            ToolbarItem(id: "noteEditor.insert", placement: editorToolbarPlacement) {
                 ListToolbar(
                     insertUncheckedCheckboxTrigger: $insertUncheckedCheckboxTrigger,
                     insertDashTrigger: $insertDashTrigger,
@@ -112,7 +112,7 @@ struct NoteEditorView: View, Equatable {
                 )
             }
 
-            ToolbarItem(id: "noteEditor.format", placement: .primaryAction) {
+            ToolbarItem(id: "noteEditor.format", placement: editorToolbarPlacement) {
                 FontToolbar(
                     activeColor: $activeColor,
                     activeHighlighter: $activeHighlighter,
@@ -126,6 +126,14 @@ struct NoteEditorView: View, Equatable {
                 )
             }
         }
+    }
+
+    private var editorToolbarPlacement: ToolbarItemPlacement {
+        #if os(macOS)
+        isEditorExpanded ? .navigation : .primaryAction
+        #else
+        .primaryAction
+        #endif
     }
 
     private func insertDate(_ format: DateInsertionFormat) {
