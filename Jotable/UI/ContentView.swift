@@ -8,7 +8,9 @@ import SwiftData
 import CoreData
 import LocalAuthentication
 import UniformTypeIdentifiers
-#if os(iOS)
+#if os(macOS)
+import AppKit
+#else
 import UIKit
 #endif
 
@@ -250,6 +252,14 @@ struct ContentView: View {
 
     private var openTodoCount: Int {
         visibleTodos.filter { !$0.isCompleted }.count
+    }
+
+    private var overdueTodoCount: Int {
+        let today = Calendar.current.startOfDay(for: Date())
+        return visibleTodos.filter { todo in
+            guard !todo.isCompleted, let dueDate = todo.dueDate else { return false }
+            return dueDate < today
+        }.count
     }
 
     private var filteredTodos: [TodoItem] {
@@ -878,31 +888,24 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 #if os(iOS)
-                List(selection: $selectedTodoIDs) {
-                    ForEach(filteredCompletedTodos) { todo in
-                        todoRow(for: todo)
+                if isEditing {
+                    List(selection: $selectedTodoIDs) {
+                        completedTodoListContent
                     }
-                    .onMove { offsets, destination in
-                        moveTodos(in: filteredCompletedTodos, from: offsets, to: destination)
+                    .contentMargins(.top, 0, for: .scrollContent)
+                    .listStyle(.plain)
+                    .scrollDismissesKeyboard(.interactively)
+                } else {
+                    List {
+                        completedTodoListContent
                     }
-                    .onDelete { offsets in
-                        deleteTodos(from: filteredCompletedTodos, offsets: offsets)
-                    }
+                    .contentMargins(.top, 0, for: .scrollContent)
+                    .listStyle(.plain)
+                    .scrollDismissesKeyboard(.interactively)
                 }
-                .contentMargins(.top, 0, for: .scrollContent)
-                .listStyle(.plain)
-                .scrollDismissesKeyboard(.interactively)
                 #else
                 List {
-                    ForEach(filteredCompletedTodos) { todo in
-                        todoRow(for: todo)
-                    }
-                    .onMove { offsets, destination in
-                        moveTodos(in: filteredCompletedTodos, from: offsets, to: destination)
-                    }
-                    .onDelete { offsets in
-                        deleteTodos(from: filteredCompletedTodos, offsets: offsets)
-                    }
+                    completedTodoListContent
                 }
                 .contentMargins(.top, 0, for: .scrollContent)
                 #endif
@@ -956,13 +959,23 @@ struct ContentView: View {
             }
             .scrollDismissesKeyboard(.interactively)
         } else {
-            List(selection: $selectedTodoIDs) {
-                todoListContent
+            if isEditing {
+                List(selection: $selectedTodoIDs) {
+                    todoListContent
+                }
+                .listStyle(.plain)
+                .listSectionSpacing(.compact)
+                .contentMargins(.top, 0, for: .scrollContent)
+                .scrollDismissesKeyboard(.interactively)
+            } else {
+                List {
+                    todoListContent
+                }
+                .listStyle(.plain)
+                .listSectionSpacing(.compact)
+                .contentMargins(.top, 0, for: .scrollContent)
+                .scrollDismissesKeyboard(.interactively)
             }
-            .listStyle(.plain)
-            .listSectionSpacing(.compact)
-            .contentMargins(.top, 0, for: .scrollContent)
-            .scrollDismissesKeyboard(.interactively)
         }
         #endif
     }
@@ -974,12 +987,21 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 #if os(iOS)
-                List(selection: $selectedTodoIDs) {
-                    openTodoListContent
+                if isEditing {
+                    List(selection: $selectedTodoIDs) {
+                        openTodoListContent
+                    }
+                    .contentMargins(.top, 0, for: .scrollContent)
+                    .listStyle(.plain)
+                    .scrollDismissesKeyboard(.interactively)
+                } else {
+                    List {
+                        openTodoListContent
+                    }
+                    .contentMargins(.top, 0, for: .scrollContent)
+                    .listStyle(.plain)
+                    .scrollDismissesKeyboard(.interactively)
                 }
-                .contentMargins(.top, 0, for: .scrollContent)
-                .listStyle(.plain)
-                .scrollDismissesKeyboard(.interactively)
                 #else
                 List {
                     openTodoListContent
@@ -1414,7 +1436,8 @@ struct ContentView: View {
                 count: openTodoCount,
                 color: nil,
                 isPrivate: false,
-                isHiddenFromHome: false
+                isHiddenFromHome: false,
+                warningCount: overdueTodoCount
             )
             .tag(SidebarSelection.todoList)
 
@@ -1578,6 +1601,19 @@ struct ContentView: View {
         }
         .onDelete { offsets in
             deleteTodos(from: filteredOpenTodos, offsets: offsets)
+        }
+    }
+
+    @ViewBuilder
+    private var completedTodoListContent: some View {
+        ForEach(filteredCompletedTodos) { todo in
+            todoRow(for: todo)
+        }
+        .onMove { offsets, destination in
+            moveTodos(in: filteredCompletedTodos, from: offsets, to: destination)
+        }
+        .onDelete { offsets in
+            deleteTodos(from: filteredCompletedTodos, offsets: offsets)
         }
     }
 
@@ -3426,6 +3462,7 @@ struct CategoryRowView: View {
     let color: String?
     let isPrivate: Bool
     let isHiddenFromHome: Bool
+    var warningCount: Int = 0
 
     var body: some View {
         HStack {
@@ -3454,6 +3491,14 @@ struct CategoryRowView: View {
 
             Spacer()
 
+            if warningCount > 0 {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .accessibilityLabel("\(warningCount) overdue \(warningCount == 1 ? "todo" : "todos")")
+                    .help("\(warningCount) overdue \(warningCount == 1 ? "todo" : "todos")")
+            }
+
             Text("\(count)")
                 .foregroundColor(.secondary)
                 .font(.caption)
@@ -3463,6 +3508,10 @@ struct CategoryRowView: View {
 }
 
 struct TodoRowView: View {
+    #if os(iOS)
+    @Environment(\.editMode) private var editMode
+    #endif
+
     let todo: TodoItem
     let sourceTitle: String
     let sourceCategoryName: String?
@@ -3479,6 +3528,8 @@ struct TodoRowView: View {
     @State private var draftDueDate = Date()
     @State private var draftPriority: TodoPriority = .normal
     @State private var isInfoPresented = false
+    @State private var isEditingText = false
+    @State private var originalText = ""
     @FocusState private var isTextFocused: Bool
 
     private var sourceLabel: String {
@@ -3509,24 +3560,43 @@ struct TodoRowView: View {
                 .foregroundStyle(todo.isCompleted ? .secondary : .primary)
                 .strikethrough(todo.isCompleted)
                 .lineLimit(3)
-        } else {
+        } else if isEditingText {
             TextField("Todo", text: $draftText, axis: .vertical)
                 .font(.body)
                 .foregroundStyle(todo.isCompleted ? .secondary : .primary)
                 .strikethrough(todo.isCompleted)
                 .lineLimit(1...3)
-                .textFieldStyle(.plain)
+                .textFieldStyle(.roundedBorder)
                 .focused($isTextFocused)
                 .onSubmit {
-                    commitStandaloneEdit()
+                    finishStandaloneEdit()
                 }
                 .onChange(of: isTextFocused) { _, isFocused in
-                    if !isFocused {
-                        commitStandaloneEdit()
+                    if !isFocused && isEditingText {
+                        finishStandaloneEdit()
                     }
                 }
-                #if os(iOS)
-                .textInputAutocapitalization(.sentences)
+                #if os(macOS)
+                .background {
+                    MacClickOutsideMonitor {
+                        finishStandaloneEdit()
+                    }
+                }
+                .onExitCommand {
+                    cancelStandaloneEdit()
+                }
+                #endif
+        } else {
+            Text(todo.text)
+                .font(.body)
+                .foregroundStyle(todo.isCompleted ? .secondary : .primary)
+                .strikethrough(todo.isCompleted)
+                .lineLimit(3)
+                #if os(macOS)
+                .onTapGesture(count: 2) {
+                    beginStandaloneEdit()
+                }
+                .help("Double-click to edit")
                 #endif
         }
     }
@@ -3574,10 +3644,11 @@ struct TodoRowView: View {
 
     private var infoButton: some View {
         Button {
-            if !isInfoPresented {
-                syncMetadataDrafts()
+            if isInfoPresented {
+                isInfoPresented = false
+            } else {
+                presentTodoDetails()
             }
-            isInfoPresented.toggle()
         } label: {
             Image(systemName: "info.circle")
                 .font(.body)
@@ -3586,8 +3657,8 @@ struct TodoRowView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .accessibilityLabel("Todo info")
-        .help("Show todo dates")
+        .accessibilityLabel("Todo details")
+        .help("Show todo details")
         .popover(isPresented: $isInfoPresented) {
             todoInfoPopover
                 #if os(iOS)
@@ -3604,8 +3675,27 @@ struct TodoRowView: View {
 
     private var todoInfoPopover: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Todo Info")
+            Text("Todo Details")
                 .font(.headline)
+
+            if !isLinkedToNote {
+                TextField("Todo", text: $draftText, axis: .vertical)
+                    .lineLimit(1...3)
+                    #if os(iOS)
+                    .textFieldStyle(.plain)
+                    .textInputAutocapitalization(.sentences)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .stroke(.secondary.opacity(0.28), lineWidth: 0.5)
+                    }
+                    #else
+                    .textFieldStyle(.roundedBorder)
+                    #endif
+
+                Divider()
+            }
 
             VStack(alignment: .leading, spacing: 10) {
                 Picker("Priority", selection: $draftPriority) {
@@ -3615,11 +3705,30 @@ struct TodoRowView: View {
                 }
                 .pickerStyle(.segmented)
 
+                #if os(macOS)
+                SettingsRow("Due Date") {
+                    Toggle("", isOn: $hasDueDate)
+                        .toggleStyle(.switch)
+                }
+                #else
                 Toggle("Due Date", isOn: $hasDueDate)
+                #endif
 
                 if hasDueDate {
                     DatePicker("Due", selection: $draftDueDate, displayedComponents: .date)
+                        #if os(macOS)
+                        .datePickerStyle(.graphical)
+                        .labelsHidden()
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(.separator.opacity(0.55), lineWidth: 0.5)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, 4)
+                        #else
                         .datePickerStyle(.compact)
+                        #endif
                 }
             }
 
@@ -3641,7 +3750,7 @@ struct TodoRowView: View {
         #if os(iOS)
         .frame(maxWidth: .infinity, alignment: .leading)
         #else
-        .frame(minWidth: 280, alignment: .leading)
+        .frame(minWidth: 320, alignment: .leading)
         #endif
     }
 
@@ -3728,6 +3837,14 @@ struct TodoRowView: View {
                 rowContent
                     .help(sourceHelp)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    #if os(iOS)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if editMode?.wrappedValue.isEditing != true {
+                            presentTodoDetails()
+                        }
+                    }
+                    #endif
             }
 
             infoButton
@@ -3759,6 +3876,41 @@ struct TodoRowView: View {
         .onChange(of: draftPriority) { _, _ in
             commitMetadataEdit()
         }
+        .onChange(of: isInfoPresented) { _, isPresented in
+            if !isPresented {
+                commitStandaloneEdit()
+            }
+        }
+    }
+
+    private func beginStandaloneEdit() {
+        guard !isLinkedToNote else { return }
+        originalText = todo.text
+        draftText = todo.text
+        isEditingText = true
+        DispatchQueue.main.async {
+            isTextFocused = true
+        }
+    }
+
+    private func presentTodoDetails() {
+        syncMetadataDrafts()
+        draftText = todo.text
+        isInfoPresented = true
+    }
+
+    private func finishStandaloneEdit() {
+        guard isEditingText else { return }
+        commitStandaloneEdit()
+        isEditingText = false
+        isTextFocused = false
+    }
+
+    private func cancelStandaloneEdit() {
+        guard isEditingText else { return }
+        draftText = originalText
+        isEditingText = false
+        isTextFocused = false
     }
 
     private func commitStandaloneEdit() {
@@ -4103,6 +4255,73 @@ private struct CloudSyncToolbarIndicator: View {
 }
 
 #if os(macOS)
+private struct MacClickOutsideMonitor: NSViewRepresentable {
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        context.coordinator.monitoredView = view
+        context.coordinator.startMonitoring()
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.monitoredView = nsView
+        context.coordinator.action = action
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.stopMonitoring()
+    }
+
+    final class Coordinator {
+        weak var monitoredView: NSView?
+        var action: () -> Void
+        private var eventMonitor: Any?
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        func startMonitoring() {
+            guard eventMonitor == nil else { return }
+            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+                guard let self,
+                      let monitoredView,
+                      let monitoredWindow = monitoredView.window else {
+                    return event
+                }
+
+                let clickedInside: Bool
+                if event.window === monitoredWindow {
+                    let localPoint = monitoredView.convert(event.locationInWindow, from: nil)
+                    clickedInside = monitoredView.bounds.contains(localPoint)
+                } else {
+                    clickedInside = false
+                }
+
+                if !clickedInside {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.action()
+                    }
+                }
+                return event
+            }
+        }
+
+        func stopMonitoring() {
+            if let eventMonitor {
+                NSEvent.removeMonitor(eventMonitor)
+                self.eventMonitor = nil
+            }
+        }
+    }
+}
+
 private extension View {
     func categoryPickerPresenter(isPresented: Binding<Bool>, selectedCategory: Binding<Category?>) -> some View {
         popover(

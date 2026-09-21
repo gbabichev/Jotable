@@ -69,11 +69,30 @@ struct AddTodoView: View {
                 }
                 .pickerStyle(.segmented)
 
+                #if os(macOS)
+                SettingsRow("Due Date") {
+                    Toggle("", isOn: $hasDueDate)
+                        .toggleStyle(.switch)
+                }
+                #else
                 Toggle("Due Date", isOn: $hasDueDate)
+                #endif
 
                 if hasDueDate {
                     DatePicker("Due", selection: $dueDate, displayedComponents: .date)
+                        #if os(macOS)
+                        .datePickerStyle(.graphical)
+                        .labelsHidden()
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(.separator.opacity(0.55), lineWidth: 0.5)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, 4)
+                        #else
                         .datePickerStyle(.compact)
+                        #endif
                 }
             }
             .padding(.horizontal, 20)
