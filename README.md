@@ -66,6 +66,8 @@ Just a clean, focused space for your thoughts.
 - Improved reopening of notes & todos in edge cases.
 - Redesigned Todos view.
 - Fixed 'insert date / time' not properly working to insert to the titlebar.
+- Improved linked todos. Notes now show an icon when a line is from a todo.
+- Fixed multi-select of Todo's not properly working.
 
 ### 1.5.2
 - Added:
