@@ -61,6 +61,10 @@ Just a clean, focused space for your thoughts.
 
 ## 📝 Changelog
 
+### 1.6.1
+- Fix iOS back navigation loop when restoring a hidden note
+- Improved CloudKit Sync
+
 ### 1.6.0
 - Improved support on macOS & iOS 27.
 - Improved reopening of notes & todos in edge cases.
