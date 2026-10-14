@@ -216,6 +216,14 @@ class SceneDelegate: NSObject, UIWindowSceneDelegate {
 
 @main
 struct JotableApp: App {
+    init() {
+        CloudSyncDiagnostics.startObserving()
+        // Start both mirroring stacks at launch. Bodies must be able to import
+        // even if the user stays in the note list and never opens an editor.
+        _ = Self.sharedModelContainer
+        _ = Self.sharedDocumentContainer
+    }
+
     #if os(macOS)
     @NSApplicationDelegateAdaptor(MacAppDelegate.self) var macAppDelegate
     #else

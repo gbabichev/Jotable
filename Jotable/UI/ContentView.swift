@@ -3030,23 +3030,6 @@ struct ContentView: View {
                         updateCloudSyncIndicator(for: eventIdentifier, hasEnded: eventHasEnded)
                     }
                 }
-
-                //print("📱 CloudKit Event: \(event.type)")
-
-                switch event.type {
-                case .setup:
-                    print("   ☁️ CloudKit setup completed")
-                case .import:
-                    print("   ⬇️ CloudKit import completed - Data imported from iCloud")
-                case .export:
-                    print("   ⬆️ CloudKit export completed - Data saved to iCloud")
-                @unknown default:
-                    print("   ❓ Unknown CloudKit event")
-                }
-
-                if let error = event.error {
-                    print("   ⚠️ CloudKit error: \(error.localizedDescription)")
-                }
             }
         }
     }
@@ -4157,21 +4140,6 @@ private struct CloudSyncStatusOverlay: View {
                 Task { @MainActor in
                     updateIndicator(for: eventIdentifier, hasEnded: eventHasEnded)
                 }
-            }
-
-            switch event.type {
-            case .setup:
-                print("   ☁️ CloudKit setup completed")
-            case .import:
-                print("   ⬇️ CloudKit import completed - Data imported from iCloud")
-            case .export:
-                print("   ⬆️ CloudKit export completed - Data saved to iCloud")
-            @unknown default:
-                print("   ❓ Unknown CloudKit event")
-            }
-
-            if let error = event.error {
-                print("   ⚠️ CloudKit error: \(error.localizedDescription)")
             }
         }
     }

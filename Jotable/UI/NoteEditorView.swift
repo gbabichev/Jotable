@@ -239,6 +239,12 @@ private struct NoteDocumentQueryBridge: View {
     }
 }
 
+// Native editors can publish a binding while SwiftUI is updating their view.
+// Buffer that snapshot without invalidating SwiftUI until the deferred update.
+private final class NoteEditorDraftBuffer {
+    var richText: NSAttributedString?
+}
+
 private struct NoteEditorDocumentView: View {
     @Bindable var item: Item
     @Environment(\.modelContext) private var modelContext
@@ -277,6 +283,8 @@ private struct NoteEditorDocumentView: View {
     @State private var isLoadingContent = false
     @State private var isApplyingTodoRendering = false
     @State private var pendingPersistenceWorkItem: DispatchWorkItem?
+    @State private var draftBuffer = NoteEditorDraftBuffer()
+    @State private var pendingBodyPersistence = false
     @State private var pendingTodoSync = false
     @State private var lastObservedDocumentUpdate: Date?
     @State private var lastLocalDocumentUpdate: Date?
@@ -676,7 +684,7 @@ private struct NoteEditorDocumentView: View {
         .onChange(of: draftTitle) { _, newTitle in
             guard let newTitle else { return }
             guard newTitle != item.title else { return }
-            schedulePersistence(of: richText.value, syncTodos: false)
+            schedulePersistence(of: richText.value, syncTodos: false, persistBody: false)
         }
         .onChange(of: richText) { _, newWrapper in
             if isLoadingContent {
@@ -689,6 +697,13 @@ private struct NoteEditorDocumentView: View {
         .onDisappear {
             flushPendingPersistence()
         }
+        #if os(macOS)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            // Quit can terminate the app before the debounce fires, without
+            // the editor disappearing or the scene entering the background.
+            flushPendingPersistence()
+        }
+        #endif
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase != .active {
                 flushPendingPersistence()
@@ -732,9 +747,9 @@ private struct NoteEditorDocumentView: View {
             return
         }
 
-        // Preserve an in-flight local keystroke. Its scheduled save is the
-        // user's newest edit and will produce a subsequent document revision.
-        guard pendingPersistenceWorkItem == nil else { return }
+        // Preserve an in-flight local body edit. A title-only save may still
+        // be pending while the remote body arrives, and must not block it.
+        guard !pendingBodyPersistence, draftBuffer.richText == nil else { return }
 
         let incoming: NSAttributedString
         if let data = snapshot.attributedContent,
@@ -760,15 +775,21 @@ private struct NoteEditorDocumentView: View {
     }
 
     private func scheduleRichTextStateSync(_ snapshot: NSAttributedString) {
+        // Keep the latest native edit available synchronously for quit or
+        // backgrounding, before SwiftUI's deferred state update has run.
+        draftBuffer.richText = snapshot
         DispatchQueue.main.async {
-            richText = AttributedTextWrapper(value: snapshot)
-            lastSyncedRichText = snapshot
+            guard let latestSnapshot = draftBuffer.richText else { return }
+            draftBuffer.richText = nil
+            richText = AttributedTextWrapper(value: latestSnapshot)
+            lastSyncedRichText = latestSnapshot
         }
     }
 
-    private func schedulePersistence(of attributedString: NSAttributedString, syncTodos: Bool) {
+    private func schedulePersistence(of attributedString: NSAttributedString, syncTodos: Bool, persistBody: Bool = true) {
         pendingPersistenceWorkItem?.cancel()
         pendingTodoSync = pendingTodoSync || syncTodos
+        pendingBodyPersistence = pendingBodyPersistence || persistBody
 
         let snapshot = NSAttributedString(attributedString: attributedString)
         let workItem = DispatchWorkItem {
@@ -779,19 +800,27 @@ private struct NoteEditorDocumentView: View {
     }
 
     private func flushPendingPersistence() {
-        guard pendingPersistenceWorkItem != nil else {
+        let hasUnsavedTitle = draftTitle.map { $0 != item.title } ?? false
+        guard pendingPersistenceWorkItem != nil || pendingBodyPersistence || draftBuffer.richText != nil || hasUnsavedTitle else {
             saveChanges()
+            saveDocumentChanges()
             return
         }
 
         pendingPersistenceWorkItem?.cancel()
         pendingPersistenceWorkItem = nil
-        persist(richText.value)
+        let snapshot = draftBuffer.richText ?? richText.value
+        if draftBuffer.richText != nil {
+            pendingTodoSync = true
+            pendingBodyPersistence = true
+            richText = AttributedTextWrapper(value: snapshot)
+            lastSyncedRichText = snapshot
+            draftBuffer.richText = nil
+        }
+        persist(snapshot)
     }
 
     private func persist(_ attributedString: NSAttributedString) {
-        let document = noteDocumentForEditing()
-        let archivedContent = archiveAttributedString(attributedString)
         let now = Date()
         var metadataChanged = false
         var persistenceTransaction = Transaction(animation: nil)
@@ -809,13 +838,21 @@ private struct NoteEditorDocumentView: View {
                     metadataChanged = true
                 }
             }
-            document.plainText = attributedString.string
-            document.attributedContent = archivedContent
-            document.updatedAt = now
-            lastLocalDocumentUpdate = now
-            lastObservedDocumentUpdate = now
+            // Metadata can arrive before its separately synced document.
+            // A title-only edit must not publish a newer empty body while
+            // that document is still downloading.
+            if pendingBodyPersistence {
+                let document = noteDocumentForEditing()
+                document.plainText = attributedString.string
+                document.attributedContent = archiveAttributedString(attributedString)
+                document.updatedAt = now
+                if saveDocumentChanges() {
+                    lastLocalDocumentUpdate = now
+                    lastObservedDocumentUpdate = now
+                    pendingBodyPersistence = false
+                }
+            }
             pendingPersistenceWorkItem = nil
-            saveDocumentChanges()
             if metadataChanged {
                 saveChanges()
             }
@@ -850,11 +887,14 @@ private struct NoteEditorDocumentView: View {
         return document
     }
 
-    private func saveDocumentChanges() {
+    @discardableResult
+    private func saveDocumentChanges() -> Bool {
         do {
             try JotableApp.sharedDocumentContainer.mainContext.save()
+            return true
         } catch {
-            print("❌ Failed to save note document: \(error.localizedDescription)")
+            CloudSyncDiagnostics.logSaveFailure(error, store: "documents")
+            return false
         }
     }
 
@@ -1205,6 +1245,7 @@ private struct NoteEditorDocumentView: View {
         do {
             try modelContext.save()
         } catch {
+            CloudSyncDiagnostics.logSaveFailure(error, store: "metadata")
         }
     }
 
