@@ -526,11 +526,16 @@ struct ContentView: View {
         .onChange(of: selectedItemIDs) { _, _ in
             if let preservedID = offListPreservedSelectionID,
                !selectedItemIDs.contains(preservedID) {
+                #if os(macOS)
+                // AppKit may clear a selection whose row is filtered out.
+                // On iOS, Back also clears selection; respect that navigation
+                // instead of immediately reopening the hidden note.
                 if selectedItemIDs.isEmpty,
                    allItems.contains(where: { $0.id == preservedID && !$0.isInTrash }) {
                     selectedItemIDs = [preservedID]
                     return
                 }
+                #endif
 
                 offListPreservedSelectionID = nil
             }
