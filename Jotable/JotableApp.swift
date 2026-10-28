@@ -216,6 +216,22 @@ class SceneDelegate: NSObject, UIWindowSceneDelegate {
 
 @main
 struct JotableApp: App {
+    #if DEBUG
+    // Use with a Development-signed build on both devices. This keeps the
+    // reproduction's local stores separate from the installed app's cache.
+    static let isLegacySyncTestMode = ProcessInfo.processInfo.arguments.contains("--legacy-sync-test")
+
+    private static var legacySyncTestDirectory: URL {
+        let directory = URL.applicationSupportDirectory.appending(path: "LegacySyncTest", directoryHint: .isDirectory)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            fatalError("Could not create legacy sync test directory: \(error)")
+        }
+        return directory
+    }
+    #endif
+
     init() {
         CloudSyncDiagnostics.startObserving()
         // Start both mirroring stacks at launch. Bodies must be able to import
@@ -237,11 +253,20 @@ struct JotableApp: App {
 
         do {
             let schema = Schema([Item.self, Category.self, TodoItem.self])
-            let config = ModelConfiguration(
+            var config = ModelConfiguration(
                 schema: schema,
                 isStoredInMemoryOnly: false,
                 cloudKitDatabase: .automatic
             )
+            #if DEBUG
+            if isLegacySyncTestMode {
+                config = ModelConfiguration(
+                    schema: schema,
+                    url: legacySyncTestDirectory.appending(path: "metadata.store"),
+                    cloudKitDatabase: .automatic
+                )
+            }
+            #endif
             let container = try ModelContainer(for: schema, configurations: [config])
             print("✅ Model container created successfully with CloudKit")
             return container
@@ -256,8 +281,13 @@ struct JotableApp: App {
     static let sharedDocumentContainer: ModelContainer = {
         do {
             let schema = Schema([NoteDocument.self])
-            let storeURL = URL.applicationSupportDirectory
+            var storeURL = URL.applicationSupportDirectory
                 .appending(path: "JotableDocuments.store")
+            #if DEBUG
+            if isLegacySyncTestMode {
+                storeURL = legacySyncTestDirectory.appending(path: "documents.store")
+            }
+            #endif
             let config = ModelConfiguration(
                 "JotableDocuments",
                 schema: schema,

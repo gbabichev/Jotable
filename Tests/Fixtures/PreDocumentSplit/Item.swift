@@ -1,0 +1,49 @@
+// Historical test fixture from befe5ef (before the NoteDocument split).
+//  Item.swift
+//  SimpleNote
+//
+//  Updated Item model with category relationship and creation date
+//
+
+import SwiftUI
+import SwiftData
+
+@Model
+final class Item {
+    var id: UUID = UUID()
+    var timestamp: Date = Date()      // Add default value
+    var createdAt: Date = Date()      // Add default value
+    var title: String = ""            // Add default value
+    var content: String = ""          // Plain text fallback
+
+    // Store attributed text as Data for rich formatting (includes checkboxes)
+    @Attribute(.externalStorage) var attributedContent: Data?
+
+    // Category relationship - already optional, good!
+    var category: Category?
+    var previousCategory: Category?
+    var trashedAt: Date?
+
+    @Relationship(deleteRule: .cascade, inverse: \TodoItem.sourceNote)
+    var todos: [TodoItem]? = []
+
+    init(timestamp: Date = Date(), title: String = "", content: String = "") {
+        let now = Date()
+        self.id = UUID()
+        self.timestamp = timestamp
+        self.createdAt = now
+        self.title = title
+        self.content = content
+        self.attributedContent = nil
+        self.category = nil
+        self.previousCategory = nil
+        self.trashedAt = nil
+        self.todos = []
+    }
+}
+
+extension Item {
+    var isInTrash: Bool {
+        trashedAt != nil
+    }
+}

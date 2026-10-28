@@ -54,4 +54,9 @@ enum CloudSyncDiagnostics {
         let error = error as NSError
         logger.error("Local save failed; store=\(store, privacy: .public) error=\(error.domain, privacy: .public)/\(error.code) details=\(String(reflecting: error), privacy: .private)")
     }
+
+    nonisolated static func logReadFailure(_ error: Error, store: String) {
+        let error = error as NSError
+        logger.error("Local read failed; store=\(store, privacy: .public) error=\(error.domain, privacy: .public)/\(error.code) details=\(String(reflecting: error), privacy: .private)")
+    }
 }

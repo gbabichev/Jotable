@@ -191,12 +191,6 @@ private extension UIView {
 }
 #endif
 
-private struct NoteDocumentSnapshot: Equatable {
-    let plainText: String
-    let attributedContent: Data?
-    let updatedAt: Date
-}
-
 // NoteEditorDocumentView must keep the metadata ModelContext for Item and
 // TodoItem. This child reads the separate document container and forwards value
 // snapshots, allowing CloudKit imports to refresh an already-mounted editor.
@@ -215,7 +209,7 @@ private struct NoteDocumentQueryBridge: View {
     }
 
     private var snapshot: NoteDocumentSnapshot? {
-        guard let document = documents.first else { return nil }
+        guard let document = NoteDocumentStore.latest(in: documents) else { return nil }
         return NoteDocumentSnapshot(
             plainText: document.plainText,
             attributedContent: document.attributedContent,
@@ -286,8 +280,8 @@ private struct NoteEditorDocumentView: View {
     @State private var draftBuffer = NoteEditorDraftBuffer()
     @State private var pendingBodyPersistence = false
     @State private var pendingTodoSync = false
-    @State private var lastObservedDocumentUpdate: Date?
-    @State private var lastLocalDocumentUpdate: Date?
+    @State private var lastObservedDocumentSnapshot: NoteDocumentSnapshot?
+    @State private var lastLocalDocumentSnapshot: NoteDocumentSnapshot?
     @State private var externalContentUpdateToken: UUID?
 #if !os(macOS)
     @State private var linkEditRequest: LinkEditContext?
@@ -713,12 +707,20 @@ private struct NoteEditorDocumentView: View {
 
 
     private func loadContentIfNeeded() {
-        let document = fetchNoteDocument()
-        if let document {
-            lastObservedDocumentUpdate = document.updatedAt
+        let document: NoteDocument?
+        do {
+            document = try NoteDocumentStore.fetch(
+                noteID: item.id.uuidString,
+                context: JotableApp.sharedDocumentContainer.mainContext
+            )
+        } catch {
+            CloudSyncDiagnostics.logReadFailure(error, store: "documents")
+            return
         }
-        let attributedData = document?.attributedContent ?? item.attributedContent
-        let plainText = document?.plainText ?? item.content
+        let snapshot = NoteDocumentSnapshot.resolve(item: item, document: document)
+        lastObservedDocumentSnapshot = document == nil ? nil : snapshot
+        let attributedData = snapshot.attributedContent
+        let plainText = snapshot.plainText
 
         if let data = attributedData, let attributed = unarchiveAttributedString(data) {
             if !attributed.isEqual(to: richText.value) {
@@ -738,12 +740,12 @@ private struct NoteEditorDocumentView: View {
     }
 
     private func applyDocumentSnapshot(_ snapshot: NoteDocumentSnapshot) {
-        guard snapshot.updatedAt != lastObservedDocumentUpdate else { return }
-        lastObservedDocumentUpdate = snapshot.updatedAt
+        guard snapshot != lastObservedDocumentSnapshot else { return }
+        lastObservedDocumentSnapshot = snapshot
 
         // Query notifications also include this editor's own writes. They are
         // acknowledgements, not remote edits, and must not reset the selection.
-        if snapshot.updatedAt == lastLocalDocumentUpdate {
+        if snapshot == lastLocalDocumentSnapshot {
             return
         }
 
@@ -842,14 +844,21 @@ private struct NoteEditorDocumentView: View {
             // A title-only edit must not publish a newer empty body while
             // that document is still downloading.
             if pendingBodyPersistence {
-                let document = noteDocumentForEditing()
-                document.plainText = attributedString.string
-                document.attributedContent = archiveAttributedString(attributedString)
-                document.updatedAt = now
-                if saveDocumentChanges() {
-                    lastLocalDocumentUpdate = now
-                    lastObservedDocumentUpdate = now
-                    pendingBodyPersistence = false
+                do {
+                    let document = try NoteDocumentStore.documentForEditing(
+                        item: item, context: JotableApp.sharedDocumentContainer.mainContext
+                    )
+                    document.plainText = attributedString.string
+                    document.attributedContent = archiveAttributedString(attributedString)
+                    document.updatedAt = now
+                    if saveDocumentChanges() {
+                        let snapshot = NoteDocumentSnapshot(document: document)
+                        lastLocalDocumentSnapshot = snapshot
+                        lastObservedDocumentSnapshot = snapshot
+                        pendingBodyPersistence = false
+                    }
+                } catch {
+                    CloudSyncDiagnostics.logReadFailure(error, store: "documents")
                 }
             }
             pendingPersistenceWorkItem = nil
@@ -858,33 +867,6 @@ private struct NoteEditorDocumentView: View {
             }
         }
 
-    }
-
-    private func fetchNoteDocument() -> NoteDocument? {
-        let noteID = item.id.uuidString
-        var descriptor = FetchDescriptor<NoteDocument>(
-            predicate: #Predicate { document in
-                document.noteID == noteID
-            },
-            sortBy: [SortDescriptor(\NoteDocument.updatedAt, order: .reverse)]
-        )
-        descriptor.fetchLimit = 1
-        return try? JotableApp.sharedDocumentContainer.mainContext.fetch(descriptor).first
-    }
-
-    private func noteDocumentForEditing() -> NoteDocument {
-        if let document = fetchNoteDocument() {
-            return document
-        }
-
-        let document = NoteDocument(
-            noteID: item.id.uuidString,
-            plainText: item.content,
-            attributedContent: item.attributedContent,
-            updatedAt: item.timestamp
-        )
-        JotableApp.sharedDocumentContainer.mainContext.insert(document)
-        return document
     }
 
     @discardableResult

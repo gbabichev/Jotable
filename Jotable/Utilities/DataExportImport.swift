@@ -68,7 +68,9 @@ enum DataExportImport {
         let todos = try context.fetch(todoDescriptor)
         let documentsByNoteID = Dictionary(
             documents.map { ($0.noteID, $0) },
-            uniquingKeysWith: { first, _ in first }
+            uniquingKeysWith: { first, second in
+                NoteDocumentStore.latest(in: [first, second])!
+            }
         )
 
         let exportedCategories: [ExportedCategory] = categories.enumerated().map { index, category in
@@ -89,13 +91,14 @@ enum DataExportImport {
         let exportedNotes: [ExportedNote] = notes.map { note in
             let categoryIndex = note.category.flatMap { categoryIndexMap[$0.persistentModelID] }
             let document = documentsByNoteID[note.id.uuidString]
-            let attributedBase64 = (document?.attributedContent ?? note.attributedContent)?.base64EncodedString()
+            let snapshot = NoteDocumentSnapshot.resolve(item: note, document: document)
+            let attributedBase64 = snapshot.attributedContent?.base64EncodedString()
 
             return ExportedNote(
                 title: note.title,
-                content: document?.plainText ?? note.content,
+                content: snapshot.plainText,
                 createdAt: note.createdAt,
-                timestamp: document?.updatedAt ?? note.timestamp,
+                timestamp: snapshot.updatedAt,
                 categoryIndex: categoryIndex,
                 attributedContentBase64: attributedBase64
             )

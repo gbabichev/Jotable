@@ -645,6 +645,14 @@ struct ContentView: View {
                         Label("Create Notes", systemImage: "doc.badge.plus")
                     }
 
+                    if JotableApp.isLegacySyncTestMode {
+                        Button {
+                            createLegacySyncTestNotes()
+                        } label: {
+                            Label("Create Legacy Sync Test Notes", systemImage: "clock.arrow.circlepath")
+                        }
+                    }
+
                     Button {
                         createDebugCategoriesWithNotes()
                     } label: {
@@ -2544,6 +2552,34 @@ struct ContentView: View {
     }
 
     #if DEBUG
+    private func createLegacySyncTestNotes() {
+        guard JotableApp.isLegacySyncTestMode else { return }
+        let category = Category(name: "Legacy Sync Test \(debugBatchName())")
+        modelContext.insert(category)
+        let oldDate = Date(timeIntervalSinceNow: -30 * 24 * 60 * 60)
+        let samples: [(String, String, Bool)] = [
+            ("Legacy plain text", "Original old-format plain text. Edit this body on Mac, then open it on iOS.", false),
+            ("Legacy rich text", "Original old-format rich text. Edit this body on iOS, then open it on Mac.", true),
+            ("Legacy large body", String(repeating: "Legacy content with formatting and multiple lines.\n", count: 4_000), true)
+        ]
+        for (title, content, rich) in samples {
+            let note = Item(timestamp: oldDate, title: title, content: content)
+            note.createdAt = oldDate
+            note.category = category
+            if rich {
+                let text = NSMutableAttributedString(attributedString: defaultAttributedContent(for: content))
+                text.addAttribute(.underlineStyle, value: 1, range: NSRange(location: 0, length: min(8, text.length)))
+                note.attributedContent = archiveDefaultAttributedContent(text)
+            }
+            // Deliberately insert Item only, exactly as pre-split notes were
+            // stored. Do not use createItem(), which creates a NoteDocument.
+            modelContext.insert(note)
+        }
+        saveDebugSeedData(successMessage: "Created legacy sync test notes (Item only)") {
+            sidebarSelection = .category(category)
+        }
+    }
+
     private func createDebugCategories() {
         let createdCategories = makeDebugCategories(
             count: Int.random(in: 3...6),
@@ -3944,7 +3980,7 @@ struct NoteRowView: View {
     }
 
     private var document: NoteDocument? {
-        documents.first
+        NoteDocumentStore.latest(in: documents)
     }
 
     private var bodyText: String {
