@@ -61,6 +61,10 @@ Just a clean, focused space for your thoughts.
 
 ## 📝 Changelog
 
+### 1.6.2
+- Improved iCloud Sync in certain edge case.
+- Implemented improved sync status dialog on Mac.
+
 ### 1.6.1
 - Fix iOS back navigation loop when restoring a hidden note
 - Improved CloudKit Sync

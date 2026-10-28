@@ -56,7 +56,7 @@
         "ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS": "NO",
         "CODE_SIGN_ENTITLEMENTS": "Jotable/Jotable.entitlements",
         "CODE_SIGN_STYLE": "Automatic",
-        "CURRENT_PROJECT_VERSION": "20",
+        "CURRENT_PROJECT_VERSION": "21",
         "DEAD_CODE_STRIPPING": "YES",
         "DEVELOPMENT_TEAM": "7GK58M2353",
         "ENABLE_APP_SANDBOX": "YES",
