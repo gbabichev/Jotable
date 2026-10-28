@@ -4132,91 +4132,122 @@ private struct TodoQueryBridge: View {
 // CloudKit events are intentionally observed below ContentView's state boundary.
 // Sync-status changes should update this overlay, not the window toolbar hierarchy.
 private struct CloudSyncStatusOverlay: View {
-    @State private var activeEventIDs: Set<UUID> = []
-    @State private var eventObserver: NSObjectProtocol?
-    @State private var isVisible = false
-    @State private var hideWorkItem: DispatchWorkItem?
+    private enum BadgeState: Equatable {
+        case idle, syncing, interrupted
+    }
+
+    @State private var status = CloudSyncStatus.shared
+    @State private var presentation: BadgeState = .idle
+    @State private var showingDetails = false
+    @State private var isHovered = false
+
+    private var requestedState: BadgeState {
+        if status.isBusy { return .syncing }
+        if status.hasFailure { return .interrupted }
+        return .idle
+    }
+
+    private var indicatorColor: Color {
+        switch presentation {
+        case .idle: .secondary
+        case .syncing: .accentColor
+        case .interrupted: .orange
+        }
+    }
 
     var body: some View {
         Color.clear
+            .allowsHitTesting(false)
             .overlay(alignment: .bottomLeading) {
-            // Keep the badge hierarchy stable and avoid live Material here.
-            // On macOS 27, refreshing a Material surface while SwiftData merges
-            // changes replays the window's ThinFilmBackground effect, including
-            // the native toolbar glass.
-            CloudSyncToolbarIndicator(isActive: isVisible)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.primary.opacity(0.08), in: Capsule())
-                .opacity(isVisible ? 1 : 0)
-                .accessibilityHidden(!isVisible)
-                .padding(16)
-        }
-        .allowsHitTesting(false)
-        .onAppear(perform: startObserving)
-        .onDisappear(perform: stopObserving)
-    }
-
-    private func startObserving() {
-        guard eventObserver == nil else { return }
-
-        eventObserver = NotificationCenter.default.addObserver(
-            forName: NSPersistentCloudKitContainer.eventChangedNotification,
-            object: nil,
-            queue: .main
-        ) { notification in
-            guard let event = notification.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
-                    as? NSPersistentCloudKitContainer.Event else {
-                return
-            }
-
-            if event.type == .import || event.type == .export {
-                let eventIdentifier = event.identifier
-                let eventHasEnded = event.endDate != nil
-                Task { @MainActor in
-                    updateIndicator(for: eventIdentifier, hasEnded: eventHasEnded)
+                // Keep one recognizable button; details are shown on demand.
+                Button {
+                    showingDetails.toggle()
+                } label: {
+                    Image(systemName: "icloud")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(indicatorColor)
+                        .frame(width: 32, height: 24)
+                        .padding(8)
+                        .background(Color.primary.opacity(isHovered ? 0.10 : 0.04), in: Capsule())
+                        .contentShape(Capsule())
                 }
+                .buttonStyle(.plain)
+                .onHover { isHovered = $0 }
+                .help(Text("\(status.message)\nClick for details"))
+                .accessibilityIdentifier("icloud-sync-status")
+                .accessibilityLabel("iCloud sync status")
+                .accessibilityValue(status.message)
+                .accessibilityHint("Show sync details")
+                .popover(isPresented: $showingDetails, arrowEdge: .bottom) {
+                    CloudSyncDetails(status: status)
+                }
+                .padding(16)
             }
+            .task(id: requestedState) {
+                let target = requestedState
+                do {
+                    switch target {
+                    case .syncing:
+                        break
+                    case .interrupted:
+                        // Give automatic retries time to recover before warning.
+                        try await Task.sleep(for: .seconds(5))
+                    case .idle:
+                        // Coalesce short gaps before returning to the quiet cloud.
+                        try await Task.sleep(for: .milliseconds(1200))
+                    }
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled, requestedState == target else { return }
+                presentation = target
+            }
+    }
+}
+
+private struct CloudSyncDetails: View {
+    let status: CloudSyncStatus
+
+    private var explanation: LocalizedStringKey {
+        if status.isConnecting {
+            return "Preparing the connection used to sync your notes."
         }
+        if status.isBusy {
+            return "Sending or receiving changes to your notes."
+        }
+        if status.hasFailure {
+            return "iCloud couldn’t finish the last sync attempt. Some changes may not be available on your other devices yet."
+        }
+        return "No uploads or downloads are currently in progress."
     }
 
-    private func stopObserving() {
-        if let eventObserver {
-            NotificationCenter.default.removeObserver(eventObserver)
-            self.eventObserver = nil
-        }
-        activeEventIDs.removeAll()
-        hideWorkItem?.cancel()
-        hideWorkItem = nil
-        isVisible = false
-    }
-
-    private func updateIndicator(for eventIdentifier: UUID, hasEnded: Bool) {
-        if hasEnded {
-            activeEventIDs.remove(eventIdentifier)
-        } else {
-            activeEventIDs.insert(eventIdentifier)
-        }
-
-        hideWorkItem?.cancel()
-        hideWorkItem = nil
-
-        if activeEventIDs.isEmpty {
-            let workItem = DispatchWorkItem {
-                guard activeEventIDs.isEmpty else { return }
-                isVisible = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("iCloud Sync", systemImage: "icloud")
+                .font(.headline)
+            Text(status.message)
+                .font(.subheadline.weight(.medium))
+            Text(explanation)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if status.hasFailure && status.isBusy {
+                Text("An earlier sync attempt was interrupted.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
             }
-            hideWorkItem = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: workItem)
-        } else {
-            isVisible = true
         }
+        .padding(16)
+        .frame(width: 280, alignment: .leading)
     }
 }
 #endif
 
 private struct CloudSyncToolbarIndicator: View {
     var isActive = true
+    var hasFailure = false
+    var isIdle = false
+    var message = String(localized: "Syncing with iCloud")
 
     #if os(macOS)
     @State private var isRotating = false
@@ -4225,7 +4256,8 @@ private struct CloudSyncToolbarIndicator: View {
     var body: some View {
         Group {
             #if os(macOS)
-            Image(systemName: "arrow.triangle.2.circlepath")
+            Image(systemName: hasFailure ? "exclamationmark.icloud" : (isIdle ? "icloud" : "arrow.triangle.2.circlepath"))
+                .foregroundStyle(hasFailure ? Color.orange : (isIdle ? Color.secondary : Color.primary))
                 .font(.system(size: 17, weight: .medium))
                 .rotationEffect(.degrees(isRotating ? 360 : 0))
                 .frame(width: 24, height: 24, alignment: .center)
@@ -4241,8 +4273,8 @@ private struct CloudSyncToolbarIndicator: View {
                 .progressViewStyle(.circular)
             #endif
         }
-        .help("Syncing with iCloud")
-        .accessibilityLabel("Syncing with iCloud")
+        .help(message)
+        .accessibilityLabel(message)
     }
 
     #if os(macOS)

@@ -21,6 +21,24 @@ enum CloudSyncDiagnostics {
             guard let event = notification.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
                     as? NSPersistentCloudKitContainer.Event else { return }
             log(event)
+            // This observer is registered on OperationQueue.main. Update the
+            // shared status synchronously so start/end ordering is preserved.
+            MainActor.assumeIsolated {
+                let operation: CloudSyncStatus.Operation
+                switch event.type {
+                case .setup: operation = .setup
+                case .import: operation = .download
+                case .export: operation = .upload
+                @unknown default: return
+                }
+                CloudSyncStatus.shared.record(
+                    eventID: event.identifier,
+                    storeID: event.storeIdentifier,
+                    operation: operation,
+                    hasEnded: event.endDate != nil,
+                    succeeded: event.succeeded
+                )
+            }
         }
     }
 
